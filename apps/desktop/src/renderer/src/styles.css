@@ -61,6 +61,7 @@ body,
   width: 192px;
   height: 208px;
   background-image: var(--sprite-url);
+  background-position: 0 var(--sprite-y);
   background-repeat: no-repeat;
   background-size: 1536px 1872px;
   image-rendering: pixelated;
