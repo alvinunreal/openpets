@@ -78,6 +78,7 @@ For project-local setup, run the CLI from the project you want to configure:
 ```bash
 npx -y @open-pets/cli configure --agent claude --pet <petId>
 npx -y @open-pets/cli configure --agent opencode --pet <petId>
+npx -y @open-pets/cli configure --agent codex --pet <petId>
 ```
 
 Project-local setup can create project files such as `.claude/settings.local.json` or `.opencode/opencode.jsonc`. Review them before committing because they may include the selected pet id.
@@ -133,6 +134,30 @@ npx -y @open-pets/cli configure --agent opencode --pet <petId>
 ```
 
 See [`docs/opencode.md`](docs/opencode.md) for global config selection, plugin behavior, project-local setup, and safety rules.
+
+
+### Codex
+
+Codex integration supports:
+
+- Project-local MCP setup through `openpets configure --agent codex --pet <petId>`.
+- Automatic creation/update of `.codex/config.toml` with an `openpets` MCP server entry.
+
+Project-local setup:
+
+```bash
+npx -y @open-pets/cli configure --agent codex --pet <petId>
+```
+
+This writes a project-scoped Codex MCP launcher:
+
+```toml
+[mcp_servers.openpets]
+command = "npx"
+args = ["-y", "@open-pets/cli@<version>", "mcp", "--pet", "<petId>"]
+```
+
+Restart Codex in the project after setup so the MCP tools load.
 
 ### Generic MCP clients
 
@@ -270,6 +295,7 @@ docs/                     Documentation
 
 - [`docs/claude-integration.md`](docs/claude-integration.md) - Claude Code setup, MCP, memory, hooks, and safety.
 - [`docs/opencode.md`](docs/opencode.md) - OpenCode global/project setup, plugin behavior, and safety.
+- [`docs/codex-integration.md`](docs/codex-integration.md) - Codex project setup and validation checklist.
 - [`docs/testing.md`](docs/testing.md) - test/check strategy.
 - [`docs/release.md`](docs/release.md) - desktop release process.
 - [`docs/workflow.md`](docs/workflow.md) - project workflow notes.

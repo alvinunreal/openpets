@@ -14,7 +14,7 @@ import { prepareOpenCodeProjectSetup, writePreparedOpenCodeProjectSetup } from "
 export const cliPackageName = "@open-pets/cli";
 
 interface ConfigureOptions {
-  readonly agent: "claude" | "opencode";
+  readonly agent: "claude" | "opencode" | "codex";
   readonly petId?: string;
   readonly cwd: string;
   readonly yes: boolean;
@@ -97,6 +97,10 @@ export async function configureProject(options: ConfigureOptions): Promise<void>
     await configureOpenCodeProject(options, projectDir);
     return;
   }
+  if (options.agent === "codex") {
+    await configureCodexProject(options, projectDir);
+    return;
+  }
   assertClaudeAvailable();
   assertSafeProjectHookPath(projectDir);
   const client = createOpenPetsClient();
@@ -154,7 +158,7 @@ export function parseConfigureArgs(args: readonly string[]): ConfigureOptions {
     else if (arg.startsWith("--cwd=")) cwd = arg.slice("--cwd=".length);
     else throw new CliError(`Unknown configure option: ${arg}`);
   }
-  if (agent !== "claude" && agent !== "opencode") throw new CliError(`Unsupported agent: ${agent}. Supported agents: claude, opencode.`);
+  if (agent !== "claude" && agent !== "opencode" && agent !== "codex") throw new CliError(`Unsupported agent: ${agent}. Supported agents: claude, opencode, codex.`);
   return { agent, petId, cwd, yes, force, localDev };
 }
 
@@ -215,6 +219,48 @@ function runClaudeMcpRemove(projectDir: string): void {
   if (result.status !== 0 && !/not found|does not exist|no server|unknown/i.test(output)) {
     throw new CliError(`Claude MCP remove failed: ${(result.stderr || result.stdout || "unknown error").trim()}`);
   }
+}
+
+
+async function configureCodexProject(options: ConfigureOptions, projectDir: string): Promise<void> {
+  const client = createOpenPetsClient();
+  const selectedPet = await resolveConfiguredPet(client, options.petId);
+  const packageVersion = getPackageVersion();
+  const mcpCommand = options.localDev ? createLocalDevCliCommand(["mcp", "--pet", selectedPet.id]) : createVersionPinnedCliCommand(packageVersion, ["mcp", "--pet", selectedPet.id]);
+  const configPath = join(projectDir, ".codex", "config.toml");
+  writeCodexProjectConfig(configPath, mcpCommand, options.force);
+  process.stdout.write(`OpenPets configured for Codex in ${projectDir}.\nPet: ${sanitizeTerminalText(selectedPet.displayName)} (${selectedPet.id})\nConfig: ${configPath}\nRestart Codex in this project to load OpenPets tools.\n`);
+}
+
+function writeCodexProjectConfig(configPath: string, command: CommandSpec, force: boolean): void {
+  const existing = existsSync(configPath) ? readFileSync(configPath, "utf8") : "";
+  if (!force && /\[mcp_servers\.openpets\]/.test(existing)) {
+    throw new CliError("Codex config already has [mcp_servers.openpets]. Use --force to replace the OpenPets block.");
+  }
+  const block = buildCodexOpenPetsBlock(command);
+  const cleaned = existing.replace(/\n?\[mcp_servers\.openpets\][\s\S]*?(?=\n\[[^\]]+\]|$)/g, "").trimEnd();
+  const next = `${cleaned.length > 0 ? `${cleaned}\n\n` : ""}${block}\n`;
+  writeTextFile(configPath, next);
+}
+
+function buildCodexOpenPetsBlock(command: CommandSpec): string {
+  const args = command.args.map((arg) => tomlString(arg)).join(", ");
+  return `[mcp_servers.openpets]\ncommand = ${tomlString(command.command)}\nargs = [${args}]`;
+}
+
+function tomlString(value: string): string {
+  if (/\r|\n|\0/.test(value)) throw new CliError("Codex TOML value contains unsupported characters.");
+  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
+
+function writeTextFile(path: string, value: string): void {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const parentStats = lstatSync(dirname(path));
+  if (parentStats.isSymbolicLink() || !parentStats.isDirectory()) throw new CliError("Config directory is unsafe after creation.");
+  const tempPath = `${path}.${process.pid}.tmp`;
+  writeFileSync(tempPath, value, { encoding: "utf8", mode: 0o600 });
+  renameSync(tempPath, path);
+  try { chmodSync(path, 0o600); } catch { /* best effort */ }
 }
 
 async function runMcp(args: readonly string[]): Promise<void> {
@@ -357,7 +403,7 @@ function getPackageVersion(): string {
 }
 
 function printUsage(): void {
-  process.stdout.write("Usage:\n  openpets install <pet-id>\n  openpets configure [--agent claude|opencode] [--pet <id>] [--cwd <path>] [--yes] [--force]\n  openpets mcp [--pet <id>]\n  openpets hook --openpets-managed [--pet <id>]\n\nRun `openpets <command> --help` for command options.\n");
+  process.stdout.write("Usage:\n  openpets install <pet-id>\n  openpets configure [--agent claude|opencode|codex] [--pet <id>] [--cwd <path>] [--yes] [--force]\n  openpets mcp [--pet <id>]\n  openpets hook --openpets-managed [--pet <id>]\n\nRun `openpets <command> --help` for command options.\n");
 }
 
 function printInstallUsage(): void {
@@ -365,7 +411,7 @@ function printInstallUsage(): void {
 }
 
 function printConfigureUsage(): void {
-  process.stdout.write("Usage:\n  openpets configure [--agent claude|opencode] [--pet <id>] [--cwd <path>] [--yes] [--force]\n\nOptions:\n  --pet <id>           Pet id to use for this project. If omitted, prompts with installed pets.\n  --agent <agent>      Agent to configure: claude or opencode. Defaults to claude.\n  --cwd <path>         Project directory to configure. Defaults to current directory.\n  --yes, -y            Accepted for scripts; no confirmation prompt is shown.\n  --force              Replace supported managed entries where applicable.\n  --replace            Alias for --force.\n  --local-dev          Use local development command paths where supported.\n  -h, --help           Show this help.\n");
+  process.stdout.write("Usage:\n  openpets configure [--agent claude|opencode|codex] [--pet <id>] [--cwd <path>] [--yes] [--force]\n\nOptions:\n  --pet <id>           Pet id to use for this project. If omitted, prompts with installed pets.\n  --agent <agent>      Agent to configure: claude, opencode, or codex. Defaults to claude.\n  --cwd <path>         Project directory to configure. Defaults to current directory.\n  --yes, -y            Accepted for scripts; no confirmation prompt is shown.\n  --force              Replace supported managed entries where applicable.\n  --replace            Alias for --force.\n  --local-dev          Use local development command paths where supported.\n  -h, --help           Show this help.\n");
 }
 
 function printMcpUsage(): void {
