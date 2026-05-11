@@ -17,6 +17,7 @@ assert.equal(parseConfigureArgs(["--pet", "fixer", "--replace"]).force, true);
 assert.equal(parseConfigureArgs(["--pet", "fixer", "--local-dev"]).localDev, true);
 assert.equal(parseConfigureArgs(["--pet=fixer"]).petId, "fixer");
 assert.equal(parseConfigureArgs(["--agent", "opencode", "--pet", "fixer"]).agent, "opencode");
+assert.equal(parseConfigureArgs(["--agent", "codex", "--pet", "fixer"]).agent, "codex");
 assert.throws(() => parseConfigureArgs(["--agent", "cursor"]));
 assert.throws(() => parseConfigureArgs(["--pet", "bad/pet"]));
 assert.deepEqual(parseInstallArgs(["review-owl"]), { petId: "review-owl" });
@@ -165,6 +166,20 @@ try {
   assert.match(instructionText, /User text/);
   assert.match(instructionText, /OPENPETS:START/);
 
+
+
+  const codexProject = join(dir, "codex-project");
+  mkdirSync(codexProject);
+  await configureProject({ agent: "codex", petId: "fixer", cwd: codexProject, yes: true, force: false, localDev: false });
+  const codexConfigPath = join(codexProject, ".codex", "config.toml");
+  const codexConfig = readFileSync(codexConfigPath, "utf8");
+  assert.match(codexConfig, /\[mcp_servers\.openpets\]/);
+  assert.match(codexConfig, /@open-pets\/cli@2.0.3/);
+  await assert.rejects(() => configureProject({ agent: "codex", petId: "fixer", cwd: codexProject, yes: true, force: false, localDev: false }));
+  await configureProject({ agent: "codex", petId: "fixer", cwd: codexProject, yes: true, force: true, localDev: true });
+  const codexConfigForced = readFileSync(codexConfigPath, "utf8");
+  assert.match(codexConfigForced, /command = "node"/);
+
   const symlinkOpenCodeProject = join(dir, "opencode-symlink");
   const outsideOpenCode = join(dir, "outside-opencode");
   mkdirSync(symlinkOpenCodeProject);
@@ -176,7 +191,6 @@ try {
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }
-
 const invalidHook = spawnSync(process.execPath, [new URL("./index.js", import.meta.url).pathname, "hook", "--openpets-managed", "--pet", "bad/pet"], { input: JSON.stringify({ hook_event_name: "Notification" }), encoding: "utf8" });
 assert.equal(invalidHook.status, 1);
 const missingPetHook = spawnSync(process.execPath, [new URL("./index.js", import.meta.url).pathname, "hook", "--openpets-managed", "--pet"], { input: JSON.stringify({ hook_event_name: "Notification" }), encoding: "utf8" });
