@@ -14,6 +14,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@img/sharp-win32-x64':
+        specifier: 0.34.5
+        version: 0.34.5
       '@open-pets/agent-events':
         specifier: workspace:*
         version: link:../../packages/agent-events
@@ -3201,8 +3204,7 @@ snapshots:
   '@img/sharp-win32-ia32@0.34.5':
     optional: true
 
-  '@img/sharp-win32-x64@0.34.5':
-    optional: true
+  '@img/sharp-win32-x64@0.34.5': {}
 
   '@isaacs/fs-minipass@4.0.1':
     dependencies:
