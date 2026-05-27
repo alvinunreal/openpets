@@ -9,7 +9,7 @@ Before working on any task, read `codemap.md` to understand:
 
 For deep work on a specific folder, also read that folder's `codemap.md`.
 
-## Catalog Direction
+## Catalog Direction123
 
 Catalog v2 is legacy and exists only for old app versions/fallback compatibility.
 For new work, migrations, and Control Center UI, do not optimize for v2 behavior.
