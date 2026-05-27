@@ -9,13 +9,13 @@ Before working on any task, read `codemap.md` to understand:
 
 For deep work on a specific folder, also read that folder's `codemap.md`.
 
-## Catalog Direction123
+## Catalog Direction 666
 
 Catalog v2 is legacy and exists only for old app versions/fallback compatibility.
 For new work, migrations, and Control Center UI, do not optimize for v2 behavior.
 Use catalog v3 (`thumbnail`, `spritesheet`, paginated pages, and search index) as the source of truth.
 
-## Logging for Fast DX123
+## Logging for Fast DX
 
 When working on desktop UI, renderer, IPC, catalog, plugin, or pet-window behavior, add targeted logging as part of the implementation when it helps diagnose issues quickly.
 Prefer concise, scoped logs that capture data shape, selected IDs, load/error states, and boundary decisions.
