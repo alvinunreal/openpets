@@ -90,13 +90,14 @@ There are two viable distribution modes:
 
 1. **OpenPets-owned Spotify app.** This gives the smoothest setup, but it depends
    on Spotify approving the app for public distribution and quota.
-2. **User-provided Client ID.** This is more reliable for open-source or early
-   distribution. Each user creates a Spotify Developer app, registers the
-   loopback redirect, and pastes the Client ID into the plugin settings.
+2. **Developer-only override.** During local development, contributors can point
+   the plugin at a separate Spotify Developer app, but this must stay a
+   development escape hatch, not the product setup path.
 
-The initial implementation should support the user-provided Client ID path even
-if OpenPets later obtains an approved official client. That keeps the plugin
-usable during development and avoids blocking on external approval.
+The production plugin should use an OpenPets-owned Spotify app and an approved
+public quota path. Asking normal users to create Spotify Developer apps and paste
+Client IDs would make the official plugin feel unfinished and should not be the
+default release model.
 
 ### Scopes
 
@@ -147,7 +148,7 @@ The settings form should stay short and understandable:
 
 | Setting | Type | Default | Purpose |
 | --- | --- | --- | --- |
-| Spotify Client ID | `secret` | empty | Required when OpenPets does not provide an approved client ID. |
+| Spotify Client ID override | `secret` | empty | Development-only override for contributors; hidden or advanced in production builds. |
 | Show now-playing bubbles | `boolean` | true | Announces track changes. |
 | Show lyric bubbles | `boolean` | true | Enables LRCLIB sing-along bubbles. |
 | Lyric intensity | enum-like string | `normal` | Controls bubble frequency: `chill`, `normal`, `karaoke`. |
@@ -224,7 +225,8 @@ Before the plugin ships, complete the normal official-plugin quality ladder:
   catalog release.
 - Document Spotify Developer Dashboard setup if users need their own Client ID.
 - Decide whether the plugin is catalog-only or bundled. It should start as
-  catalog-only unless the setup friction is solved.
+  catalog-only unless OpenPets has an approved Spotify app and the setup flow is
+  one-click for normal users.
 
 ## Spotify Web API controls
 
@@ -300,8 +302,8 @@ real Spotify responses.
 
 ## Open questions
 
-- Can OpenPets obtain and maintain an approved Spotify app for public use, or
-  should the official plugin always require a user-provided Client ID?
+- Can OpenPets obtain and maintain an approved Spotify app for public use before
+  the plugin is promoted as an official production feature?
 - Does the current `ctx.auth` provider shape support every Spotify PKCE field the
   plugin needs, or does the SDK need a small provider-configuration refinement?
 - Should LRCLIB lyrics be enabled by default, or should users opt in because the
@@ -315,7 +317,8 @@ real Spotify responses.
 
 Ship v1 as a catalog-only official plugin with:
 
-- User-provided Spotify Client ID.
+- An OpenPets-owned Spotify app and PKCE OAuth as the default production path.
+- A developer-only Client ID override for local testing if needed.
 - PKCE OAuth.
 - Current playback polling.
 - Play/pause, next, previous, and show-current-song commands.
