@@ -45,6 +45,9 @@ Docs here are the *narrative* layer on top of those maps.
 - **[plugins.md](plugins.md)** — the plugin platform: manifest schema,
   permission model, runtime, sandboxed JS host, catalog vs local install,
   packaging and publishing, troubleshooting.
+- **[plugins/spotify.md](plugins/spotify.md)** — the proposed Spotify Buddy
+  official plugin plan: OAuth, playback controls, LRCLIB lyric bubbles, and
+  release constraints.
 - **[superplugins.md](superplugins.md)** — the companion-first product
   direction, the official plugin lineup, bundling/enabled defaults, and the
   right-click action strategy.
