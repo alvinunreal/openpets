@@ -137,6 +137,7 @@ features. A likely manifest starts with:
     "secrets",
     "storage",
     "schedule",
+    "status",
     "ui:*",
     "pet:*",
     "commands",
