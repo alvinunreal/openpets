@@ -1,0 +1,56 @@
+{
+  "manifestVersion": 2,
+  "id": "openpets.spotify-buddy",
+  "name": "Spotify Buddy",
+  "description": "Your pet reacts to Spotify, syncs lyrics in real time, and controls playback.",
+  "version": "2.1.0",
+  "runtime": "javascript",
+  "icon": "sparkles",
+  "sdkVersion": "1.0.0",
+  "entry": "index.js",
+  "permissions": [
+    "network",
+    "schedule",
+    "storage",
+    "pet:speak",
+    "pet:reaction",
+    "commands",
+    "status"
+  ],
+  "network": {
+    "hosts": ["spotify-bridge.onrender.com"]
+  },
+  "configSchema": {
+    "bridgeUrl": {
+      "type": "text",
+      "label": "Spotify Bridge URL (HTTPS)",
+      "default": "https://spotify-bridge.onrender.com",
+      "description": "Your Render.com deployment URL"
+    },
+    "pollIntervalSeconds": {
+      "type": "number",
+      "label": "Poll interval (seconds)",
+      "default": 2,
+      "min": 2,
+      "max": 300,
+      "step": 1
+    },
+    "announceTrackChanges": { "type": "boolean", "label": "Announce track changes", "default": true },
+    "reactToMood": { "type": "boolean", "label": "React to track mood", "default": true },
+    "reactWhenPaused": { "type": "boolean", "label": "React when paused", "default": true },
+    "announceTemplate": {
+      "type": "text",
+      "label": "Announcement template",
+      "default": "Now playing: {title} by {artist}",
+      "maxLength": 140
+    },
+    "lyricAdvanceMs": {
+      "type": "number",
+      "label": "Lyric advance time (ms)",
+      "default": 500,
+      "min": 0,
+      "max": 3000,
+      "step": 100
+    }
+  }
+}
