@@ -73,16 +73,26 @@ plugins cannot protect a client secret, so the OAuth flow must not rely on one.
 OpenPets should delegate the browser flow, state checking, PKCE verifier, and
 loopback redirect handling to `ctx.auth`.
 
-The preferred redirect mode is a loopback IP literal. Spotify dashboard setup
-should document a redirect such as:
+The preferred redirect mode is a loopback IP literal. Spotify allows HTTP only
+for loopback redirects; all non-loopback redirect URIs must use HTTPS. The
+dashboard should register the loopback redirect without a port so OpenPets can
+continue using the OAuth broker's dynamically assigned local port at runtime:
 
 ```txt
 http://127.0.0.1/callback
 ```
 
-If Spotify allows dynamic loopback ports for the registered base redirect, the
-host should use its existing loopback OAuth support. The plugin documentation
-should avoid `localhost` wording where Spotify requires `127.0.0.1` or `[::1]`.
+At runtime, `apps/desktop/src/plugin-oauth.ts` starts a listener on a free local
+port and sends Spotify a redirect such as:
+
+```txt
+http://127.0.0.1:49231/callback
+```
+
+Spotify's redirect URI rules allow this dynamic-port form when the registered
+URI uses an explicit loopback IP literal. The plugin documentation should avoid
+`localhost` wording because Spotify requires `127.0.0.1` or `[::1]` for
+loopback redirects.
 
 ### Client ID strategy
 
