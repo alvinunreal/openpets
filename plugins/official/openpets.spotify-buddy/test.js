@@ -234,4 +234,36 @@ const LOCALES = { en: JSON.parse(await readFile(new URL("./locales/en.json", imp
   await h.stop();
 }
 
+// Test 9: disconnect clears the cached token before later requests
+{
+  const h = createTestHarness(register, { permissions: PERMISSIONS, locales: LOCALES });
+  await h.start();
+
+  const session = getSession(h.ctx);
+  session.accessToken = "cached-token";
+  session.expiresAt = Date.now() + 600000;
+  session.isPlaying = true;
+
+  let signOutCalled = false;
+  h.ctx.auth.signOut = async (provider) => {
+    assert.equal(provider, "spotify");
+    signOutCalled = true;
+  };
+  h.ctx.auth.refresh = async () => {
+    throw new Error("No stored OAuth session for provider: spotify");
+  };
+
+  await h.runCommand("spotify-disconnect");
+  assert.equal(signOutCalled, true);
+  assert.equal(session.accessToken, null);
+  assert.equal(session.expiresAt, 0);
+  assert.equal(session.backoffUntil, 0);
+
+  const callsBefore = h.calls.netCalls.length;
+  await h.runCommand("spotify-now-playing");
+  assert.equal(h.calls.netCalls.length, callsBefore, "now-playing should not call Spotify after disconnect");
+  h.expectSpoke(/Connecting to Spotify is required first/);
+  await h.stop();
+}
+
 console.log("openpets.spotify-buddy specs passed.");

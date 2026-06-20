@@ -543,6 +543,10 @@ export function register(OpenPetsPlugin) {
         try {
           await ctx.auth.signOut("spotify");
           const session = getSession(ctx);
+          session.accessToken = null;
+          session.expiresAt = 0;
+          session.backoffUntil = 0;
+          session.lastStatusUpdateText = "";
           session.lastTrackId = null;
           session.isPlaying = false;
           if (session.nowPlayingBubble) {

@@ -35,13 +35,13 @@ The current SDK v3 surface is sufficient for a strong first version:
 | Capability | SDK namespace | Use in Spotify Buddy |
 | --- | --- | --- |
 | OAuth login | `ctx.auth` | Run Spotify Authorization Code with PKCE. |
-| Secure tokens | `ctx.secrets` / host auth storage | Persist refresh/access tokens through the host. |
+| Secure tokens | `ctx.auth` / host auth storage | Persist refresh/access tokens through the host. |
 | API calls | `ctx.net` | Call Spotify Web API and LRCLIB. |
-| Persistent state | `ctx.storage` | Cache current track, lyric data, settings, and backoff state. |
-| Polling | `ctx.schedule` | Refresh playback state and reconcile after restart. |
+| Session state | plugin memory | Cache current track, lyric data, settings, token, and backoff state for the running session. |
+| Polling | plugin-owned timers | Refresh playback state with adaptive intervals; do not use `ctx.schedule` for short polling. |
 | Pet reactions | `ctx.pet` | Dance, sleep, speak, and react to playback events. |
 | Bubbles and buttons | `ctx.ui` | Show now-playing, controls, and lyric lines. |
-| Right-click actions | `ctx.commands` | Expose play/pause, next, previous, like, and setup commands. |
+| Right-click actions | `ctx.commands` | Expose connect, play/pause, next, previous, lyrics, and now-playing commands. |
 | Status | `ctx.status` | Publish compact now-playing text. |
 
 The main constraints are outside OpenPets:
@@ -51,9 +51,9 @@ The main constraints are outside OpenPets:
 - Spotify does not provide a public lyrics API.
 - Electron should not attempt Spotify Web Playback SDK streaming because Widevine
   DRM support is not available in stock Electron.
-- Public Spotify app distribution may require quota approval. If OpenPets cannot
-  ship an approved public client ID, users should bring their own Spotify Client
-  ID through plugin settings.
+- Public Spotify app distribution may require quota approval. Spotify Buddy
+  should not ship as normal production setup until OpenPets can use its own
+  approved public Client ID.
 
 ## Non-goals
 
@@ -105,7 +105,6 @@ features. A likely manifest starts with:
   "runtime": "javascript",
   "permissions": [
     "auth",
-    "storage",
     "status",
     "commands",
     "network",
