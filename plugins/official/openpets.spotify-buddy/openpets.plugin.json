@@ -1,0 +1,61 @@
+{
+  "manifestVersion": 3,
+  "id": "openpets.spotify-buddy",
+  "name": "$t:plugin.name",
+  "description": "$t:plugin.description",
+  "version": "1.0.0",
+  "runtime": "javascript",
+  "icon": "plugin",
+  "sdkVersion": "3.0.0",
+  "entry": "index.js",
+  "permissions": [
+    "auth",
+    "status",
+    "commands",
+    "network",
+    "network:write",
+    "pet:speak",
+    "pet:reaction",
+    "pet:interact"
+  ],
+  "network": {
+    "hosts": ["api.spotify.com", "lrclib.net"]
+  },
+  "configSchema": {
+    "showNowPlaying": {
+      "type": "boolean",
+      "default": true,
+      "label": "$t:config.showNowPlaying.label",
+      "description": "$t:config.showNowPlaying.description"
+    },
+    "showLyrics": {
+      "type": "boolean",
+      "default": true,
+      "label": "$t:config.showLyrics.label",
+      "description": "$t:config.showLyrics.description"
+    },
+    "lyricIntensity": {
+      "type": "select",
+      "default": "normal",
+      "label": "$t:config.lyricIntensity.label",
+      "description": "$t:config.lyricIntensity.description",
+      "options": [
+        { "value": "chill", "label": "$t:config.lyricIntensity.chill" },
+        { "value": "normal", "label": "$t:config.lyricIntensity.normal" },
+        { "value": "karaoke", "label": "$t:config.lyricIntensity.karaoke" }
+      ]
+    },
+    "showControls": {
+      "type": "boolean",
+      "default": true,
+      "label": "$t:config.showControls.label",
+      "description": "$t:config.showControls.description"
+    },
+    "quietWhenPaused": {
+      "type": "boolean",
+      "default": true,
+      "label": "$t:config.quietWhenPaused.label",
+      "description": "$t:config.quietWhenPaused.description"
+    }
+  }
+}

@@ -32,6 +32,7 @@ First-party SDK v3 plugin product source. These plugins are the reviewed default
 | `openpets.mood-check-in` | Mood logging/check-in companion with configurable prompts and command entry points. | `schedule`, `storage`, `commands`, `pet`, `config` |
 | `openpets.fortune-cookie` | Periodic or command-triggered fortune messages. | `schedule`, `storage`, `commands`, `pet.speak` |
 | `openpets.virtual-pet` | Tamagotchi-style companion state machine with hunger/energy/happiness/affection decay, pinned HUD, click handling, and action commands. | `events`, `schedule`, `storage`, `ui.bubble`, `commands`, `pet.react`, `assets`, `audio`, `config` |
+| `openpets.spotify-buddy` | Music companion showing now-playing status, bubbles, controls, and LRCLIB synchronized lyrics. | `auth`, `storage`, `status`, `commands`, `network`, `network:write`, `ui.bubble`, `pet` |
 
 ## Integration Points
 

@@ -277,7 +277,7 @@ export interface MockHarnessCore {
   dismissBubble(bubbleId: string, reason?: OpenPetsBubbleDismissReason): Promise<void>;
   runCommand(commandId: string, values?: Record<string, unknown>): Promise<void>;
   setConfig(config: Record<string, unknown>): Promise<void>;
-  net: { mock(urlPrefix: string, response: { status?: number; json?: unknown; text?: string; chunks?: string[] }): void };
+  net: { mock(urlPrefix: string, response: { status?: number; json?: unknown; text?: string; chunks?: string[]; headers?: Record<string, string> }): void };
   ai: { mock(responder: (req: { system?: string; messages: Array<{ role: string; content: string }> }) => string): void };
   files: { provide(files: Array<{ name: string; text?: string; bytes?: Uint8Array }>): void };
   auth: { mock(tokens: { accessToken: string; refreshToken?: string; expiresAt?: number }): void };
@@ -306,7 +306,7 @@ export function createMockContext(optionsOrConfig: MockContextOptions | Record<s
   const busSubscribers = new Map<string, Set<(payload: unknown) => void>>();
   const configListeners = new Set<(value: Record<string, unknown>) => void | Promise<void>>();
   const panelToPluginHandlers = new Set<(msg: unknown) => void>();
-  const netMocks: Array<{ urlPrefix: string; response: { status?: number; json?: unknown; text?: string; chunks?: string[] } }> = [];
+  const netMocks: Array<{ urlPrefix: string; response: { status?: number; json?: unknown; text?: string; chunks?: string[]; headers?: Record<string, string> } }> = [];
   let aiResponder: ((req: { system?: string; messages: Array<{ role: string; content: string }> }) => string) | null = null;
   let pickableFiles: Array<{ name: string; text?: string; bytes?: Uint8Array }> = [];
   let authTokens: { accessToken: string; refreshToken?: string; expiresAt?: number } | null = null;
@@ -538,7 +538,11 @@ export function createMockContext(optionsOrConfig: MockContextOptions | Record<s
         const mock = matchNetMock(url);
         if (!mock) throw new Error(`No net mock for ${url} — call harness.net.mock(...) first.`);
         const text = mock.response.text ?? (mock.response.json !== undefined ? JSON.stringify(mock.response.json) : "");
-        return { status: mock.response.status ?? 200, ok: (mock.response.status ?? 200) < 400, headers: { "content-type": mock.response.json !== undefined ? "application/json" : "text/plain" }, text, json: mock.response.json };
+        const resHeaders = {
+          "content-type": mock.response.json !== undefined ? "application/json" : "text/plain",
+          ...(mock.response.headers ?? {})
+        };
+        return { status: mock.response.status ?? 200, ok: (mock.response.status ?? 200) < 400, headers: resHeaders, text, json: mock.response.json };
       },
       stream: async (url, options, onChunk) => {
         requirePermission("network");

@@ -792,7 +792,7 @@ export interface OpenPetsVoiceApi {
 
 /** Host-mediated OAuth configuration (PKCE by default; no client secret). */
 export interface OpenPetsOauthConfig {
-  provider?: "google" | "microsoft" | "github" | "generic";
+  provider?: "google" | "microsoft" | "github" | "generic" | "spotify";
   authorizationUrl: string;
   tokenUrl: string;
   clientId: string;
@@ -800,6 +800,7 @@ export interface OpenPetsOauthConfig {
   /** Default true. */
   pkce?: boolean;
   redirect?: "loopback" | "appProtocol";
+  loopbackPort?: number;
 }
 
 /** Tokens returned by the host after running the OAuth dance. */

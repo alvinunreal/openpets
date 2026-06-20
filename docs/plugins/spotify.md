@@ -73,54 +73,25 @@ plugins cannot protect a client secret, so the OAuth flow must not rely on one.
 OpenPets should delegate the browser flow, state checking, PKCE verifier, and
 loopback redirect handling to `ctx.auth`.
 
-The preferred redirect mode is a loopback IP literal. Spotify allows HTTP only
-for loopback redirects; all non-loopback redirect URIs must use HTTPS. The
-dashboard should register the loopback redirect without a port so OpenPets can
-continue using the OAuth broker's dynamically assigned local port at runtime:
+The preferred redirect URI is registered in the Spotify Developer Dashboard on a fixed port:
 
 ```txt
-http://127.0.0.1/callback
+http://127.0.0.1:48373/callback
 ```
 
-At runtime, `apps/desktop/src/plugin-oauth.ts` starts a listener on a free local
-port and sends Spotify a redirect such as:
+At runtime, `apps/desktop/src/plugin-oauth.ts` listens on the fixed port `48373` and errors clearly if that port is busy:
 
 ```txt
-http://127.0.0.1:49231/callback
+http://127.0.0.1:48373/callback
 ```
-
-Spotify's redirect URI rules allow this dynamic-port form when the registered
-URI uses an explicit loopback IP literal. The plugin documentation should avoid
-`localhost` wording because Spotify requires `127.0.0.1` or `[::1]` for
-loopback redirects.
 
 ### Client ID strategy
 
-There are two viable distribution modes:
-
-1. **OpenPets-owned Spotify app.** This gives the smoothest setup, but it depends
-   on Spotify approving the app for public distribution and quota.
-2. **Developer-only override.** During local development, contributors can point
-   the plugin at a separate Spotify Developer app, but this must stay a
-   development escape hatch, not the product setup path.
-
-The production plugin should use an OpenPets-owned Spotify app and an approved
-public quota path. Asking normal users to create Spotify Developer apps and paste
-Client IDs would make the official plugin feel unfinished and should not be the
-default release model.
+Spotify Buddy uses a baked-in public Client ID constant for the official OpenPets Spotify app to provide a seamless setup experience. Normal users do not need to bring their own Client ID. The Client Secret is never used by runtime code because the plugin uses PKCE.
 
 ### Scopes
 
-Request only the scopes needed for enabled features:
-
-| Feature | Spotify scope |
-| --- | --- |
-| Read current song and playback state | `user-read-currently-playing`, `user-read-playback-state` |
-| Play, pause, next, previous, seek, volume, shuffle, repeat | `user-modify-playback-state` |
-| Like/save current track | `user-library-read`, `user-library-modify` |
-
-The plugin should defer library scopes if the user disables the like/save feature
-or if Spotify requires a tighter consent screen for public approval.
+Our required authorization scopes are: `user-read-currently-playing`, `user-read-playback-state`, and `user-modify-playback-state`. Library scopes are deferred to minimize permissions.
 
 ## Manifest shape
 
@@ -134,17 +105,17 @@ features. A likely manifest starts with:
   "runtime": "javascript",
   "permissions": [
     "auth",
-    "secrets",
     "storage",
-    "schedule",
     "status",
-    "ui:*",
-    "pet:*",
     "commands",
-    "network:*"
+    "network",
+    "network:write",
+    "pet:speak",
+    "pet:reaction",
+    "pet:interact"
   ],
   "network": {
-    "hosts": ["api.spotify.com", "accounts.spotify.com", "lrclib.net"]
+    "hosts": ["api.spotify.com", "lrclib.net"]
   }
 }
 ```

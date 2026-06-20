@@ -182,7 +182,7 @@ export interface PluginHostCapabilities {
     listen(opts: { timeoutMs?: number }): Promise<{ text: string }>;
   };
   auth: {
-    oauth(pluginId: string, config: { provider: string; authorizationUrl: string; tokenUrl: string; clientId: string; scopes: string[]; pkce: boolean; redirect: "loopback" | "appProtocol" }): Promise<PluginOauthTokens>;
+    oauth(pluginId: string, config: { provider: string; authorizationUrl: string; tokenUrl: string; clientId: string; scopes: string[]; pkce: boolean; redirect: "loopback" | "appProtocol"; loopbackPort?: number }): Promise<PluginOauthTokens>;
     refresh(pluginId: string, provider: string): Promise<{ accessToken: string; expiresAt?: number }>;
     signOut(pluginId: string, provider: string): Promise<void>;
   };
@@ -1102,7 +1102,7 @@ function validateAiRequest(value: unknown): PluginAiRequest {
   return out;
 }
 
-function validateOauthConfig(value: unknown): { provider: string; authorizationUrl: string; tokenUrl: string; clientId: string; scopes: string[]; pkce: boolean; redirect: "loopback" | "appProtocol" } {
+function validateOauthConfig(value: unknown): { provider: string; authorizationUrl: string; tokenUrl: string; clientId: string; scopes: string[]; pkce: boolean; redirect: "loopback" | "appProtocol"; loopbackPort?: number } {
   if (!isRecord(value)) throw new Error("Invalid OAuth config.");
   const authorizationUrl = new URL(String(value.authorizationUrl));
   const tokenUrl = new URL(String(value.tokenUrl));
@@ -1115,7 +1115,14 @@ function validateOauthConfig(value: unknown): { provider: string; authorizationU
   const provider = value.provider === undefined ? "generic" : validateProviderName(value.provider);
   const redirect = value.redirect === undefined ? "loopback" : String(value.redirect);
   check(redirect === "loopback" || redirect === "appProtocol", "Invalid OAuth redirect mode.");
-  return { provider, authorizationUrl: authorizationUrl.toString(), tokenUrl: tokenUrl.toString(), clientId, scopes, pkce: value.pkce !== false, redirect: redirect as "loopback" | "appProtocol" };
+  let loopbackPort: number | undefined;
+  if (value.loopbackPort !== undefined) {
+    check(redirect === "loopback", "loopbackPort is only allowed with redirect: 'loopback'.");
+    const portNum = Number(value.loopbackPort);
+    check(Number.isInteger(portNum) && portNum >= 1 && portNum <= 65535, "loopbackPort must be an integer between 1 and 65535.");
+    loopbackPort = portNum;
+  }
+  return { provider, authorizationUrl: authorizationUrl.toString(), tokenUrl: tokenUrl.toString(), clientId, scopes, pkce: value.pkce !== false, redirect: redirect as "loopback" | "appProtocol", loopbackPort };
 }
 
 function validateProviderName(value: unknown): string { const provider = String(value); check(/^[a-z0-9][a-z0-9._-]{0,63}$/.test(provider), "Invalid OAuth provider name."); return provider; }

@@ -54,6 +54,7 @@ Current lineup (verified 2026-06-13 against the folder + manifests):
 | `openpets.launch-buddy` | Launch/checklist companion for shipping moments |
 | `openpets.magic-8-ball` | Command-driven decision/fortune responses |
 | `openpets.fortune-cookie` | Periodic or command-triggered fortunes |
+| `openpets.spotify-buddy` | Music companion showing now-playing status, bubbles, controls, and LRCLIB synchronized lyrics (catalog-only) |
 
 `plugins/official/codemap.md` carries the per-plugin SDK-surface breakdown.
 

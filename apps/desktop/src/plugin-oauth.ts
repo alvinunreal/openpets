@@ -22,6 +22,7 @@ type OauthRequest = {
   scopes: string[];
   pkce: boolean;
   redirect: "loopback" | "appProtocol";
+  loopbackPort?: number;
 };
 
 const flowTimeoutMs = 5 * 60_000;
@@ -42,7 +43,7 @@ export class PluginOauthBroker {
       const verifier = base64Url(randomBytes(48));
       const challenge = base64Url(createHash("sha256").update(verifier).digest());
       const stateToken = base64Url(randomBytes(24));
-      const { server, port, codePromise } = await startLoopbackListener(stateToken);
+      const { server, port, codePromise } = await startLoopbackListener(stateToken, config.loopbackPort);
       try {
         const redirectUri = `http://127.0.0.1:${port}/callback`;
         const authUrl = new URL(config.authorizationUrl);
@@ -100,7 +101,7 @@ export class PluginOauthBroker {
   }
 }
 
-async function startLoopbackListener(stateToken: string): Promise<{ server: Server; port: number; codePromise: Promise<string> }> {
+export async function startLoopbackListener(stateToken: string, loopbackPort?: number): Promise<{ server: Server; port: number; codePromise: Promise<string> }> {
   let resolveCode!: (code: string) => void;
   let rejectCode!: (error: Error) => void;
   const codePromise = new Promise<string>((resolve, reject) => { resolveCode = resolve; rejectCode = reject; });
@@ -126,12 +127,23 @@ async function startLoopbackListener(stateToken: string): Promise<{ server: Serv
       response.writeHead(500).end();
     }
   });
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => resolve());
-  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(loopbackPort ?? 0, "127.0.0.1", () => resolve());
+    });
+  } catch (error) {
+    clearTimeout(timeout);
+    if (loopbackPort !== undefined) {
+      throw new Error(`OAuth loopback port ${loopbackPort} is already in use. Close the other app or retry later.`);
+    }
+    throw error;
+  }
   const address = server.address();
-  if (typeof address !== "object" || address === null) throw new Error("OAuth loopback listener failed to start.");
+  if (typeof address !== "object" || address === null) {
+    clearTimeout(timeout);
+    throw new Error("OAuth loopback listener failed to start.");
+  }
   return { server, port: address.port, codePromise };
 }
 

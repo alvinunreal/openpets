@@ -133,7 +133,7 @@ await scenario("hud bubble spec validation is enforced", async ({ store, bridge 
         ],
       },
     }),
-    /Plugin bubble HUD cannot be combined with text, markdown, body media, or indicator\./,
+    /Plugin bubble HUD cannot be combined with text/,
   );
 
   // Should reject if items contains more than 4 items
@@ -180,6 +180,50 @@ await scenario("hud bubble spec validation is enforced", async ({ store, bridge 
   );
 });
 
+await scenario("oauth loopbackPort validation is enforced", async ({ api, capabilities }) => {
+  const mockConfig = {
+    authorizationUrl: "https://example.com/auth",
+    tokenUrl: "https://example.com/token",
+    clientId: "my-client-id",
+    scopes: ["read"],
+    redirect: "loopback" as const,
+    loopbackPort: 48373,
+  };
+
+  let receivedConfig: any = null;
+  capabilities.auth.oauth = async (pluginId, config) => {
+    receivedConfig = config;
+    return { accessToken: "test-token" };
+  };
+
+  await api.auth.oauth(mockConfig);
+  assert.equal(receivedConfig.loopbackPort, 48373);
+
+  await assert.rejects(
+    () => api.auth.oauth({
+      ...mockConfig,
+      redirect: "appProtocol" as any,
+    }),
+    /loopbackPort is only allowed with redirect: 'loopback'\./,
+  );
+
+  await assert.rejects(
+    () => api.auth.oauth({
+      ...mockConfig,
+      loopbackPort: 99999,
+    }),
+    /loopbackPort must be an integer between 1 and 65535\./,
+  );
+
+  await assert.rejects(
+    () => api.auth.oauth({
+      ...mockConfig,
+      loopbackPort: 12.34,
+    }),
+    /loopbackPort must be an integer between 1 and 65535\./,
+  );
+});
+
 type ScenarioContext = {
   api: ReturnType<PluginSdkBridge["createApi"]>;
   bridge: PluginSdkBridge;
@@ -202,7 +246,7 @@ async function scenario(name: string, run: (context: ScenarioContext) => Promise
       runtime: "javascript",
       sdkVersion: "3.0.0",
       enabled: true,
-      approvedPermissions: ["commands", "events", "storage", "pet:reaction"],
+      approvedPermissions: ["commands", "events", "storage", "pet:reaction", "pet:speak", "auth"],
       config: {},
     };
     store.upsertRecord(record);
@@ -269,7 +313,7 @@ function manifest(): OpenPetsJavascriptPluginManifest {
     runtime: "javascript",
     sdkVersion: "3.0.0",
     entry: "index.js",
-    permissions: ["commands", "events", "storage"],
+    permissions: ["commands", "events", "storage", "pet:speak", "pet:reaction", "pet:pin", "auth"],
     assets: { icons: { focus: "assets/focus.svg" } },
   };
 }

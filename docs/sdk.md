@@ -64,6 +64,11 @@ contract, so program against it rather than any list copied into a doc.
 `OpenPetsPermission` in the SDK mirrors manifest validation so authors get
 autocomplete for exactly the capabilities they can request.
 
+`ctx.auth.oauth(...)` supports provider-specific PKCE flows, including Spotify.
+Desktop/native providers can set `loopbackPort` when their dashboard requires a
+fixed loopback redirect such as `http://127.0.0.1:48373/callback`; omit it to use
+the host's dynamic loopback port default.
+
 ## Design principles authors should know
 
 - **Describe, don't render.** You hand the host descriptors (a bubble, an alert,
