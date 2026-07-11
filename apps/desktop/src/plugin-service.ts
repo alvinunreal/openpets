@@ -828,7 +828,6 @@ function isEntryDeprecated(entry: object): boolean { return "deprecated" in entr
 function getStatusReason(entry: object): string | undefined { return "statusReason" in entry && typeof entry.statusReason === "string" ? entry.statusReason : undefined; }
 function getSdkVersion(entry: object): string | undefined { return "sdkVersion" in entry && typeof entry.sdkVersion === "string" ? entry.sdkVersion : undefined; }
 function getMaxVersion(entry: object): string | undefined { return "maxOpenPetsVersion" in entry && typeof entry.maxOpenPetsVersion === "string" ? entry.maxOpenPetsVersion : undefined; }
-function getNetworkHosts(entry: object): readonly string[] | undefined { return "network" in entry && entry.network && typeof entry.network === "object" && "hosts" in entry.network && Array.isArray(entry.network.hosts) ? entry.network.hosts : undefined; }
 
 function compareSemver(a: string, b: string): number {
   const pa = parseCoreVersion(a); const pb = parseCoreVersion(b);

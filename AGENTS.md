@@ -40,6 +40,25 @@ at `docs/README.md`, then read the doc for the area you're touching:
 When you change behavior, update the matching `docs/*.md` in the same change.
 Ongoing improvement ideas / known issues are tracked in the root `improvements.md`.
 
+## Tests Must Protect Behavior
+
+Tests are evidence of a user-visible behavior, public contract, or a plausible
+regression—not a record of the implementation that happened to be written.
+
+- Before adding a test, state the bug or contract it would catch. If there is
+  no concrete answer, do not add it.
+- Prefer a small assertion of the observable outcome over exact internal calls,
+  helper sequencing, incidental data shapes, generated asset/source mappings,
+  arbitrary versions/counts, or full wording snapshots.
+- Do not test private implementation details merely to increase coverage.
+  Test assets only when their format or integrity is itself a shipped contract.
+- Keep one behavior-focused purpose per test. Remove no-op assertions,
+  duplicate coverage, and brittle snapshots/regexes that fail on harmless
+  refactors or copy changes.
+- When fixing a bug, add the narrowest regression test that fails without the
+  fix. When reviewing existing tests, delete or rewrite tests that do not
+  protect a plausible failure mode.
+
 ## Catalog Direction
 
 Catalog v2 is legacy and exists only for old app versions/fallback compatibility.

@@ -70,6 +70,16 @@ await scenario("OAuth only accepts provider-approved scopes and host-owned param
   await api.auth.oauth({ provider: "google", clientId: "client", scopes: ["https://www.googleapis.com/auth/calendar.events.readonly"] });
 });
 
+await scenario("OAuth accepts a valid client secret and rejects invalid values", async ({ api, capabilities }) => {
+  let received: unknown;
+  capabilities.auth.oauth = async (_pluginId, config) => { received = config; return { accessToken: "" }; };
+  await api.auth.oauth({ provider: "google", clientId: "client", clientSecret: "secret-value", scopes: ["https://www.googleapis.com/auth/calendar.events.readonly"] });
+  assert.deepEqual(received, { provider: "google", clientId: "client", clientSecret: "secret-value", scopes: ["https://www.googleapis.com/auth/calendar.events.readonly"] });
+  await assert.rejects(() => api.auth.oauth({ provider: "google", clientId: "client", clientSecret: "", scopes: ["https://www.googleapis.com/auth/calendar.events.readonly"] }), /Invalid OAuth clientSecret\./);
+  await assert.rejects(() => api.auth.oauth({ provider: "google", clientId: "client", clientSecret: 1, scopes: ["https://www.googleapis.com/auth/calendar.events.readonly"] }), /Invalid OAuth clientSecret\./);
+  await assert.rejects(() => api.auth.oauth({ provider: "google", clientId: "client", clientSecret: "line\nbreak", scopes: ["https://www.googleapis.com/auth/calendar.events.readonly"] }), /Invalid OAuth clientSecret\./);
+});
+
 await scenario("events.on config:changed uses config listener path", async ({ api, bridge, store, capabilities }) => {
   const seen: unknown[] = [];
   const sub = api.events.on("config:changed", (config: Record<string, unknown>) => seen.push(config.value));
@@ -94,6 +104,16 @@ await scenario("commands accept declared icon asset refs and reject raw svg stri
     () => api.commands.register({ id: "raw-svg", title: "Raw SVG", icon: "<svg></svg>" }, () => undefined),
     /Invalid plugin command icon\./,
   );
+});
+
+await scenario("commands retain validated timeout overrides and honor them", async ({ api, bridge }) => {
+  api.commands.register({ id: "oauth-connect", title: "Connect", timeoutMs: 1_000 }, () => new Promise<void>(() => undefined));
+  assert.equal(bridge.getPublicState("plug").commands[0]?.timeoutMs, 1_000);
+  const started = Date.now();
+  await assert.rejects(() => bridge.executeCommand("plug", "oauth-connect"), /Plugin command timed out\./);
+  assert.ok(Date.now() - started < 3_000, "command-specific timeout wins over the five-second default");
+  assert.throws(() => api.commands.register({ id: "fraction", title: "Fraction", timeoutMs: 1_000.5 }, () => undefined), /Invalid plugin command timeoutMs\./);
+  assert.throws(() => api.commands.register({ id: "too-long", title: "Too long", timeoutMs: 300_001 }, () => undefined), /Invalid plugin command timeoutMs\./);
 });
 
 await scenario("pet.react validates silent reaction options", async ({ api }) => {

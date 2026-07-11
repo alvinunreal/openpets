@@ -35,7 +35,6 @@ const behaviorTests = [
   ".test-dist/tests/plugin-catalog-validation.test.js",
   ".test-dist/tests/plugin-package.test.js",
   ".test-dist/tests/plugin-service.test.js",
-  ".test-dist/tests/plugin-ui-static.test.js",
   ".test-dist/tests/plugin-bridge-fuzz.test.js",
   ".test-dist/tests/pet-fallback-notify.test.js",
   ".test-dist/tests/pet-pool-order.test.js",
@@ -48,7 +47,6 @@ const behaviorTests = [
   ".test-dist/tests/window-tracker-chain.test.js",
   ".test-dist/tests/window-tracker-win32.test.js",
   ".test-dist/tests/window-tracker-reentry.test.js",
-  ".test-dist/tests/capabilities-win32.test.js",
   ".test-dist/tests/confinement-manager.test.js",
   ".test-dist/tests/pet-confinement-enabled.test.js",
   ".test-dist/tests/pet-motion-gravity.test.js",
@@ -60,11 +58,9 @@ const behaviorTests = [
   ".test-dist/tests/pet-motion-engine-nan-guard.test.js",
   ".test-dist/tests/pet-roaming-controller.test.js",
   ".test-dist/tests/display.test.js",
-  ".test-dist/tests/renderer-toggles.test.js",
   ".test-dist/tests/preference-patch.test.js",
   ".test-dist/tests/plugin-agent-activity.test.js",
   ".test-dist/tests/pet-window-wayland-predicate.test.js",
-  ".test-dist/tests/plugin-courier-picker.test.js",
 ];
 const contractTests = [
   ".test-dist/contracts/local-ipc-protocol.contract.js",

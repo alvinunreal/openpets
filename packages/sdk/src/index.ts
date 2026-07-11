@@ -606,6 +606,8 @@ export interface OpenPetsCommand {
   /** Ordering within its group (higher first). */
   priority?: number;
   featured?: boolean;
+  /** Maximum time the host waits for this command (1 second to 5 minutes). Defaults to 5 seconds. */
+  timeoutMs?: number;
 }
 
 /** A dynamic context-menu item set via {@link OpenPetsMenuApi.setItems}. */
@@ -819,6 +821,8 @@ export interface OpenPetsVoiceApi {
 export interface OpenPetsOauthConfig {
   provider: "google" | "spotify";
   clientId: string;
+  /** Optional installed-app credential secret required by the provider token endpoint. */
+  clientSecret?: string;
   scopes: string[];
 }
 

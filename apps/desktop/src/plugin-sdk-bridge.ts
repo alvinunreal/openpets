@@ -42,7 +42,7 @@ export type PluginCommandFormField = {
 export type PluginCommandForm = { fields: readonly PluginCommandFormField[]; submitLabel?: string };
 export type PluginIconAssetRef = { kind: "icon"; name: string };
 export type PluginCommandIcon = string | PluginIconAssetRef;
-export type PluginCommand = { id: string; title: string; description?: string; form?: PluginCommandForm; placement?: "top" | "submenu"; priority?: number; featured?: boolean; icon?: PluginCommandIcon };
+export type PluginCommand = { id: string; title: string; description?: string; form?: PluginCommandForm; placement?: "top" | "submenu"; priority?: number; featured?: boolean; icon?: PluginCommandIcon; timeoutMs?: number };
 export type PluginMenuItem = { id: string; title: string; enabled?: boolean; checked?: boolean };
 export type PluginStatus = { text: string; tone?: "info" | "success" | "warning" | "error" };
 export type PluginRuntimePublicState = { commands: readonly PluginCommand[]; status?: PluginStatus; menuItems?: readonly PluginMenuItem[] };
@@ -189,7 +189,7 @@ export interface PluginHostCapabilities {
     listen(opts: { timeoutMs?: number }): Promise<{ text: string }>;
   };
   auth: {
-    oauth(pluginId: string, config: { provider: "google" | "spotify"; clientId: string; scopes: string[] }): Promise<PluginOauthTokens>;
+    oauth(pluginId: string, config: { provider: "google" | "spotify"; clientId: string; clientSecret?: string; scopes: string[] }): Promise<PluginOauthTokens>;
     refresh(pluginId: string, provider: string): Promise<{ accessToken: string; expiresAt?: number }>;
     signOut(pluginId: string, provider: string): Promise<void>;
   };
@@ -777,7 +777,7 @@ export class PluginSdkBridge {
     const values = command.meta.form ? validateCommandFormValues(command.meta.form, args) : undefined;
     state.userCommandDepth += 1;
     const release = () => { setTimeout(() => { state.userCommandDepth = Math.max(0, state.userCommandDepth - 1); }, 2_000).unref?.(); };
-    try { await withTimeout(Promise.resolve().then(() => command.handler(values)), timeoutMs); } catch (error) { this.#logger("warn", "plugin callback failed", { pluginId: id, commandId, reason: safeError(error), errorCode: classifyPluginError(error) }); throw error; } finally { release(); }
+    try { await withTimeout(Promise.resolve().then(() => command.handler(values)), command.meta.timeoutMs ?? timeoutMs); } catch (error) { this.#logger("warn", "plugin callback failed", { pluginId: id, commandId, reason: safeError(error), errorCode: classifyPluginError(error) }); throw error; } finally { release(); }
   }
 
   async executeMenuSelect(id: string, itemId: string): Promise<void> {
@@ -1112,11 +1112,15 @@ function validateAiRequest(value: unknown): PluginAiRequest {
   return out;
 }
 
-function validateOauthConfig(value: unknown): { provider: "google" | "spotify"; clientId: string; scopes: string[] } {
+function validateOauthConfig(value: unknown): { provider: "google" | "spotify"; clientId: string; clientSecret?: string; scopes: string[] } {
   if (!isRecord(value)) throw new Error("Invalid OAuth config.");
   check(value.authUrl === undefined && value.authorizationUrl === undefined && value.tokenUrl === undefined && value.pkce === undefined && value.usePkce === undefined && value.redirect === undefined && value.redirectUri === undefined, "OAuth endpoints and protected parameters are host-controlled.");
   const clientId = String(value.clientId ?? "");
   check(clientId.length >= 1 && clientId.length <= 512 && !/[\s\0]/.test(clientId), "Invalid OAuth clientId.");
+  let clientSecret: string | undefined;
+  if (value.clientSecret === undefined) clientSecret = undefined;
+  else if (typeof value.clientSecret === "string" && value.clientSecret.length >= 1 && value.clientSecret.length <= 512 && !/[\s\0]/.test(value.clientSecret)) clientSecret = value.clientSecret;
+  else throw new Error("Invalid OAuth clientSecret.");
   check(Array.isArray(value.scopes) && value.scopes.length >= 1 && value.scopes.length <= 32, "Invalid OAuth scopes.");
   const scopes = (value.scopes as unknown[]).map((scope) => { const text = String(scope); check(text.length >= 1 && text.length <= 256 && !/[\r\n\0]/.test(text), "Invalid OAuth scope."); return text; });
   const provider = String(value.provider);
@@ -1125,7 +1129,7 @@ function validateOauthConfig(value: unknown): { provider: "google" | "spotify"; 
     ? new Set(["https://www.googleapis.com/auth/calendar.events.readonly"])
     : new Set(["user-read-playback-state", "user-modify-playback-state", "user-read-currently-playing"]);
   check(new Set(scopes).size === scopes.length && scopes.every((scope) => allowedScopes.has(scope)), `OAuth scopes are not allowed for provider: ${provider}`);
-  return { provider: provider as "google" | "spotify", clientId, scopes };
+  return { provider: provider as "google" | "spotify", clientId, clientSecret, scopes };
 }
 
 function validateProviderName(value: unknown): string { const provider = String(value); check(/^[a-z0-9][a-z0-9._-]{0,63}$/.test(provider), "Invalid OAuth provider name."); return provider; }
@@ -1146,7 +1150,8 @@ function validateCommand(command: PluginCommand, validateIconAssetRef: (ref: unk
   const placement = command.placement === undefined ? undefined : (check(command.placement === "top" || command.placement === "submenu", "Invalid plugin command placement."), command.placement);
   const priority = command.priority === undefined ? undefined : (check(Number.isFinite(Number(command.priority)), "Invalid plugin command priority."), clampNumber(Number(command.priority), -1000, 1000));
   const icon = command.icon === undefined ? undefined : validateCommandIcon(command.icon, validateIconAssetRef);
-  return { id: command.id, title: command.title, description: command.description, form: validateCommandForm(command.form), placement, priority, featured: command.featured === true || undefined, icon };
+  const timeoutMs = command.timeoutMs === undefined ? undefined : (check(typeof command.timeoutMs === "number" && Number.isFinite(command.timeoutMs) && Number.isInteger(command.timeoutMs) && command.timeoutMs >= 1_000 && command.timeoutMs <= 5 * 60_000, "Invalid plugin command timeoutMs."), command.timeoutMs);
+  return { id: command.id, title: command.title, description: command.description, form: validateCommandForm(command.form), placement, priority, featured: command.featured === true || undefined, icon, timeoutMs };
 }
 
 function validateCommandIcon(icon: unknown, validateIconAssetRef: (ref: unknown) => { kind: PluginAssetKind; name: string; path: string }): PluginCommandIcon {

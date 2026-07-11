@@ -64,6 +64,18 @@ contract, so program against it rather than any list copied into a doc.
 `OpenPetsPermission` in the SDK mirrors manifest validation so authors get
 autocomplete for exactly the capabilities they can request.
 
+Commands time out after five seconds by default. A command that deliberately
+waits for user interaction, such as host-mediated OAuth, may declare a bounded
+`timeoutMs` between one second and five minutes.
+
+### OAuth installed-app credentials
+
+`ctx.auth.oauth` accepts an optional `clientSecret` alongside the provider,
+client ID, and approved scopes. An installed-app credential may require that
+secret at its token endpoint even when the host uses PKCE and a loopback
+redirect. The host keeps OAuth session data, including a supplied client secret,
+in encrypted plugin-scoped secret storage; plugins should not log it.
+
 ### `ctx.ui.delivery`
 
 `ctx.ui.delivery` requests a generic, host-owned, display-level delivery and

@@ -66,7 +66,6 @@ setCrossDisplayRoamingEnabled(false);
   // Give the check loop a chance to poll (it polls with setTimeout of ~32ms)
   await new Promise<void>(resolve => setTimeout(resolve, 100));
   assert.ok(resolved, "promise resolves after motionStop clears moveTarget");
-  assert.ok(true, "motionMoveTo with physics active resolves without throwing");
 }
 
 // ---------------------------------------------------------------------------
@@ -102,7 +101,6 @@ setCrossDisplayRoamingEnabled(false);
   await movePromise;
   // Should have moved via step loop
   assert.ok(currentPos.x >= 200, "position updated via step loop");
-  assert.ok(true, "legacy step loop path resolves without throwing");
 }
 
 // ---------------------------------------------------------------------------

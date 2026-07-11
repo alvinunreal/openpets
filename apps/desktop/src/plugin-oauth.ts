@@ -17,6 +17,7 @@ import type { PluginOauthTokens } from "./plugin-sdk-bridge.js";
 type OauthRequest = {
   provider: "google" | "spotify";
   clientId: string;
+  clientSecret?: string;
   scopes: string[];
 };
 
@@ -86,17 +87,17 @@ export class PluginOauthBroker {
     const stored = await this.#secrets.get(pluginId, `oauth:${provider}`);
     if (!stored) throw new Error(`No stored OAuth session for provider: ${provider}`);
     if (provider !== "google" && provider !== "spotify") throw new Error(`OAuth provider is not supported: ${provider}`);
-    const session = JSON.parse(stored) as { refreshToken?: string; clientId: string };
+    const session = JSON.parse(stored) as { refreshToken?: string; clientId: string; clientSecret?: string };
     if (!session.refreshToken) throw new Error(`The stored OAuth session for ${provider} has no refresh token.`);
     const response = await fetch(oauthProviders[provider].tokenUrl, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: session.refreshToken, client_id: session.clientId }).toString(),
+      body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: session.refreshToken, client_id: session.clientId, ...(session.clientSecret ? { client_secret: session.clientSecret } : {}) }).toString(),
       redirect: "error",
     });
     let parsed: Awaited<ReturnType<typeof parseTokenResponse>>;
     try {
-      parsed = await parseTokenResponse(response, "refresh");
+      parsed = await parseTokenResponse(response, provider, "refresh");
     } catch (error) {
       if (error instanceof PluginOauthError && error.code === "invalid_grant") await this.#secrets.delete(pluginId, `oauth:${provider}`);
       throw error;
@@ -113,7 +114,7 @@ export class PluginOauthBroker {
 
   async #persistTokens(pluginId: string, config: OauthRequest, tokens: PluginOauthTokens): Promise<void> {
     try {
-      await this.#secrets.set(pluginId, `oauth:${config.provider}`, JSON.stringify({ clientId: config.clientId, accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, expiresAt: tokens.expiresAt }));
+      await this.#secrets.set(pluginId, `oauth:${config.provider}`, JSON.stringify({ clientId: config.clientId, clientSecret: config.clientSecret, accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, expiresAt: tokens.expiresAt }));
     } catch (error) {
       warn("plugin", "oauth token persistence failed", { pluginId, provider: config.provider, error: error instanceof Error ? error.message : String(error) });
       throw new Error("OAuth token persistence failed.");
@@ -158,6 +159,7 @@ async function startLoopbackListener(stateToken: string): Promise<{ server: Serv
 
 async function exchangeCode(config: OauthRequest, code: string, redirectUri: string, verifier: string | undefined): Promise<PluginOauthTokens> {
   const body = new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: redirectUri, client_id: config.clientId });
+  if (config.clientSecret) body.set("client_secret", config.clientSecret);
   if (verifier) body.set("code_verifier", verifier);
   const response = await fetch(oauthProviders[config.provider].tokenUrl, {
     method: "POST",
@@ -165,7 +167,7 @@ async function exchangeCode(config: OauthRequest, code: string, redirectUri: str
     body: body.toString(),
     redirect: "error",
   });
-  const parsed = await parseTokenResponse(response, "exchange");
+  const parsed = await parseTokenResponse(response, config.provider, "exchange");
   if (!parsed.access_token) throw new Error("OAuth token exchange returned no access token.");
   return {
     accessToken: parsed.access_token,
@@ -181,12 +183,33 @@ function validateProviderScopes(config: OauthRequest): void {
   }
 }
 
-async function parseTokenResponse(response: Response, operation: "exchange" | "refresh"): Promise<{ access_token?: string; refresh_token?: string; expires_in?: number; error?: string; error_description?: string }> {
+async function parseTokenResponse(response: Response, provider: "google" | "spotify", operation: "exchange" | "refresh"): Promise<{ access_token?: string; refresh_token?: string; expires_in?: number; error?: string; error_description?: string }> {
   let parsed: { access_token?: string; refresh_token?: string; expires_in?: number; error?: string; error_description?: string } = {};
   try { parsed = await response.json() as typeof parsed; } catch { /* report the HTTP failure below */ }
-  if (parsed.error === "invalid_grant") throw new PluginOauthError("invalid_grant", parsed.error_description || "OAuth authorization has expired or was revoked.");
-  if (!response.ok) throw new Error(`OAuth token ${operation} failed with HTTP ${response.status}.`);
+  if (!response.ok) {
+    const errorCode = sanitizeOauthErrorPart(parsed.error, 80);
+    const errorDescription = sanitizeOauthErrorPart(parsed.error_description, 240);
+    warn("plugin", "oauth token request failed", { provider, operation, status: response.status, errorCode, errorDescription });
+    if (parsed.error === "invalid_grant") throw new PluginOauthError("invalid_grant", errorDescription || "OAuth authorization has expired or was revoked.");
+    const detail = [errorCode, errorDescription].filter(Boolean).join(": ");
+    throw new Error(detail ? `OAuth token ${operation} failed: ${detail}.` : `OAuth token ${operation} failed with HTTP ${response.status}.`);
+  }
+  if (parsed.error === "invalid_grant") throw new PluginOauthError("invalid_grant", sanitizeOauthErrorPart(parsed.error_description, 240) || "OAuth authorization has expired or was revoked.");
   return parsed;
+}
+
+function sanitizeOauthErrorPart(value: unknown, limit: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const sanitized = value
+    .replace(/[\0-\x1F\x7F]+/g, " ")
+    .replace(/\b(?:authorization_?)?code=[^\s&]+/gi, "code=[redacted]")
+    .replace(/\b(?:access_?|refresh_?)?token=[^\s&]+/gi, "token=[redacted]")
+    .replace(/\bclient_secret=[^\s&]+/gi, "client_secret=[redacted]")
+    .replace(/\bcode_verifier=[^\s&]+/gi, "code_verifier=[redacted]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, limit);
+  return sanitized || undefined;
 }
 
 function base64Url(buffer: Buffer): string {

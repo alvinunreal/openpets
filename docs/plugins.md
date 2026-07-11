@@ -224,11 +224,13 @@ instances, and deliberately omits all-day events in this first release. It
 delivers an airmail reminder ten minutes before an event and again at its start.
 
 Connection begins only from the plugin's explicit sign-in command. The official
-Google Cloud **Desktop app** OAuth client must be configured for the release;
-the user then selects the plugin's Connect command and completes the
-host-managed browser/loopback PKCE flow. The plugin requests only Google
-Calendar's event read-only scope and may contact
-only `www.googleapis.com`; no client secret is used or stored. While Google's
+Google Cloud **Desktop app** OAuth credential used for the release includes its
+client ID and the client secret required by Google's token endpoint; the user
+then selects the plugin's Connect command and completes the host-managed
+browser/loopback PKCE flow. The plugin requests only Google Calendar's event
+read-only scope and may contact only `www.googleapis.com`. The host persists
+the OAuth session, including this credential when supplied, in encrypted
+plugin-scoped secret storage. While Google's
 consent screen is in Testing, add intended users as test users. Broad external
 distribution requires Google consent-screen verification.
 
@@ -236,8 +238,14 @@ Calendar Airmail reconciles a bounded rolling view of the primary calendar and
 keeps durable occurrence and delivery state so reminders recover across app
 restart, sleep, configuration changes, and reconnection. Temporary network
 failures retain the last known schedule. If authorization is revoked or expires
-and cannot be refreshed, the plugin clears its Google session, reports that
-reconnection is required, and the user should run its sign-in command again.
+and cannot be refreshed, the plugin clears its Google session and outstanding
+delivery schedule, reports that reconnection is required, and the user should
+run its sign-in command again.
+Its status shows the synced upcoming-event count and the next event's local
+start and Airmail reminder times (or that no timed events were found), so users
+can confirm the calendar data it sees. The pet menu exposes **Connect Google
+Calendar** only while disconnected; once connected, it instead exposes **Sync
+now**, **Test delivery**, and **Disconnect Google Calendar**.
 Its manifest requests only `ui:delivery`, `auth`, `network`, `schedule`,
 `storage`, `commands`, and `status`.
 

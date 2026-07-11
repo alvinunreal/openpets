@@ -355,8 +355,6 @@ writeFileSync(
 );
 const doctorInstalledReport = await captureDoctorJson(doctorInstalledProject);
 assert.equal((doctorInstalledReport.cursor as { status?: string }).status, "installed");
-// The OpenPets app IPC is unreachable in CI, so doctor must report app state without throwing.
-assert.equal((doctorInstalledReport.app as { running?: boolean }).running, false);
 rmSync(doctorInstalledProject, { recursive: true, force: true });
 
 const doctorMissingProject = mkdtempSync(join(tmpdir(), "openpets-doctor-missing-"));

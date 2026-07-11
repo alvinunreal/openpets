@@ -76,17 +76,15 @@ Each package runs its own `check`/`test`. Notable contract/boundary coverage:
   formats/size caps, entry files, and panels — run it before packaging.
 
 - **Calendar Airmail**: its deterministic harness coverage should exercise the
-  courier default/config migration (including ignored legacy `pet` values),
-  primary-calendar reconciliation, ten-minute and start deliveries, duplicate
-  suppression, and reconnect-required behavior. It also verifies every bundled
-  courier's declared eight-frame transparent WebP strip, including chroma-spill
-  rejection and per-frame component isolation, when image tooling is available.
-  Run its plugin test alongside `pnpm plugins:locales`,
+  primary-calendar reconciliation, state-appropriate connection commands,
+  ten-minute and start deliveries, duplicate suppression, selected/default
+  couriers, and reconnect-required cleanup. Run its plugin test alongside
+  `pnpm plugins:locales`,
   `pnpm plugins:test`, and `pnpm --filter @open-pets/plugin-sdk check` when
   changing its SDK-facing behavior.
 - **Delivery/picker boundary**: desktop bridge tests cover `ui:delivery`
-  permission and lifecycle semantics; static renderer tests cover the sprite-grid
-  picker and its reduced-motion rule. For an Electron end-to-end smoke run,
+  permission and lifecycle semantics; manifest validation covers declared
+  sprite-grid options and asset references. For an Electron end-to-end smoke run,
   verify that the Airmail settings grid loads each bundled courier, keyboard and
   pointer selection persist, reduced motion is static, and a test delivery uses
   the selected courier without requiring any installed pet.
