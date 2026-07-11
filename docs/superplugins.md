@@ -84,7 +84,9 @@ plugins are shipped as packaging extra-resources (`plugins/official` → package
 
 - **Bundled with the app**: `openpets.reminders`, `openpets.virtual-pet`
   (`bundledOfficialPluginIds`).
-- **Enabled by default**: the same two (`bundledEnabledByDefault`).
+- **Enabled by default**: `openpets.reminders` only (`bundledEnabledByDefault`).
+- **Bundled but disabled by default**: `openpets.virtual-pet`; users can enable it
+  from the Plugins page.
 - **`staleBundledPluginIds`**: an explicit cleanup list of plugin ids that were
   bundled in past builds and must be removed on upgrade (e.g. `ambient-companion`,
   `break-buddy`, `focus-buddy`-as-bundled, `github-notifications`, `pomodoro`,

@@ -241,11 +241,17 @@ failures retain the last known schedule. If authorization is revoked or expires
 and cannot be refreshed, the plugin clears its Google session and outstanding
 delivery schedule, reports that reconnection is required, and the user should
 run its sign-in command again.
+If Google Calendar API access is denied, it keeps the connection and existing
+deliveries, shows an API/account-access warning, and records only the bounded,
+sanitized HTTP status and Google error classification in plugin diagnostics.
 Its status shows the synced upcoming-event count and the next event's local
 start and Airmail reminder times (or that no timed events were found), so users
-can confirm the calendar data it sees. The pet menu exposes **Connect Google
-Calendar** only while disconnected; once connected, it instead exposes **Sync
-now**, **Test delivery**, and **Disconnect Google Calendar**.
+can confirm the calendar data it sees. When future timed events remain today,
+the pet menu also shows disabled summary rows for the remaining-today count and
+the next event's local time and relative countdown; it hides those rows when
+there are none. The pet menu exposes **Connect Google Calendar** only while
+disconnected; once connected, it instead exposes **Sync now**, **Test
+delivery**, and **Disconnect Google Calendar**.
 Its manifest requests only `ui:delivery`, `auth`, `network`, `schedule`,
 `storage`, `commands`, and `status`.
 

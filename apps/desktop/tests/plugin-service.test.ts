@@ -400,6 +400,18 @@ await localScenario("bundled seeding copies manifest and preserves user choices"
   assert.deepEqual(record?.approvedPermissions, ["pet:speak", "pet:reaction"]);
 });
 
+await localScenario("bundled virtual pet is disabled for a fresh install", async ({ userData, root, store }) => {
+  const official = join(root, "official");
+  const source = join(official, "openpets.virtual-pet");
+  writeManifest(source, { manifestVersion: 2, id: "openpets.virtual-pet", name: "Virtual Pet", version: "1.0.0", runtime: "javascript", sdkVersion: "1.0.0", entry: "index.js", permissions: ["pet:speak"] });
+  writeFileSync(join(source, "index.js"), "OpenPetsPlugin.register({ start() {} });\n", "utf8");
+  const service = new PluginService({ userDataPath: userData, stateStore: store, runtime: new FakeRuntime() as never, bundledPluginSourceDirs: [official] });
+
+  await service.start();
+
+  assert.equal(store.getRecord("openpets.virtual-pet")?.enabled, false);
+});
+
 await localScenario("bundled seeding prunes stale ids and blocks uninstall update", async ({ userData, root, store }) => {
   const oldInstall = join(userData, "plugins", "openpets.pomodoro");
   const oldManifest = writeManifest(oldInstall, manifest({ id: "openpets.pomodoro" }));

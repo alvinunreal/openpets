@@ -52,7 +52,25 @@ function rebuildPending(state, now) {
 async function status(ctx, key, vars, tone = "info") { await ctx.status.set({ text: text(ctx.t(key, vars), 500), tone }); }
 async function courier(ctx) { const config = await ctx.config.get(); return typeof config?.courier === "string" && config.courier ? config.courier : DEFAULT_COURIER; }
 function localDateTime(ctx, time) { return new Intl.DateTimeFormat(ctx.locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(time)); }
+function localTime(ctx, time) { return new Intl.DateTimeFormat(ctx.locale, { timeStyle: "short" }).format(new Date(time)); }
+function nextLocalMidnight(now) { const midnight = new Date(now); midnight.setHours(24, 0, 0, 0); return midnight.getTime(); }
+function relativeCountdown(ctx, time, now) {
+  const minutes = Math.max(1, Math.ceil((time - now) / 60_000));
+  const unit = minutes >= 60 && minutes % 60 === 0 ? "hour" : "minute";
+  const value = unit === "hour" ? Math.ceil(minutes / 60) : minutes;
+  return new Intl.RelativeTimeFormat(ctx.locale, { numeric: "auto" }).format(value, unit);
+}
 function nextOccurrence(state) { return state.occurrences.reduce((next, occurrence) => !next || occurrence.startAt < next.startAt ? occurrence : next, null); }
+async function updateTodayMenu(ctx, state, now = Date.now()) {
+  if (!state.connected) return ctx.ui.menu.setItems([]);
+  const remaining = state.occurrences.filter((occurrence) => occurrence.startAt > now && occurrence.startAt < nextLocalMidnight(now)).sort((a, b) => a.startAt - b.startAt);
+  if (!remaining.length) return ctx.ui.menu.setItems([]);
+  const next = remaining[0];
+  return ctx.ui.menu.setItems([
+    { id: "today-count", title: text(ctx.t("menu.todayCount", { count: remaining.length }), 160), enabled: false },
+    { id: "today-next", title: text(ctx.t("menu.todayNext", { title: text(next.title || next.eventId, 80), time: localTime(ctx, next.startAt), countdown: relativeCountdown(ctx, next.startAt, now) }), 200), enabled: false },
+  ]);
+}
 async function syncedStatus(ctx, state) {
   const next = nextOccurrence(state);
   if (!next) return status(ctx, "status.syncedEmpty", undefined, "success");
@@ -73,7 +91,7 @@ async function updateCommands(ctx, connected) {
       try {
         const tokens = await ctx.auth.oauth({ provider: "google", clientId: GOOGLE_CLIENT_ID, clientSecret: GOOGLE_CLIENT_SECRET, scopes: [GOOGLE_SCOPE] });
         session = tokens;
-        await exclusive(async () => { const state = await read(ctx); state.connected = true; await write(ctx, state); });
+        await exclusive(async () => { const state = await read(ctx); state.connected = true; await write(ctx, state); await updateTodayMenu(ctx, state); });
         await updateCommands(ctx, true); await status(ctx, "status.connected", undefined, "success"); await sync(ctx);
       } catch (error) {
         await ctx.log.warn("calendar airmail auth failure", { classification: error?.code === "invalid_grant" ? "invalid_grant" : "oauth_failed" });
@@ -83,7 +101,7 @@ async function updateCommands(ctx, connected) {
     await ctx.commands.register({ id: "sync-now", title: "$t:command.sync.title", description: "$t:command.sync.description", icon: "timer" }, () => sync(ctx));
     await ctx.commands.register({ id: "disconnect", title: "$t:command.disconnect.title", description: "$t:command.disconnect.description", icon: "bell" }, async () => {
       await ctx.auth.signOut("google"); session = null;
-      await exclusive(async () => { await ctx.schedule.cancel(NEXT_SCHEDULE); await write(ctx, emptyState()); });
+      await exclusive(async () => { const state = emptyState(); await ctx.schedule.cancel(NEXT_SCHEDULE); await write(ctx, state); await updateTodayMenu(ctx, state); });
       await updateCommands(ctx, false); await status(ctx, "status.disconnected");
     });
     return ctx.commands.register({ id: "test-delivery", title: "$t:command.test.title", description: "$t:command.test.description", icon: "bell" }, async () => {
@@ -98,7 +116,7 @@ async function arm(ctx, state, now = Date.now()) {
   const next = state.pending.reduce((earliest, item) => !earliest || Math.max(item.dueAt, item.retryAt ?? item.dueAt) < Math.max(earliest.dueAt, earliest.retryAt ?? earliest.dueAt) ? item : earliest, null);
   if (next) await ctx.schedule.once(NEXT_SCHEDULE, Math.max(1, Math.max(next.dueAt, next.retryAt ?? next.dueAt) - now), () => deliverDue(ctx));
 }
-async function rebuild(ctx) { return exclusive(async () => { const now = Date.now(); const state = await read(ctx); prune(state, now); rebuildPending(state, now); await write(ctx, state); await arm(ctx, state, now); }); }
+async function rebuild(ctx) { return exclusive(async () => { const now = Date.now(); const state = await read(ctx); prune(state, now); rebuildPending(state, now); await write(ctx, state); await arm(ctx, state, now); await updateTodayMenu(ctx, state, now); }); }
 
 export async function deliverDue(ctx) {
   return exclusive(async () => {
@@ -122,7 +140,7 @@ export async function deliverDue(ctx) {
         item.retryAt = now + 60_000; await write(ctx, state);
       }
     }
-    prune(state, now); await write(ctx, state); await arm(ctx, state, now);
+    prune(state, now); await write(ctx, state); await arm(ctx, state, now); await updateTodayMenu(ctx, state, now);
   });
 }
 
@@ -131,10 +149,30 @@ async function token(ctx) {
   session = await ctx.auth.refresh("google"); return session.accessToken;
 }
 async function request(ctx, accessToken, url) { return ctx.net.fetch(url, { headers: { authorization: `Bearer ${accessToken}` }, timeoutMs: 12_000 }); }
+function safeGoogleErrorText(value) {
+  if (typeof value !== "string") return undefined;
+  const sanitized = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/https?:\/\/\S+/gi, "[url]").replace(/\b(access_?token|refresh_?token|authorization|bearer)\b\s*[:=]?\s*\S+/gi, "$1 [redacted]").replace(/\s+/g, " ").trim();
+  return sanitized ? sanitized.slice(0, 160) : undefined;
+}
+function calendarApiFailure(response) {
+  const payload = response?.json && typeof response.json === "object" ? response.json : (() => { try { return JSON.parse(response?.text || "{}"); } catch { return {}; } })();
+  const error = payload?.error && typeof payload.error === "object" ? payload.error : {};
+  const details = Array.isArray(error.errors) && error.errors[0] && typeof error.errors[0] === "object" ? error.errors[0] : {};
+  const failure = new Error(`calendar-api-${response?.status}`);
+  failure.calendarApi = {
+    httpStatus: Number.isInteger(response?.status) ? response.status : undefined,
+    googleStatus: safeGoogleErrorText(error.status),
+    reason: safeGoogleErrorText(details.reason),
+    message: safeGoogleErrorText(error.message),
+  };
+  return failure;
+}
 async function failedAuth(ctx, error) {
+  if (error?.calendarApi) await ctx.log.warn("calendar airmail api failure", error.calendarApi);
   await ctx.log.warn("calendar airmail sync failure", { classification: error?.code === "invalid_grant" ? "invalid_grant" : "sync_failed" });
   const state = await read(ctx);
-  if (error?.code === "invalid_grant") { session = null; await ctx.schedule.cancel(NEXT_SCHEDULE); await write(ctx, emptyState()); await updateCommands(ctx, false); await status(ctx, "status.reconnect", undefined, "warning"); }
+  if (error?.code === "invalid_grant") { session = null; const empty = emptyState(); await ctx.schedule.cancel(NEXT_SCHEDULE); await write(ctx, empty); await updateTodayMenu(ctx, empty); await updateCommands(ctx, false); await status(ctx, "status.reconnect", undefined, "warning"); }
+  else if (error?.calendarApi?.httpStatus === 403) await status(ctx, "status.accessDenied", undefined, "warning");
   else await status(ctx, "status.offline", undefined, "warning");
   return false;
 }
@@ -151,14 +189,14 @@ export async function sync(ctx) {
         const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""}`;
         let response = await request(ctx, accessToken, url);
         if (response.status === 401) { session = await ctx.auth.refresh("google"); accessToken = session.accessToken; response = await request(ctx, accessToken, url); }
-        if (!response.ok) throw new Error(`calendar-http-${response.status}`);
+        if (!response.ok) throw calendarApiFailure(response);
         const body = response.json ?? JSON.parse(response.text || "{}"); if (!Array.isArray(body.items)) throw new Error("calendar-response");
         events.push(...body.items); pageToken = typeof body.nextPageToken === "string" ? body.nextPageToken : "";
         if (!pageToken) break;
         if (page === 9 || events.length >= 2500) { await status(ctx, "status.cap", undefined, "warning"); return false; }
       }
     } catch (error) { return failedAuth(ctx, error); }
-    state.occurrences = normalizeEvents(events); prune(state, now); rebuildPending(state, now); await write(ctx, state); await arm(ctx, state, now); await syncedStatus(ctx, state); const nextDueAt = state.pending.reduce((next, item) => !next || item.dueAt < next ? item.dueAt : next, undefined); await ctx.log.info("calendar airmail sync succeeded", { count: state.occurrences.length, nextDueAt }); return true;
+    state.occurrences = normalizeEvents(events); prune(state, now); rebuildPending(state, now); await write(ctx, state); await arm(ctx, state, now); await updateTodayMenu(ctx, state, now); await syncedStatus(ctx, state); const nextDueAt = state.pending.reduce((next, item) => !next || item.dueAt < next ? item.dueAt : next, undefined); await ctx.log.info("calendar airmail sync succeeded", { count: state.occurrences.length, nextDueAt }); return true;
   });
 }
 

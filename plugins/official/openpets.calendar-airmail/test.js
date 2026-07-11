@@ -28,6 +28,26 @@ try {
   assert.deepEqual(commandIds(h), ["sync-now", "disconnect", "test-delivery"], "calendar commands become available after connecting");
   assert.equal(h.calls.status.at(-1)?.tone, "success", "a successful sync reports successful calendar status");
   assert.equal(h.calls.schedules.has("calendar-airmail-next"), true, "an upcoming event arms a delivery schedule");
+  assert.equal(h.calls.menuItems.length, 2, "today's next event appears in the pet menu");
+  assert.equal(h.calls.menuItems.every((item) => item.enabled === false), true, "calendar today summary items are disabled");
+  assert.equal(h.calls.menuItems.some((item) => item.title.includes("Event upcoming")), true, "the menu identifies today's next event");
+
+  h.ctx.net.fetch = async () => ({ status: 200, ok: true, headers: {}, text: "", json: { items: [] } });
+  await sync(h.ctx);
+  assert.deepEqual(h.calls.menuItems, [], "the menu clears when no future timed event remains today");
+
+  const denied = createTestHarness(register, { permissions, locales, config: { courier: "courier-owl" }, nowMs: h.clock.now() });
+  const deniedOccurrence = { key: "denied", eventId: "denied", title: "Denied", startAt: h.clock.now() + 60_000, endAt: h.clock.now() + 3_600_000 };
+  await denied.ctx.storage.set("calendar-airmail-state", { connected: true, occurrences: [deniedOccurrence], pending: [{ key: "calendar.denied.0", dueAt: h.clock.now() + 60_000, offset: 0, occurrence: deniedOccurrence }], delivered: [] });
+  const apiFailures = [];
+  denied.ctx.log.warn = async (message, fields) => { if (message === "calendar airmail api failure") apiFailures.push(fields); };
+  denied.ctx.net.fetch = async () => ({ status: 403, ok: false, headers: {}, text: JSON.stringify({ error: { status: "PERMISSION_DENIED", message: "Calendar API access denied at https://example.test/?access_token=secret", errors: [{ reason: "accessNotConfigured" }], events: [{ summary: "private event" }] } }) });
+  await denied.start();
+  await sync(denied.ctx);
+  assert.equal(denied.calls.storage.get("calendar-airmail-state").connected, true, "Calendar API denial retains the connection state");
+  assert.equal(denied.calls.status.at(-1)?.text.includes("Calendar API access was denied"), true, "Calendar API denial publishes an access-denied warning");
+  assert.equal(denied.calls.status.at(-1)?.tone, "warning", "Calendar API denial is a warning");
+  assert.equal(apiFailures.some((failure) => failure?.httpStatus === 403 && failure?.googleStatus === "PERMISSION_DENIED" && failure?.reason === "accessNotConfigured" && failure?.message?.includes("[url]") && !failure?.message?.includes("secret")), true, "Calendar API denial logs safe status and reason classification");
 
   const occurrence = { key: "two-offsets", eventId: "two-offsets", title: "Two offsets", startAt: h.clock.now(), endAt: h.clock.now() + 3_600_000 };
   await h.ctx.storage.set("calendar-airmail-state", {
@@ -47,6 +67,7 @@ try {
 
   await h.runCommand("disconnect");
   assert.deepEqual(commandIds(h), ["connect"], "disconnecting removes calendar-only commands");
+  assert.deepEqual(h.calls.menuItems, [], "disconnecting clears the calendar today summary");
 
   const defaultCourier = createTestHarness(register, { permissions, locales, config: {}, nowMs: h.clock.now() });
   await defaultCourier.ctx.storage.set("calendar-airmail-state", { connected: true, occurrences: [], pending: [], delivered: [] });
