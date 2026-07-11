@@ -82,9 +82,10 @@ Defaults are defined in `apps/desktop/src/plugin-service.ts` and the bundled
 plugins are shipped as packaging extra-resources (`plugins/official` → packaged
 `plugins/official`, enforced by `check-packaging-contract.ts`):
 
-- **Bundled with the app**: `openpets.reminders`, `openpets.virtual-pet`
-  (`bundledOfficialPluginIds`).
-- **Enabled by default**: `openpets.reminders` only (`bundledEnabledByDefault`).
+- **Bundled with the app**: `openpets.reminders`, `openpets.focus-buddy`,
+  `openpets.launch-buddy`, `openpets.virtual-pet` (`bundledOfficialPluginIds`).
+- **Enabled by default**: `openpets.reminders`, `openpets.focus-buddy`,
+  `openpets.launch-buddy` (`bundledEnabledByDefault`).
 - **Bundled but disabled by default**: `openpets.virtual-pet`; users can enable it
   from the Plugins page.
 - **`staleBundledPluginIds`**: an explicit cleanup list of plugin ids that were
