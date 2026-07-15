@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { LanCoordinator, countLanTopologyLinks, normalizeLanEdge, normalizeLanHost, normalizeLanPoint, normalizeLanTopology, validateLanTopology } from "../src/lan-state.js";
+import { LanCoordinator, countLanTopologyLinks, normalizeLanEdge, normalizeLanHost, normalizeLanPetId, normalizeLanPoint, normalizeLanTopology, validateLanTopology } from "../src/lan-state.js";
 
 const coordinator = new LanCoordinator({ staleClientMs: 1_000 });
 
@@ -68,6 +68,22 @@ offlineState = offlineNeighborCoordinator.updatePosition("alpha", { x: 120, y: 1
 offlineState = offlineNeighborCoordinator.updatePosition("alpha", { x: 999, y: 100 }, "right", 6_300);
 assert.equal(offlineState.currentHost, "beta", "offline configured neighbor should fall back to sorted cycling");
 
+// Multi-pet foundation: each host contributes an independently movable pet,
+// allowing two pets to occupy the same host without changing legacy behavior.
+const multiPetCoordinator = new LanCoordinator({ staleClientMs: 10_000 });
+let multiPetState = multiPetCoordinator.register("alpha", { x: 100, y: 100 }, 7_000, "cat");
+multiPetState = multiPetCoordinator.register("beta", { x: 200, y: 100 }, 7_100, "dog");
+assert.deepEqual(multiPetState.pets?.map((pet) => [pet.ownerHost, pet.petId, pet.currentHost]), [
+  ["alpha", "cat", "alpha"],
+  ["beta", "dog", "beta"],
+], "each LAN host should register its own independently hosted pet");
+multiPetState = multiPetCoordinator.updatePosition("alpha", { x: 120, y: 100 }, null, 7_200, "alpha");
+multiPetState = multiPetCoordinator.updatePosition("alpha", { x: 999, y: 100 }, "right", 7_300, "alpha");
+assert.deepEqual(multiPetState.pets?.map((pet) => [pet.ownerHost, pet.currentHost]), [
+  ["alpha", "beta"],
+  ["beta", "beta"],
+], "one LAN pet should migrate onto a host that already has another pet");
+
 
 const topologyDiagnostics = normalizeLanTopology({
   alpha: { right: "beta", left: "alpha" },
@@ -90,5 +106,7 @@ assert.deepEqual(normalizeLanPoint({ x: 12.7, y: "9" }), { x: 13, y: 9 });
 assert.equal(normalizeLanPoint({ x: Number.NaN, y: 1 }), undefined);
 assert.equal(normalizeLanEdge("left"), "left");
 assert.equal(normalizeLanEdge("diagonal"), null);
+assert.equal(normalizeLanPetId("pixel-cat"), "pixel-cat");
+assert.equal(normalizeLanPetId("../cat"), null);
 
 console.log("LAN coordinator validation passed.");

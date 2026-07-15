@@ -4,6 +4,19 @@ This experimental mode makes one OpenPets default pet shared across PCs on a LAN
 Only the current owner machine shows the pet. Dragging the pet to a screen edge
 hands ownership to the next/previous connected host.
 
+## Experimental multi-pet foundation
+
+The coordinator state can also represent one independently traveling pet per
+connected host. Each record keeps the pet's owner host, selected pet ID, current
+host, and latest position. This foundation allows two pets to occupy the same
+host while preserving the existing single-pet fields and behavior.
+
+Rendering two pets, meeting interactions, privacy-preserving MCP work signals,
+and Control Center setup are intentionally deferred to later phases of
+[issue #93](https://github.com/alvinunreal/openpets/issues/93). Multi-machine GUI
+validation is pending while the second test system is unavailable, so this work
+remains experimental.
+
 ## Server PC
 
 PowerShell:
