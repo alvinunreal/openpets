@@ -150,6 +150,26 @@ registers a `/openpets` slash command namespace (`status`, `test`,
 non-blocking; it registers **no** model-callable tools, and never forwards
 prompt/assistant/tool/command text, paths, URLs, or secrets.
 
+## Codex CLI as a Companion target
+
+Companion Conversations can use an installed Codex CLI to generate ordinary pet
+conversation, but this is separate from all coding-agent integrations above.
+OpenPets does not install a Codex agent, MCP, hooks, rules, personality, or memory
+for this path. `CodexCompanionTarget` wraps the host's existing cancellable
+`CodexConversationTarget`, probes `codex --version`, `codex exec --help`, and
+resume support, and requires the structured `codex exec --json` contract. Each
+pet has its own runtime session UUID; changing provider or cancelling a turn
+aborts the child process. If a resumed session has gone stale, the orchestrator
+retries the same bounded prompt once without that session.
+
+OpenPets constructs the prompt before Codex sees it from the selected pet's
+personality, the explicit minimal user profile, local time/activity hints,
+roughly 24 hours of pet-scoped recent memory, and separately consented plugin
+facts. The host displays and records the response. Therefore switching between
+Codex CLI and the app's Anthropic/OpenAI/Ollama-compatible host-AI target does
+not switch personality, profile, memory, voice, plugin authority, or proactive
+policy. Wake-word activation is also unrelated and remains packaging-gated.
+
 ## The CLI — `@open-pets/cli`
 
 The user-facing front door (`openpets`), and the package that composes the

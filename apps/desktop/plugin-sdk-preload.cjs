@@ -192,6 +192,11 @@ const sdk = {
     publish: (topic, payload) => call("bus.publish", [topic, payload]),
     subscribe: (topic, fn) => subscription("bus.subscribe", "bus.unsubscribe", [topic], fn),
   },
+  companion: {
+    contributeFact: (fact) => call("companion.contributeFact", [fact]),
+    offerOpportunity: (opportunity) => call("companion.offerOpportunity", [opportunity]),
+    remove: (key) => call("companion.remove", [key]),
+  },
   schedule: {
     once: (id, delayMs, callback) => call("schedule.once", [id, delayMs, registerCallback(callback)]),
     every: (id, intervalMs, callback) => call("schedule.every", [id, intervalMs, registerCallback(callback)]),

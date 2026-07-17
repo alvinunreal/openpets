@@ -11,6 +11,7 @@ import { validateReactionAnimationOverrides } from "./reaction-animation-mapping
 
 export type PreferencePatch = {
   openDefaultPetOnLaunch?: boolean;
+  readSpeechBubblesAloud?: boolean;
   locale?: LocalePreference;
   petScale?: number;
   reactionAnimationOverrides?: ReturnType<typeof validateReactionAnimationOverrides>;
@@ -39,6 +40,11 @@ export function validatePreferencePatch(value: unknown): PreferencePatch {
   if ("openDefaultPetOnLaunch" in value) {
     if (typeof value.openDefaultPetOnLaunch !== "boolean") throw new Error("Invalid open-on-launch value.");
     patch.openDefaultPetOnLaunch = value.openDefaultPetOnLaunch;
+  }
+
+  if ("readSpeechBubblesAloud" in value) {
+    if (typeof value.readSpeechBubblesAloud !== "boolean") throw new Error("Invalid read-speech-bubbles-aloud value.");
+    patch.readSpeechBubblesAloud = value.readSpeechBubblesAloud;
   }
 
   if ("petPoolEnabled" in value) {

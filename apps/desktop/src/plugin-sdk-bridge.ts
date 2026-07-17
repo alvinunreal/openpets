@@ -4,6 +4,7 @@ import * as net from "node:net";
 import { join } from "node:path";
 
 import { getActiveLocaleLang } from "./i18n/index.js";
+import type { CompanionFactInput, CompanionOpportunityInput } from "./companion-contributions.js";
 import type { OpenPetsReaction } from "./local-ipc-protocol.js";
 import { validateReaction, validateSayMessage } from "./local-ipc-protocol.js";
 import { makePluginT } from "./plugin-i18n.js";
@@ -173,6 +174,12 @@ export interface PluginHostCapabilities {
     register(pluginId: string, descriptor: PluginDeliveryDescriptor): Promise<PluginDeliveryHostHandle>;
     teardown(pluginId: string): void;
   };
+  companionContext: {
+    submitFact(pluginId: string, fact: CompanionFactInput): Promise<void>;
+    submitOpportunity(pluginId: string, opportunity: CompanionOpportunityInput): Promise<void>;
+    remove(pluginId: string, key: string): Promise<void>;
+    clearPlugin(pluginId: string): void;
+  };
   secrets: {
     get(pluginId: string, key: string): Promise<string | undefined>;
     set(pluginId: string, key: string, value: string): Promise<void>;
@@ -185,7 +192,7 @@ export interface PluginHostCapabilities {
     stream(req: PluginAiRequest, onToken: (chunk: string) => void): Promise<{ text: string }>;
   };
   voice: {
-    speak(text: string, opts: { voice?: string; rate?: number }): Promise<void>;
+    speak(text: string, opts: { pluginId: string; voice?: string; rate?: number; petHandleId?: string }): Promise<void>;
     listen(opts: { timeoutMs?: number }): Promise<{ text: string }>;
   };
   auth: {
@@ -263,6 +270,7 @@ export function createDefaultPluginHostCapabilities(petApi: PluginPetApi): Plugi
     notify: async () => undefined,
     panels: { open: unavailable("panels.open") },
     delivery: { register: unavailable("delivery.register"), teardown: () => undefined },
+    companionContext: { submitFact: async () => undefined, submitOpportunity: async () => undefined, remove: async () => undefined, clearPlugin: () => undefined },
     secrets: (() => {
       const store = new Map<string, string>();
       return {
@@ -529,6 +537,23 @@ export class PluginSdkBridge {
     const config = createPluginConfigApi({ state, getConfig });
     const events = createPluginEventsApi({ state, capabilities: caps, requirePermission, guardCallback, allowedEventNames, eventSubscriptionsQuota: quotas.eventSubscriptions });
     const bus = createPluginBusApi({ pluginId, state, topics: this.#busTopics, requirePermission, guardCallback, normalizeJson, busPerMinute: quotas.busPerMinute, busPayloadBytes: quotas.busPayloadBytes, busSubscriptionsQuota: quotas.busSubscriptions });
+    const companion = {
+      contributeFact: async (input: unknown) => {
+        requirePermission("companion:context");
+        state.companionWindow.tick(quotas.companionContributionsPerMinute, "companion contribution");
+        await caps.companionContext.submitFact(pluginId, validateCompanionFact(input));
+      },
+      offerOpportunity: async (input: unknown) => {
+        requirePermission("companion:context");
+        state.companionWindow.tick(quotas.companionContributionsPerMinute, "companion contribution");
+        await caps.companionContext.submitOpportunity(pluginId, validateCompanionOpportunity(input));
+      },
+      remove: async (key: unknown) => {
+        requirePermission("companion:context");
+        state.companionWindow.tick(quotas.companionContributionsPerMinute, "companion contribution");
+        await caps.companionContext.remove(pluginId, validateCompanionContributionId(key, "Companion contribution key"));
+      },
+    };
 
     const petNamespace = (petHandleId: string) => ({
       speak: (spec: unknown) => ui.showBubble(petHandleId, spec),
@@ -615,6 +640,7 @@ export class PluginSdkBridge {
         },
       },
       bus,
+      companion,
       schedule: {
         once: (id: string, delayMs: number, callback: () => unknown) => { const delay = Number(delayMs); check(Number.isFinite(delay) && delay >= 1, "Invalid plugin schedule delay."); setSchedule(id, { type: "once", delayMs: delay }, callback); },
         every: (id: string, intervalMs: number, callback: () => unknown) => { const interval = Number(intervalMs); check(Number.isFinite(interval) && interval >= 10 * 60_000, "Invalid plugin schedule delay."); setSchedule(id, { type: "every", intervalMs: interval }, callback); },
@@ -678,7 +704,8 @@ export class PluginSdkBridge {
           const options = isRecord(opts) ? opts : {};
           const rate = options.rate === undefined ? undefined : clampNumber(Number(options.rate), 0.5, 2);
           const voice = options.voice === undefined ? undefined : String(options.voice).slice(0, 80);
-          await caps.voice.speak(speech, { voice, rate });
+          const petHandleId = options.petHandleId === undefined ? undefined : validatePetHandleId(options.petHandleId);
+          await caps.voice.speak(speech, { pluginId, voice, rate, petHandleId });
         },
         listen: async (opts?: unknown) => {
           requirePermission("voice:listen");
@@ -766,7 +793,7 @@ export class PluginSdkBridge {
       activePanels: state.panels.size,
       eventSubscriptions: state.eventSubscriptions.size + state.busSubscriptions.size + state.tickSubscriptions.size,
       lastError: state.lastError,
-      quotaCounters: { petActions: state.petWindow.count, logs: state.logWindow.count, http: state.httpWindow.count, bus: state.busWindow.count, audio: state.audioWindow.count, notify: state.notifyWindow.count, toast: state.toastWindow.count, ai: state.aiWindow.count, voice: state.voiceWindow.count },
+      quotaCounters: { petActions: state.petWindow.count, logs: state.logWindow.count, http: state.httpWindow.count, bus: state.busWindow.count, audio: state.audioWindow.count, notify: state.notifyWindow.count, toast: state.toastWindow.count, companion: state.companionWindow.count, ai: state.aiWindow.count, voice: state.voiceWindow.count },
     };
   }
 
@@ -840,6 +867,7 @@ export class PluginSdkBridge {
     state.bubbles.clear();
     state.deliveries.clear();
     this.#capabilities.delivery.teardown(id);
+    this.#capabilities.companionContext.clearPlugin(id);
     for (const panel of state.panels.values()) { void panel.close().catch(() => undefined); }
     state.panels.clear();
     for (const petHandleId of state.spawnedPets) { void this.#capabilities.pets.close(id, petHandleId).catch(() => undefined); }
@@ -847,7 +875,7 @@ export class PluginSdkBridge {
     state.pickedFiles.clear();
     state.userCommandDepth = 0;
     state.lastError = undefined;
-    state.petWindow.reset(); state.logWindow.reset(); state.httpWindow.reset(); state.busWindow.reset(); state.audioWindow.reset(); state.notifyWindow.reset(); state.toastWindow.reset(); state.deliveryWindow.reset(); state.aiWindow.reset(); state.voiceWindow.reset();
+    state.petWindow.reset(); state.logWindow.reset(); state.httpWindow.reset(); state.busWindow.reset(); state.audioWindow.reset(); state.notifyWindow.reset(); state.toastWindow.reset(); state.deliveryWindow.reset(); state.companionWindow.reset(); state.aiWindow.reset(); state.voiceWindow.reset();
   }
 
   #pluginState(id: string): PluginRuntimeState {
@@ -858,7 +886,7 @@ export class PluginSdkBridge {
         storageSubscriptions: new Map(), busSubscriptions: new Map(), eventSubscriptions: new Map(), tickSubscriptions: new Map(),
         bubbles: new Map(), deliveries: new Map(), panels: new Map(), spawnedPets: new Set(), pickedFiles: new Set(), userCommandDepth: 0,
         petWindow: new WindowCounter(), logWindow: new WindowCounter(), httpWindow: new WindowCounter(), busWindow: new WindowCounter(),
-        audioWindow: new WindowCounter(), notifyWindow: new WindowCounter(), toastWindow: new WindowCounter(), deliveryWindow: new WindowCounter(), aiWindow: new WindowCounter(), voiceWindow: new WindowCounter(),
+        audioWindow: new WindowCounter(), notifyWindow: new WindowCounter(), toastWindow: new WindowCounter(), deliveryWindow: new WindowCounter(), companionWindow: new WindowCounter(), aiWindow: new WindowCounter(), voiceWindow: new WindowCounter(),
       };
       this.#states.set(id, state);
     }
@@ -1000,6 +1028,45 @@ function clampNumber(value: number, min: number, max: number): number { if (!Num
 function validateCssColor(value: unknown, message: string): string { const color = String(value).trim(); check(color.length <= 48 && safeCssColorPattern.test(color), message); return color; }
 function validateStorageKey(key: string): string { if (!/^[A-Za-z0-9._:-]{1,128}$/.test(String(key))) throw new Error("Invalid plugin storage key."); return String(key); }
 function validatePetHandleId(value: unknown): string { const id = String(value); if (!/^[A-Za-z0-9._:-]{1,128}$/.test(id)) throw new Error("Invalid pet handle id."); return id; }
+function validateCompanionContributionId(value: unknown, label: string): string { const id = String(value); if (!/^[A-Za-z0-9._:-]{1,96}$/.test(id)) throw new Error(`${label} is invalid.`); return id; }
+function validateCompanionFact(value: unknown): CompanionFactInput {
+  const input = validateCompanionBase(value, ["key", "text", "expiresAt", "sensitivity"]);
+  return { ...input, text: validateCompanionText((value as Record<string, unknown>).text, "Companion fact text") };
+}
+function validateCompanionOpportunity(value: unknown): CompanionOpportunityInput {
+  const input = validateCompanionBase(value, ["key", "context", "urgency", "earliestAt", "expiresAt", "dedupeKey", "cooldownMs", "sensitivity"]);
+  const record = value as Record<string, unknown>;
+  const urgency = record.urgency;
+  check(urgency === "low" || urgency === "normal", "Companion opportunity urgency must be low or normal.");
+  const earliestAt = Number(record.earliestAt);
+  check(Number.isSafeInteger(earliestAt) && earliestAt < input.expiresAt, "Companion opportunity earliestAt is invalid.");
+  const cooldownMs = record.cooldownMs === undefined ? undefined : Number(record.cooldownMs);
+  if (cooldownMs !== undefined) check(Number.isSafeInteger(cooldownMs) && cooldownMs >= 0 && cooldownMs <= 7 * 24 * 60 * 60_000, "Companion opportunity cooldownMs is invalid.");
+  return {
+    ...input,
+    context: validateCompanionText(record.context, "Companion opportunity context"),
+    urgency: urgency as CompanionOpportunityInput["urgency"],
+    earliestAt,
+    dedupeKey: validateCompanionContributionId(record.dedupeKey, "Companion opportunity dedupeKey"),
+    cooldownMs,
+  };
+}
+function validateCompanionBase(value: unknown, allowedFields: readonly string[]): Omit<CompanionFactInput, "text"> {
+  if (!isRecord(value)) throw new Error("Companion contribution must be an object.");
+  for (const field of Object.keys(value)) check(allowedFields.includes(field), `Invalid companion contribution field: ${field}.`);
+  const now = Date.now();
+  const expiresAt = Number(value.expiresAt);
+  check(Number.isSafeInteger(expiresAt) && expiresAt > now && expiresAt <= now + 24 * 60 * 60_000, "Companion contribution expiresAt must be within the next 24 hours.");
+  const sensitivity = value.sensitivity === undefined ? "normal" : value.sensitivity;
+  check(sensitivity === "normal" || sensitivity === "sensitive", "Companion contribution sensitivity is invalid.");
+  return { key: validateCompanionContributionId(value.key, "Companion contribution key"), expiresAt, sensitivity: sensitivity as NonNullable<CompanionFactInput["sensitivity"]> };
+}
+function validateCompanionText(value: unknown, label: string): string {
+  check(typeof value === "string", `${label} must be plain text.`);
+  const text = (value as string).trim();
+  check(text.length >= 1 && text.length <= 500 && !/[\0-\x08\x0B\x0C\x0E-\x1F]/.test(text), `${label} is invalid.`);
+  return text;
+}
 function validateReactOptions(value: unknown): PluginReactOptions | undefined { if (value === undefined) return undefined; if (!isRecord(value)) throw new Error("Invalid pet reaction options."); const keys = Object.keys(value); check(keys.every((key) => key === "showMessage"), "Invalid pet reaction option."); if (value.showMessage !== undefined && typeof value.showMessage !== "boolean") throw new Error("Invalid pet reaction showMessage option."); return value.showMessage === undefined ? {} : { showMessage: value.showMessage }; }
 function validatePoint(value: unknown): { x: number; y: number } { if (!isRecord(value)) throw new Error("Invalid point."); const x = Number(value.x); const y = Number(value.y); if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("Invalid point."); return { x, y }; }
 function validateMoveToOptions(value: unknown): { durationMs?: number; easing?: string } { const opts = isRecord(value) ? value : {}; const durationMs = opts.durationMs === undefined ? undefined : clampNumber(Number(opts.durationMs), 100, 10_000); const easing = opts.easing === undefined ? undefined : (check(["linear", "ease-in", "ease-out", "ease-in-out"].includes(String(opts.easing)), "Invalid easing."), String(opts.easing)); return { durationMs, easing }; }

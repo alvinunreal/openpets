@@ -16,6 +16,7 @@ import assert from "node:assert/strict";
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 
 import {
+  _sharedTickerActiveForTesting,
   _setScreenForTesting,
   _setIsPetWindowDraggingForTesting,
   _resetMotionStatesForTesting,
@@ -148,10 +149,7 @@ describe("pet-motion-engine NaN coordinate guards", () => {
 
     const outcome = await Promise.race([
       movePromise.then(() => "resolved" as const),
-      new Promise<"timeout">((resolve) => {
-        const t = setTimeout(() => resolve("timeout"), 1000);
-        t.unref?.();
-      }),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 1000)),
     ]);
 
     assert.equal(
@@ -167,5 +165,75 @@ describe("pet-motion-engine NaN coordinate guards", () => {
         `setPosition called with non-finite coords: (${x}, ${y})`,
       );
     }
+  });
+
+  it("delegated motionMoveTo completes after its continuous motion mode is disabled", async () => {
+    // Contract: once a move is accepted by the shared ticker, turning off the
+    // physics mode that delegated it must not abandon the move or its promise.
+    _setScreenForTesting(normalScreen as any);
+    setDisplayScreen(normalScreen as any);
+    invalidateDisplayCache();
+
+    const setPositionCalls: Array<[number, number]> = [];
+    const accessor = makeWindowMock(100, 100, (x, y) => setPositionCalls.push([x, y]));
+
+    registerPet("delegated-move-test", accessor);
+    motionSetPhysics("delegated-move-test", accessor, { gravity: true, bounce: 0.4 });
+
+    const movePromise = motionMoveTo(
+      "delegated-move-test",
+      accessor,
+      { x: 500, y: 500 },
+      { durationMs: 100, easing: "linear" },
+    );
+    motionSetPhysics("delegated-move-test", accessor, { gravity: false });
+
+    assert.equal(_sharedTickerActiveForTesting(), true, "the delegated move keeps the shared ticker active");
+
+    const outcome = await Promise.race([
+      movePromise.then(() => "resolved" as const),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 1000)),
+    ]);
+
+    assert.equal(outcome, "resolved", "disabling physics must not strand the delegated move");
+    assert.deepEqual(setPositionCalls.at(-1), [500, 500], "the accepted move still reaches its target");
+
+    await new Promise<void>((resolve) => setTimeout(resolve, loopIntervalMs * 2));
+    assert.equal(_sharedTickerActiveForTesting(), false, "the ticker stops once the delegated move completes");
+  });
+
+  it("delegated motionMoveTo recovers when only its initial position read is NaN", async () => {
+    // Contract: a transient native-position failure at acceptance must not poison
+    // later interpolation after finite coordinates become available.
+    _setScreenForTesting(normalScreen as any);
+    setDisplayScreen(normalScreen as any);
+    invalidateDisplayCache();
+
+    let positionReads = 0;
+    let position: [number, number] = [100, 100];
+    const setPositionCalls: Array<[number, number]> = [];
+    const accessor = () => ({
+      getPosition: (): [number, number] => positionReads++ === 0 ? [NaN, NaN] : position,
+      isDestroyed: () => false,
+      isVisible: () => true,
+      setPosition: (x: number, y: number) => {
+        position = [x, y];
+        setPositionCalls.push([x, y]);
+      },
+    } as any);
+
+    registerPet("transient-nan-move-test", accessor);
+    motionSetPhysics("transient-nan-move-test", accessor, { gravity: true, bounce: 0.4 });
+    const movePromise = motionMoveTo("transient-nan-move-test", accessor, { x: 500, y: 500 }, { durationMs: 100 });
+    motionSetPhysics("transient-nan-move-test", accessor, { gravity: false });
+
+    const outcome = await Promise.race([
+      movePromise.then(() => "resolved" as const),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 1000)),
+    ]);
+
+    assert.equal(outcome, "resolved");
+    assert.deepEqual(setPositionCalls.at(-1), [500, 500]);
+    assert.ok(setPositionCalls.every(([x, y]) => Number.isFinite(x) && Number.isFinite(y)));
   });
 });

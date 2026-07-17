@@ -22,7 +22,7 @@
     "package:dir": "pnpm package:preflight && pnpm build && node scripts/clean-package-output.cjs && electron-builder --dir && node dist/check-packaging-contract.js --output",
     "test": "node scripts/run-tests.mjs",
     "build:deps": "pnpm --filter \"@open-pets/desktop^...\" build",
-    "test:build": "pnpm build:deps && tsc -p tsconfig.tests.json",
+    "test:build": "pnpm build:main && tsc -p tsconfig.tests.json",
     "check": "pnpm typecheck && pnpm build && pnpm test",
     "typecheck": "pnpm build:deps && tsc --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "build:main": "pnpm build:deps && tsc",

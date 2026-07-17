@@ -26,6 +26,7 @@
   "mode.break": "휴식",
   "status.idle": "Focus Buddy 준비됨",
   "status.active": "{mode} · {minutes}분 남음",
+  "companion.focusMidSession.context": "Focus Buddy 집중 세션이 한창 진행 중입니다.",
   "bubble.active": "{mode} · {minutes}분 남음",
   "bubble.paused": "{mode} 일시정지 · {minutes}분 남음",
   "alert.focusComplete.title": "쉴까요?",

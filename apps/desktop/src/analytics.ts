@@ -9,6 +9,8 @@ type DesktopAnalyticsEvent =
   | "desktop_analytics_consent_changed"
   | "desktop_default_pet_shown"
   | "desktop_control_center_opened"
+  | "desktop_companion_enabled"
+  | "desktop_companion_disabled"
   | "desktop_pet_catalog_opened"
   | "desktop_pet_install_started"
   | "desktop_pet_install_completed"

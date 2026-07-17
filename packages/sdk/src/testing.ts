@@ -26,6 +26,8 @@ import type {
   OpenPetsAlertHandle,
   OpenPetsCommand,
   OpenPetsCommandHandler,
+  OpenPetsCompanionFact,
+  OpenPetsCompanionOpportunity,
   OpenPetsContext,
   OpenPetsDelivery,
   OpenPetsDeliveryDismissReason,
@@ -75,6 +77,10 @@ export interface RecordedDelivery {
   dismissed: boolean;
 }
 
+export type RecordedCompanionContribution =
+  | { kind: "fact"; spec: OpenPetsCompanionFact }
+  | { kind: "opportunity"; spec: OpenPetsCompanionOpportunity };
+
 export interface RecordedSchedule {
   type: "once" | "every" | "daily" | "cron" | "at";
   handler: OpenPetsScheduleHandler;
@@ -105,6 +111,8 @@ export interface MockCalls {
   bubbles: RecordedBubble[];
   alerts: RecordedAlert[];
   deliveries: RecordedDelivery[];
+  companionContributions: RecordedCompanionContribution[];
+  removedCompanionContributions: string[];
   dismissedBubbles: string[];
   toasts: Array<{ text: string; tone?: string }>;
   notifications: Array<{ title: string; body?: string }>;
@@ -309,7 +317,7 @@ export function createMockContext(optionsOrConfig: MockContextOptions | Record<s
   let config = { ...(options.config ?? {}) };
   const calls: MockCalls = {
     speak: [], react: [], reactions: [], statusReactions: [], status: [], storage: new Map(), schedules: new Map(), commands: new Map(), menuItems: [],
-    bubbles: [], alerts: [], deliveries: [], dismissedBubbles: [], toasts: [], notifications: [], sounds: [], importedUserSounds: [], forgottenUserSounds: [], busPublishes: [], netCalls: [],
+    bubbles: [], alerts: [], deliveries: [], companionContributions: [], removedCompanionContributions: [], dismissedBubbles: [], toasts: [], notifications: [], sounds: [], importedUserSounds: [], forgottenUserSounds: [], busPublishes: [], netCalls: [],
     aiCalls: [], voiceSpeaks: [], openedExternal: [], clipboardWrites: [], spawnedPets: [], panelMessages: [],
     savedFiles: [], secrets: new Map(), errors: [],
   };
@@ -539,6 +547,23 @@ export function createMockContext(optionsOrConfig: MockContextOptions | Record<s
         if (!subscribers) { subscribers = new Set(); busSubscribers.set(topic, subscribers); }
         subscribers.add(handler);
         return () => subscribers!.delete(handler);
+      },
+    },
+    companion: {
+      contributeFact: async (spec) => {
+        requirePermission("companion:context");
+        calls.companionContributions = calls.companionContributions.filter((entry) => entry.spec.key !== spec.key);
+        calls.companionContributions.push({ kind: "fact", spec: { ...spec } });
+      },
+      offerOpportunity: async (spec) => {
+        requirePermission("companion:context");
+        calls.companionContributions = calls.companionContributions.filter((entry) => entry.spec.key !== spec.key);
+        calls.companionContributions.push({ kind: "opportunity", spec: { ...spec } });
+      },
+      remove: async (key) => {
+        requirePermission("companion:context");
+        calls.companionContributions = calls.companionContributions.filter((entry) => entry.spec.key !== key);
+        calls.removedCompanionContributions.push(key);
       },
     },
     schedule: {

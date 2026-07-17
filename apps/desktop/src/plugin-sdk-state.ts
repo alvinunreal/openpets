@@ -46,6 +46,7 @@ export type PluginRuntimeState = {
   notifyWindow: WindowCounter;
   toastWindow: WindowCounter;
   deliveryWindow: WindowCounter;
+  companionWindow: WindowCounter;
   aiWindow: WindowCounter;
   voiceWindow: WindowCounter;
 };

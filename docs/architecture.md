@@ -70,6 +70,30 @@ These are the flows worth holding in memory. Each links to the doc that details 
   category, sent via the client over IPC, the lease manager routes it to a pet
   window, and the window plays the mapped animation with localized speech.
   See [ipc.md](ipc.md) and [pets.md](pets.md).
+- **Speech bubble → optional voice output.** After a plain-text transient bubble
+  is actually presented, the pet-window layer may route that text through the
+  host-owned voice platform when the user has enabled **Read speech bubbles
+  aloud**. The platform resolves global/per-pet provider and voice settings,
+  applies voice/provider fallbacks, and uses a voice-only playback channel.
+  Refreshes are deduplicated, quiet hours mute narration, and TTS failures never
+  affect the visual bubble.
+- **Companion turn → pet response.** A typed message and a final push-to-talk
+  transcript both enter the main-process `CompanionOrchestrator`. It builds the
+  same bounded context from the selected pet's personality, the explicit user
+  profile, local time/activity hints, recent pet-scoped memory, and consented
+  plugin facts. The selected target is either a cancellable Codex CLI session or
+  the configured host-AI provider. Only a response actually displayed in the
+  pet bubble is recorded; optional speech uses the same voice-output service.
+  Changing targets does not change the pet's personality or OpenPets memory.
+- **Proactive opportunity → restrained check-in.** A host-owned scheduler
+  evaluates time-of-day, user goals, and consented plugin opportunities for the
+  visible, unpaused default pet. Quiet hours, active listening/thinking/speech,
+  dedupe, daily caps, and the Rarely/Sometimes/Often spacing policy can suppress
+  any candidate. Plugins contribute expiring facts or opportunities only; the
+  host decides whether to act and the selected provider writes original pet
+  wording. The same time state can produce a once-per-day-part reaction hint
+  without creating a spoken check-in. Wake-word activation remains disabled
+  until an approved local runtime/model passes the packaging gate.
 - **Installing a pet.** The app fetches catalog v3 (paginated, with a v2/fixture
   fallback), downloads the pet ZIP from `zip.openpets.dev`, validates and
   extracts it, and records it in app state. See [catalog.md](catalog.md) and
@@ -102,6 +126,14 @@ These hold everywhere; the rest of the docs assume them.
 - **Least privilege.** Renderers are sandboxed with narrow preload bridges and a
   strict CSP; plugins run in a permission-gated sandbox; IPC over TCP is
   restricted to private/loopback addresses.
+- **Companion data is consented and layered.** Core settings, pet personality,
+  explicit profile fields, and roughly 24 hours of recent conversation are
+  OpenPets-owned. Plugin context, sensitive plugin context, screen awareness,
+  and wake listening are separate gates. Screen context is reserved and
+  collects nothing in the current build; wake remains packaging-gated.
+- **Providers do not own identity.** Codex CLI and host AI receive the same
+  bounded host-built context. They do not own the pet personality, user profile,
+  recent-memory retention, plugin consent, or proactive-delivery policy.
 
 ## Glossary
 
@@ -125,6 +157,15 @@ These hold everywhere; the rest of the docs assume them.
   and [plugins.md](plugins.md).
 - **SuperPlugins** — the companion-first plugin product direction. See
   [superplugins.md](superplugins.md).
+- **Companion Conversations** — the opt-in host feature that gives each
+  installed pet a personality, ordinary typed/PTT conversation, bounded recent
+  memory, and restrained check-ins. It is distinct from coding-agent reactions.
+- **Host AI** — the app-owned Anthropic/OpenAI/Ollama-compatible gateway shared
+  by Companion, transcription-compatible voice paths, and the plugin AI
+  compatibility surface. Settings and credentials remain host-owned.
+- **Companion contribution** — an expiring plugin-supplied fact or proactive
+  opportunity. It is untrusted context, never final pet wording, provider
+  selection, speech authority, or core memory.
 - **Catalog** — a versioned JSON index of installable pets or plugins served
   from `openpets.dev`. See [catalog.md](catalog.md).
 </content>

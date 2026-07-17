@@ -29,6 +29,27 @@ commands), not by bolting bespoke windows onto the pet. Concretely:
   one big configurable one. (This is a standing product preference — a single
   plugin should explain itself by name and do one thing well.)
 
+### Companion contribution strategy
+
+OpenPets core owns the conversational pet: per-pet personality, the user's
+minimal explicit profile, roughly 24 hours of recent memory, provider choice,
+speech, and the final decision to initiate a check-in. SuperPlugins remain
+modular domain experts. With `companion:context` and separate host consent they
+may offer expiring facts or opportunities, but they never write the pet's final
+line, force a check-in, select a provider, or add durable/core memory.
+
+This keeps habits, reminders, focus, calendars, and future screen awareness out
+of the core app while still letting the pet feel informed. Normal and sensitive
+plugin context have separate consent gates. Screen awareness remains a future
+explicit plugin boundary; the current reserved switch collects nothing.
+
+Focus Buddy is the pilot for this contract. An active, unpaused focus session
+offers one low-urgency mid-session opportunity after a delay, with session-
+scoped expiry/dedupe/cooldown. Pausing or ending removes it. The host still
+applies quiet hours, Rarely/Sometimes/Often policy, provider readiness, current
+activity, and original-wording generation, so “start a focus timer” never means
+“guarantee an interruption.”
+
 ## Right-click action strategy
 
 The primary way users invoke plugins is the **default pet's right-click menu**.
@@ -41,13 +62,13 @@ in-the-moment interactions (snooze, done, feed).
 ## Official plugin lineup
 
 Official plugins live in `plugins/official/` and are the reviewed catalog set.
-Current lineup (verified 2026-07-10 against the folder + manifests):
+Current lineup (verified 2026-07-17 against the folder + manifests):
 
 | Plugin id | What it is |
 |-----------|------------|
 | `openpets.reminders` | Quick reminders with due/missed alerts, snooze/done, status, optional notify/sound |
 | `openpets.virtual-pet` | Tamagotchi-style state machine (hunger/energy/happiness/affection), pinned HUD, click handling |
-| `openpets.focus-buddy` | Focus-session timers with status and completion/break feedback |
+| `openpets.focus-buddy` | Focus-session timers with status/completion feedback and a consented low-urgency mid-session Companion opportunity |
 | `openpets.water-reminder` | Hydration reminder loop with configurable cadence |
 | `openpets.day-routine` | Morning/evening daily check-ins |
 | `openpets.mood-check-in` | Mood logging/check-in companion |
@@ -69,6 +90,8 @@ Current community lineup:
 
 | Plugin id | What it is |
 |-----------|------------|
+| `openpets.higgsfield-watch` | Watches Higgsfield generation jobs and lets the pet report status changes |
+| `openpets.spotify-buddy` | Connects to Spotify for playback-aware pet reactions and commands |
 | `openpets.walkabout` | Makes the pet roam the screen, follow the cursor, or patrol back and forth |
 
 > Drift note: `web/docs/plugin-publishing.md` still lists an **older** lineup

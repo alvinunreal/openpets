@@ -2,7 +2,7 @@
 
 ## Responsibility
 
-OpenPets desktop companion application. Tray-first Electron app providing animated desktop pets that react to coding agent events. Manages pet installations, the React/Tailwind Control Center, plugin automation/runtime, agent integrations (Claude Code, OpenCode, Cursor, Pi guidance), and local IPC for CLI communication.
+OpenPets desktop companion application. Tray-first Electron app providing animated desktop pets that react to coding agent events and can hold opt-in ambient conversations. Manages pet installations, host-owned Companion settings/memory/proactivity, the React/Tailwind Control Center, plugin automation/runtime, agent integrations (Claude Code, OpenCode, Cursor, Pi guidance), and local IPC for CLI communication.
 
 ## Design
 
@@ -22,6 +22,7 @@ OpenPets desktop companion application. Tray-first Electron app providing animat
   - Speech bubbles with reaction messages and status badges
   - User-configurable reaction-to-animation mapping
 - **Lease Manager**: 15s TTL leases for agent pet routing with heartbeat renewal
+- **Companion Layer**: Provider-independent per-pet personality, minimal user profile, rolling 24-hour memory, typed/PTT turns, bounded proactive check-ins, and expiring plugin context; wake listening and direct screen capture remain gated
 - **Logging**: Structured logging with scopes, log rotation (2MB max), and sensitive data redaction
 - **Plugin Subsystem**: Declarative manifest plugins and JavaScript plugin hosting with permission approval, config schemas, command/status surfaces, catalog/local installs, SDK bridge quotas, storage, schedules, restricted HTTPS fetch, and safe path/ZIP/manifest validation
 
@@ -36,6 +37,8 @@ OpenPets desktop companion application. Tray-first Electron app providing animat
 **Agent Setup**: UI → `agent-setup.ts` → Claude/OpenCode/Cursor CLI detection → MCP config modification → hooks installation → memory file management
 
 **Control Center**: Tray route → `openControlCenterWindow(route)` → `windows.ts` loads Vite renderer and sends route events → `control-center-preload.cjs` exposes narrow page APIs → React Dashboard/Pets/Integrations/Plugins/Settings routes render snapshots and invoke actions.
+
+**Companion**: Pet details or **Talk to this pet** → Companion IPC in `windows.ts` → `companion-orchestrator.ts` builds bounded pet/profile/time/memory/plugin context → Codex CLI or host-AI target → pet bubble or Control Center display acknowledgement → optional speech and display-gated memory commit. `companion-proactive-service.ts` applies quiet-hours/activity/readiness/dedupe/cadence policy before default-pet check-ins.
 
 **Plugins**: Control Center plugins route → `plugin-service.ts` → catalog or local manifest/entry loader → permission approval/state update → `plugin-runtime.ts` schedules declarative timers or starts `plugin-js-host.ts` → `plugin-sdk-bridge.ts` applies approved SDK calls to pet/schedule/storage/command/status/network APIs
 
@@ -67,6 +70,11 @@ OpenPets desktop companion application. Tray-first Electron app providing animat
 - `local-ipc.ts`: TCP/Unix socket server for CLI communication
 - `lease-manager.ts`: Pet routing lease lifecycle
 - `pet-window.ts`: Pet rendering (transparent frameless windows, CSS sprite animation, speech bubbles, status badges)
+- `companion-settings.ts`/`companion-memory.ts`: Opt-in host settings, per-pet personality, profile, and bounded rolling recent memory
+- `companion-orchestrator.ts`/`companion-context.ts`: Shared typed/PTT/proactive lifecycle, provider-neutral context, cancellation, display acknowledgement, and memory commits
+- `companion-proactive-service.ts`/`companion-proactivity.ts`: Time expression plus policy-limited time, goal, and plugin check-ins
+- `companion-contributions.ts`: Consent- and quota-gated process-local facts/opportunities from approved plugins
+- `host-ai-settings.ts`/`host-ai-gateway.ts`: Host-owned OpenAI/Anthropic/Ollama settings, health, inference, streaming, and transcription
 - `default-pet-controller.ts`/`agent-pet-controller.ts`: Pet visibility/state management with transient displays; `reclampAllLivePetWindows()` re-clamps all live pet windows on topology changes
 - `pet-roaming-controller.ts`: Host-side roaming orchestrator — registers every live pet (default + agent) with the motion engine and applies the active physics configuration (gravity + bounce). Unregisters before window destroy to prevent the shared ticker from touching closed windows.
 - `pet-motion-engine.ts`: Shared-ticker motion engine (~60 fps) — `Map<petHandleId, MotionState>`, single `setInterval` for all pets, sub-pixel fractional accumulators, bottom-center gravity-floor anchor, `registerPet`/`unregisterPet` seams, sole continuous position writer.
@@ -88,7 +96,7 @@ OpenPets desktop companion application. Tray-first Electron app providing animat
 - `pet-installation.ts`: Catalog ZIP download and extraction
 - `codex-pets.ts`: Local Codex pet import
 - `catalog.ts`: Remote catalog fetching with V3 pagination and fixture fallback
-- `logger.ts`: Structured logging with scopes (app, ipc, lease, pet, state, tray, ui)
+- `logger.ts`: Structured logging with scopes (app, companion, ipc, lease, pet, plugin, state, tray, ui)
 - `reaction-animation-mapping.ts`: Reaction-to-animation state mapping with user overrides
 - `reaction-messages.ts`: Message pools for each reaction type
 - `control-center-preload.cjs`/`pet-preload.cjs`/`plugin-sdk-preload.cjs`: Narrow contextBridge APIs for the Control Center, pet windows, and plugin SDK host; the legacy `preload.cjs` task-window bridge and `plugins-window.ts` UI have been removed
@@ -103,4 +111,4 @@ OpenPets desktop companion application. Tray-first Electron app providing animat
 - **Behavior tests** (`tests/*.test.ts`): Unit tests for lease manager (incl. PID liveness + pool toggle), state management, version checking, ZIP safety, Codex pets, Claude memory, reaction animation mapping, display geometry helpers (`display.test.ts`), pet motion-engine clamping and shared-ticker (`pet-motion-engine-clamp.test.ts`, `pet-motion-engine-shared-ticker.test.ts`), gravity seam (`pet-motion-engine-gravity-seam.test.ts`), single-writer invariant (`pet-motion-engine-single-writer.test.ts`), roaming controller (`pet-roaming-controller.test.ts`), and pool toggle (`pool-toggle.test.ts`). Compiled to `.test-dist/tests/`.
 - **Contract tests** (`contracts/*.contract.ts`): Public API boundary validation for catalog fixtures, IPC protocol, and plugin manifest schema. Compiled to `.test-dist/contracts/`.
 - **Runtime checks** (`src/check-*.ts`): Remaining runtime validation checks compiled to `dist/`.
-- **Test runner** (`scripts/run-tests.mjs`): Orchestrates preload syntax checks → test compilation → behavior tests → contract tests → dist checks.
+- **Test runner** (`scripts/run-tests.mjs`): Refreshes production main-process output, then orchestrates preload syntax checks → test compilation → behavior tests → contract tests → dist checks.

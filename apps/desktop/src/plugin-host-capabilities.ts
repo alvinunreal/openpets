@@ -4,6 +4,7 @@ import { basename, extname, join } from "node:path";
 
 import { app, clipboard, dialog, nativeTheme, net, Notification, shell } from "electron";
 
+import { CompanionContributionStore } from "./companion-contributions.js";
 import { getDefaultPetWindowForPlugins } from "./default-pet-controller.js";
 import { getActiveLocaleLang } from "./i18n/index.js";
 import { debug, warn } from "./logger.js";
@@ -66,6 +67,7 @@ function cpuPercent(): number {
 export type ElectronPluginHostCapabilities = PluginHostCapabilities & {
   readonly secretsStore: PluginSecretsStore;
   readonly aiGateway: PluginAiGateway;
+  readonly companionContributions: CompanionContributionStore;
   /** Tear down everything a plugin owns on stop/reload. */
   clearPlugin(pluginId: string): void;
   shutdown(): void;
@@ -78,13 +80,17 @@ export function getPluginHostCapabilitiesForUi(): ElectronPluginHostCapabilities
   return activeCapabilities;
 }
 
-export function createElectronPluginHostCapabilities(userDataPath: string): ElectronPluginHostCapabilities {
+export function createElectronPluginHostCapabilities(userDataPath: string, options: { companionContributions?: CompanionContributionStore } = {}): ElectronPluginHostCapabilities {
   startPluginEventSources();
   const secretsStore = new PluginSecretsStore(userDataPath);
   const aiGateway = new PluginAiGateway(secretsStore);
   const oauthBroker = new PluginOauthBroker(secretsStore);
   const pickedFiles = new Map<string, PickedFileEntry>();
   const userSounds = new UserSoundStore(join(userDataPath, "plugin-user-sounds"));
+  const companionContributions = options.companionContributions ?? new CompanionContributionStore({
+    canContribute: () => false,
+    isPluginEnabled: (pluginId) => getPluginService().stateStore.getRecord(pluginId)?.enabled === true,
+  });
   let nextPickedFileId = 0;
   let didShutdown = false;
   const shutdown = () => {
@@ -92,6 +98,7 @@ export function createElectronPluginHostCapabilities(userDataPath: string): Elec
     didShutdown = true;
     app.off("before-quit", shutdown);
     stopDeliverySystem();
+    companionContributions.clear();
     closeAllPluginPets();
     if (activeCapabilities === capabilities) activeCapabilities = null;
   };
@@ -99,6 +106,7 @@ export function createElectronPluginHostCapabilities(userDataPath: string): Elec
   const capabilities: ElectronPluginHostCapabilities = {
     secretsStore,
     aiGateway,
+    companionContributions,
     bubbles: {
       async show({ petId, pluginId, bubble, callbacks }) {
         return getPluginPetArbiter(petId).show(pluginId, bubble, callbacks);
@@ -194,6 +202,12 @@ export function createElectronPluginHostCapabilities(userDataPath: string): Elec
         return registerDelivery(resolveTrustedPluginSprite(manifest, pluginId, descriptor.courier.name), descriptor);
       },
       teardown: (pluginId) => teardownPluginDeliveries(pluginId),
+    },
+    companionContext: {
+      submitFact: async (pluginId, fact) => { companionContributions.submitFact(pluginId, fact); },
+      submitOpportunity: async (pluginId, opportunity) => { companionContributions.submitOpportunity(pluginId, opportunity); },
+      remove: async (pluginId, key) => { companionContributions.remove(pluginId, key); },
+      clearPlugin: (pluginId) => companionContributions.clearPlugin(pluginId),
     },
     secrets: {
       get: (pluginId, key) => secretsStore.get(pluginId, key),
@@ -293,6 +307,7 @@ export function createElectronPluginHostCapabilities(userDataPath: string): Elec
     clearPlugin(pluginId: string) {
       try {
         teardownPluginDeliveries(pluginId);
+        companionContributions.clearPlugin(pluginId);
         clearPluginPetsForPlugin(pluginId);
       } catch (error) {
         warn("plugin", "plugin pet teardown failed", { pluginId, error: error instanceof Error ? error.message : String(error) });

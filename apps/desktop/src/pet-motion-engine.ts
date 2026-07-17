@@ -111,13 +111,17 @@ function stopSharedTicker(): void {
   if (sharedTicker) { clearInterval(sharedTicker); sharedTicker = null; }
 }
 
+function needsSharedTicker(state: MotionState): boolean {
+  return state.follow !== null || state.physics !== null || state.moveTarget !== null;
+}
+
 function tickAll(): void {
   for (const [petHandleId, { accessor, state }] of motionStates) {
-    if (state.follow === null && state.physics === null) continue;
+    if (!needsSharedTicker(state)) continue;
     tickPet(petHandleId, accessor, state);
   }
-  // Stop ticker when no pet needs continuous motion
-  if ([...motionStates.values()].every(e => e.state.follow === null && e.state.physics === null)) {
+  // Stop ticker when no pet needs continuous or delegated move-to motion.
+  if ([...motionStates.values()].every(({ state }) => !needsSharedTicker(state))) {
     stopSharedTicker();
   }
 }
@@ -155,7 +159,7 @@ export function unregisterPet(petHandleId: string): void {
   motionStop(petHandleId);
   motionStates.delete(petHandleId);
   // Eagerly stop ticker if no remaining pets need motion
-  if ([...motionStates.values()].every(e => e.state.follow === null && e.state.physics === null)) {
+  if ([...motionStates.values()].every(({ state }) => !needsSharedTicker(state))) {
     stopSharedTicker();
   }
 }
@@ -172,9 +176,17 @@ export async function motionMoveTo(petHandleId: string, accessor: WindowAccessor
   // in MotionState and let syncLoop handle interpolation. This avoids the
   // competing-writer race that causes jitter.
   if (state.follow !== null || state.physics !== null) {
-    const [startX, startY] = window.getPosition();
+    const [reportedStartX, reportedStartY] = window.getPosition();
     const clamped = clampPosition(petHandleId, target);
+    // Native coordinates can be transiently unavailable during display changes.
+    // Falling back to the already-clamped target keeps the delegated move finite;
+    // the next valid tick can then settle it without ever writing NaN.
+    const startX = Number.isFinite(reportedStartX) ? reportedStartX : clamped.x;
+    const startY = Number.isFinite(reportedStartY) ? reportedStartY : clamped.y;
     state.moveTarget = { x: clamped.x, y: clamped.y, startX, startY, elapsed: 0, durationMs, easing };
+    // A move that was delegated while follow/physics was active remains shared-
+    // ticker work even if that continuous mode is disabled before it completes.
+    startSharedTicker();
     // Return a promise that resolves when the generation changes (move completes or is superseded).
     return new Promise<void>((resolve) => {
       const check = () => {
@@ -230,7 +242,7 @@ export function motionStopAll(): void {
 }
 
 function syncLoop(petHandleId: string, _accessor: WindowAccessor, state: MotionState): void {
-  const wantsLoop = state.follow !== null || state.physics !== null;
+  const wantsLoop = needsSharedTicker(state);
   if (!wantsLoop) {
     // stop.loop field can be removed from MotionState eventually; keep null for now
     if (state.loop) { clearInterval(state.loop); state.loop = null; }

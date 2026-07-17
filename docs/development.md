@@ -10,11 +10,16 @@ their own doc, [testing-and-validation.md](testing-and-validation.md).
   `packages/*`. Package manager pinned to `pnpm@11.x`; Node `>=20`.
 - **ESM + TypeScript everywhere**: every package is `"type": "module"` with dual
   type exports; internal links use `workspace:*`.
-- **`web/` uses Bun + Nuxt** and is a separate toolchain — its commands run from
-  `web/` with `bun`, not pnpm. Only its data/catalog side is in scope here (see
-  [catalog.md](catalog.md)).
+- **`web/` uses Bun + Nuxt** and is a separate, ignored toolchain — its own
+  commands run from `web/` with Bun. The tracked root plugin producer is
+  `scripts/sync-plugins.mjs`; it materializes plugin catalogs and ZIP staging
+  under `web/` before the separate deploy. Only the data/catalog side is in
+  scope here (see [catalog.md](catalog.md)).
 - **Versioning**: packages align around SDK v3 / `manifestVersion 3`. The
   workspace version is in the root `package.json` (`3.1.0` at time of writing).
+- **Plugin checkout bytes**: root `.gitattributes` fixes current plugin text
+  formats to LF and WebP to binary. Update those narrow rules when adding a new
+  plugin file format because reviewed-tree and ZIP hashes use raw checkout bytes.
 
 The authoritative structural map is the root `codemap.md` plus per-folder
 `codemap.md` files; read those before editing a subsystem.
@@ -44,6 +49,7 @@ All from the repo root unless noted (full list in root `package.json`):
 | `openpets plugin new <name> --template <t>` | Scaffold an SDK v3 plugin |
 | `openpets plugin validate <dir>` | Validate a plugin locally |
 | `pnpm plugins:test` | Locale checks + official-plugin harness tests |
+| `pnpm plugins:package:test` | Deterministic/strict ZIP, manifest parity, reviewed digest, and safe path/symlink producer contracts |
 | `pnpm plugins:check` | Dry-run the catalog package plan |
 | `pnpm plugins:package` | Build catalog + ZIP staging (no upload) |
 | `pnpm plugins:validate-release` | Pre-ship release gate |
@@ -104,8 +110,11 @@ the packaging contract — see [testing-and-validation.md](testing-and-validatio
 ### Web catalog
 
 Pet and plugin catalog deploys run from `web/` with Bun (`bun run deploy`,
-`pnpm plugins:deploy`). Catalog generation/verification is in [catalog.md](catalog.md)
-and the runbooks under `web/docs/`.
+`pnpm plugins:deploy`). Plugin generation itself runs from the root through the
+tracked `scripts/sync-plugins.mjs`; `plugins:package` writes local artifacts and
+`plugins:publish` additionally uploads ZIPs with Wrangler. Catalog
+generation/verification is in [catalog.md](catalog.md) and the runbooks under
+`web/docs/`.
 
 ## Cross-platform & Linux testing
 

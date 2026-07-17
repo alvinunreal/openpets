@@ -18,7 +18,7 @@ const v2Permissions = ["pet:speak", "pet:reaction", "pet:move", "schedule", "sto
 const v3Permissions = [
   ...v2Permissions,
   "pet:interact", "pet:pin", "pet:animate", "pet:speak:dynamic", "pet:drop", "pets:read", "pets:manage",
-  "audio", "events", "ui:toast", "ui:panel", "ui:delivery", "notify", "bus", "ai", "secrets", "voice:speak", "voice:listen",
+  "audio", "events", "ui:toast", "ui:panel", "ui:delivery", "companion:context", "notify", "bus", "ai", "secrets", "voice:speak", "voice:listen",
   "auth", "files", "system:openExternal", "system:metrics", "clipboard", "network:write",
 ];
 const configFieldTypesV2 = ["text", "textarea", "number", "boolean", "select", "time", "multiSelect", "list"];

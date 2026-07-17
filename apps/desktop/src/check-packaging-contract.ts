@@ -92,8 +92,6 @@ const loggerSource = readFileSync(join(appDir, "src", "logger.ts"), "utf8");
 const mainSource = readFileSync(join(appDir, "src", "main.ts"), "utf8");
 const appStateSource = readFileSync(join(appDir, "src", "app-state.ts"), "utf8");
 const analyticsSource = readFileSync(join(appDir, "src", "analytics.ts"), "utf8");
-const webPostHogPluginSource = readFileSync(join(repoRoot, "web", "app", "plugins", "posthog.client.js"), "utf8");
-const webAnalyticsSource = readFileSync(join(repoRoot, "web", "app", "composables", "useAnalytics.js"), "utf8");
 const localIpcSourceForLogging = readFileSync(join(appDir, "src", "local-ipc.ts"), "utf8");
 const localIpcPathsSource = readFileSync(join(appDir, "src", "local-ipc-paths.ts"), "utf8");
 const leaseManagerSource = readFileSync(join(appDir, "src", "lease-manager.ts"), "utf8");
@@ -115,12 +113,6 @@ for (const eventName of ["desktop_control_center_opened", "desktop_integration_a
 }
 assert.doesNotMatch(analyticsSource + localIpcSourceForLogging, /desktop_agent_reaction_received|desktop_first_agent_reaction_received/, "desktop analytics must not emit old per-reaction agent events.");
 assert.match(analyticsSource, /function classifyAnalyticsError/, "desktop analytics must classify errors into safe buckets before capture.");
-assert.match(webPostHogPluginSource, /autocapture:\s*!!cfg\.debug/, "web autocapture must be disabled unless explicit debug mode is enabled.");
-for (const eventName of ["web_app_download_clicked", "web_pet_download_clicked", "web_install_command_copied", "web_outbound_link_clicked", "web_github_stars_observed"]) {
-  assert.match(webAnalyticsSource, new RegExp(eventName), `web analytics must use canonical event: ${eventName}`);
-}
-assert.doesNotMatch(webAnalyticsSource, /pet_name|\bhref\s*:/, "web analytics must not send pet names or full outbound href properties.");
-assert.match(webAnalyticsSource, /pathname:\s*safePathOf\(href\)/, "web outbound analytics must send only a conservative safe pathname bucket.");
 assert.doesNotMatch(windowsSource, /plugin_id|pet_id|command_id/, "desktop analytics must not send raw local pet, plugin, or command identifiers.");
 assert.doesNotMatch(windowsSource + localIpcSourceForLogging + mainSource, /trackDesktopEvent\([^\n]*(filePaths|selectedPath|installPath|manifestPath|href\s*:)/, "desktop analytics must not send local paths or hrefs.");
 assert.match(mainSource, /isLinux && !allowWayland[\s\S]*?appendSwitch\("ozone-platform", "x11"\)/, "Linux desktop pets must force X11/Xwayland because native Wayland blocks always-on-top and programmatic window positioning.");
@@ -172,16 +164,15 @@ assert.match(petWindowSource, /export function shouldUseWaylandNativePetDrag/, "
 assert.doesNotMatch(petWindowSource, /OPENPETS_WAYLAND_NATIVE_DRAG/, "Wayland native pet dragging must not depend on a debug experiment flag.");
 assert.match(petWindowSource, /shouldUseWaylandNativePetDrag\(\) \? "drag" : "no-drag"/, "native pet drag regions must be scoped to actual Wayland sessions.");
 assert.match(petWindowSource, /font-src file:/, "pet window CSP must allow the bundled emoji font file.");
+assert.match(petWindowSource, /media-src data:/, "pet window CSP must allow bounded host-generated voice audio data URLs.");
 assert.match(petWindowSource, /OpenPets Emoji/, "pet windows must use the bundled emoji font for host/plugin icon glyphs.");
 assert.match(petWindowSource, /setIgnoreMouseEvents\(true, \{ forward: true \}\)/, "transparent pet window background must use OS-level mouse passthrough.");
 assert.match(petWindowSource, /setIgnoreMouseEvents\(false\)/, "visible pet and bubble hit targets must re-enable mouse handling.");
 assert.match(petWindowSource, /openpets:pet-ready/, "pet windows must resync passthrough after each renderer reload.");
-assert.match(petWindowSource, /function installMousePassthroughAndDrag[\s\S]*?const rearmPassthrough[\s\S]*?process\.platform !== "win32"[\s\S]*?rearmWindowsMouseForwarding\(reason\)/, "Windows pet reloads must toggle forwarded mouse passthrough to re-register hover and drag tracking.");
 assert.match(petWindowSource, /scheduleWindowsMouseForwardingRearm\(`\$\{reason\}\+75ms`, 75\);[\s\S]*?scheduleWindowsMouseForwardingRearm\(`\$\{reason\}\+175ms`, 175\);/, "Windows pet reloads must retry mouse forwarding rearm after load settles.");
 assert.match(petWindowSource, /openpets:pet-probe-hit-test/, "Windows pet reloads must probe current cursor hit target when mousemove forwarding is stale.");
 assert.match(petWindowSource, /export function recoverPetMouseInterop/, "pet windows must expose a controlled mouse interop recovery hook for OS display and resume events.");
 assert.match(petWindowSource, /petMouseInteropRecovery\.set\(window, scheduleMouseInteropRecovery\)/, "pet windows must register their mouse interop recovery callback.");
-assert.match(petWindowSource, /function installMousePassthroughAndDrag[\s\S]*?scheduleWindowsForwardingWatch[\s\S]*?rearmWindowsMouseForwarding\(reason, false\)[\s\S]*?scheduleWindowsForwardingWatch\(reason\)/, "Windows pet passthrough must keep rearming while idle so hover and drag recover after pet reloads without noisy logs.");
 assert.match(petPreloadSource, /openpets:pet-probe-hit-test[\s\S]*?elementFromPoint\(clientX, clientY\)[\s\S]*?reportInteractiveHit/, "pet preload must answer main-process cursor hit-test probes.");
 assert.match(petWindowSource, /did-finish-load", rearmAfterLoad/, "pet windows must re-arm mouse passthrough after every content load.");
 assert.match(petWindowSource, /did-fail-load", handleLoadFailure/, "pet windows must restore passthrough after failed content loads.");

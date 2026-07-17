@@ -37,5 +37,5 @@ First-party SDK v3 plugin product source. These plugins are the reviewed default
 
 - **Desktop dev mode**: `OPENPETS_DEV_PLUGIN_ROOTS=plugins/official` lets the app hot-load these packages through the local loader.
 - **Release validation**: `pnpm plugins:package` and `pnpm plugins:validate-release` package manifests, entries, assets, panels, and `locales/en.json` while checking catalog/package drift.
-- **Catalog direction**: These plugins are packaged into catalog v3-compatible published artifacts; current runtime work should not optimize for legacy v2 defaults.
+- **Catalog direction**: These plugins are packaged into the active plugin catalog v2; v1 remains an empty compatibility artifact.
 - **Assets/locales**: `assets/*.svg` are manifest-declared icon refs; `locales/*.json` are flat dotted-key dictionaries used by manifest `$t:` references and `ctx.t(...)`.

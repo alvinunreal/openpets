@@ -192,6 +192,36 @@
   .pet-preview-grid { @apply grid gap-3; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .pet-preview-item { @apply flex flex-col items-center justify-center gap-2 rounded-2xl border border-blue-100 bg-white/60 p-2.5 shadow-sm; }
   .pet-detail-actions .grid { @apply grid-cols-1 sm:grid-cols-2; }
+  .companion-panel { @apply mt-2 flex flex-col gap-4 rounded-[24px] border border-blue-200/70 bg-blue-50/45 p-5; box-shadow: inset 0 1px 0 rgba(255,255,255,.9); }
+  .companion-panel-head { @apply flex items-start justify-between gap-4; }
+  .companion-panel-head h3 { @apply m-0 font-monoDisplay text-xl font-black text-navy; }
+  .companion-panel-head p:not(.eyebrow) { @apply mb-0 mt-1 max-w-2xl text-xs leading-relaxed text-slatecopy; }
+  .companion-panel-body { @apply flex flex-col gap-4; }
+  .companion-panel-message { @apply mb-0; }
+  .companion-success { @apply rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700; }
+  .companion-disclosure { @apply flex flex-col items-start gap-3 rounded-2xl border border-blue-100 bg-white/75 p-4 text-sm text-slatecopy; }
+  .companion-disclosure strong { @apply text-navy; }
+  .companion-disclosure p { @apply m-0 leading-relaxed; }
+  .companion-field { @apply flex min-w-0 flex-col gap-1.5 text-xs font-bold text-navy; }
+  .companion-field small { @apply font-normal leading-relaxed text-slatecopy; }
+  .companion-field input, .companion-field textarea, .companion-field select, .companion-composer textarea { @apply w-full rounded-xl border border-blue-200/80 bg-white/90 px-3 py-2 text-sm font-medium text-navy outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/15; }
+  .companion-field textarea, .companion-composer textarea { @apply resize-y leading-relaxed; }
+  .companion-field-actions { @apply flex items-center justify-between gap-3 text-[11px] font-semibold text-slatecopy; }
+  .companion-profile-grid, .companion-options-grid { @apply grid grid-cols-1 gap-3 sm:grid-cols-2; }
+  .companion-toggles { @apply grid grid-cols-1 gap-2 sm:grid-cols-2; }
+  .companion-health-note { @apply -mt-2 mb-0 rounded-xl border border-amber-200/70 bg-amber-50/70 px-3 py-2 text-xs leading-relaxed text-amber-800; }
+  .companion-toggles > label { @apply flex cursor-pointer items-start gap-2 rounded-xl border border-blue-100/70 bg-white/65 p-3; }
+  .companion-toggles input { @apply mt-0.5 h-4 w-4 shrink-0 accent-brand; }
+  .companion-toggles span { @apply flex min-w-0 flex-col; }
+  .companion-toggles strong { @apply text-xs text-navy; }
+  .companion-toggles small { @apply mt-0.5 text-[11px] font-normal leading-relaxed text-slatecopy; }
+  .companion-composer { @apply flex flex-col gap-2 rounded-2xl border border-brand/20 bg-white/80 p-4; }
+  .companion-composer > label { @apply font-monoDisplay text-sm font-black uppercase tracking-wide text-navy; }
+  .companion-composer-actions { @apply flex flex-wrap gap-2; }
+  .companion-last-reply { @apply mt-1 rounded-xl border border-blue-100 bg-blue-50/70 p-3 text-xs text-slatecopy; }
+  .companion-last-reply strong { @apply text-navy; }
+  .companion-last-reply p { @apply mb-0 mt-1 whitespace-pre-wrap leading-relaxed; }
+  .companion-danger-row { @apply flex flex-wrap items-center justify-between gap-2 border-t border-blue-100 pt-4; }
   @keyframes plugin-fade-in { from { opacity: 0; } to { opacity: 1; } }
   @keyframes plugin-pop-in { from { opacity: 0; transform: scale(0.96) translateY(10px); } to { opacity: 1; transform: scale(1) translateY(0); } }
   .plugin-inspector-head { @apply flex items-center gap-4; }

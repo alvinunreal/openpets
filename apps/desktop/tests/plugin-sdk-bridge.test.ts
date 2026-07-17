@@ -80,6 +80,13 @@ await scenario("OAuth accepts a valid client secret and rejects invalid values",
   await assert.rejects(() => api.auth.oauth({ provider: "google", clientId: "client", clientSecret: "line\nbreak", scopes: ["https://www.googleapis.com/auth/calendar.events.readonly"] }), /Invalid OAuth clientSecret\./);
 });
 
+await scenario("voice speech targets stay scoped to the calling plugin and requested pet", async ({ api, capabilities }) => {
+  let received: unknown;
+  capabilities.voice.speak = async (_text, opts) => { received = opts; };
+  await api.voice.speak("Hello from the pet", { voice: "alba", rate: 1.1, petHandleId: "pet-7" });
+  assert.deepEqual(received, { pluginId: "plug", voice: "alba", rate: 1.1, petHandleId: "pet-7" });
+});
+
 await scenario("events.on config:changed uses config listener path", async ({ api, bridge, store, capabilities }) => {
   const seen: unknown[] = [];
   const sub = api.events.on("config:changed", (config: Record<string, unknown>) => seen.push(config.value));
@@ -246,6 +253,25 @@ await scenario("delivery re-registration retires obsolete handles and callbacks"
   assert.deepEqual(api.ui.deliverySubscribe(second.deliveryId, () => undefined), { ok: false });
 });
 
+await scenario("companion contributions require permission, validate targets, and clear with plugin lifecycle", async ({ api, bridge, store, capabilities }) => {
+  const now = Date.now();
+  await assert.rejects(() => api.companion.contributeFact({ key: "focus.active", text: "A focus session is active.", expiresAt: now + 60_000 }), /companion:context/);
+
+  const record = { ...store.getRecord("plug")!, approvedPermissions: [...store.getRecord("plug")!.approvedPermissions, "companion:context" as const] };
+  store.upsertRecord(record);
+  const approved = bridge.createApi(record, manifest());
+  await approved.companion.contributeFact({ key: "focus.active", text: "A focus session is active.", expiresAt: now + 60_000 });
+  await approved.companion.offerOpportunity({ key: "focus.check", context: "The focus session is well underway.", urgency: "low", earliestAt: now + 1_000, expiresAt: now + 60_000, dedupeKey: "focus.session.1", cooldownMs: 60_000 });
+  assert.equal(capabilities.companionContext.facts.length, 1);
+  assert.equal(capabilities.companionContext.opportunities.length, 1);
+
+  await assert.rejects(() => approved.companion.offerOpportunity({ key: "bad", context: "Say this exact sentence.", urgency: "high", earliestAt: now + 1_000, expiresAt: now + 60_000, dedupeKey: "bad" }), /urgency/);
+  await assert.rejects(() => approved.companion.contributeFact({ key: "other.pet", text: "Context", expiresAt: now + 60_000, petHandleId: "someone-elses-pet" } as never), /Invalid companion contribution field: petHandleId/);
+
+  bridge.clearPlugin("plug");
+  assert.equal(capabilities.companionContext.clears, 1);
+});
+
 type ScenarioContext = {
   api: ReturnType<PluginSdkBridge["createApi"]>;
   bridge: PluginSdkBridge;
@@ -268,7 +294,7 @@ async function scenario(name: string, run: (context: ScenarioContext) => Promise
       runtime: "javascript",
       sdkVersion: "3.0.0",
       enabled: true,
-      approvedPermissions: ["commands", "events", "storage", "pet:reaction", "auth"],
+      approvedPermissions: ["commands", "events", "storage", "pet:reaction", "auth", "voice:speak"],
       config: {},
     };
     store.upsertRecord(record);
@@ -286,7 +312,7 @@ async function scenario(name: string, run: (context: ScenarioContext) => Promise
   }
 }
 
-type TestCapabilities = PluginHostCapabilities & { events: PluginHostCapabilities["events"] & { subscribed: string[] }; delivery: PluginHostCapabilities["delivery"] & { teardowns: number; dismiss?: (reason: "click" | "manual" | "expired" | "plugin-stopped") => void } };
+type TestCapabilities = PluginHostCapabilities & { events: PluginHostCapabilities["events"] & { subscribed: string[] }; delivery: PluginHostCapabilities["delivery"] & { teardowns: number; dismiss?: (reason: "click" | "manual" | "expired" | "plugin-stopped") => void }; companionContext: PluginHostCapabilities["companionContext"] & { facts: unknown[]; opportunities: unknown[]; clears: number } };
 
 function createTestCapabilities(): TestCapabilities {
   return {
@@ -317,6 +343,7 @@ function createTestCapabilities(): TestCapabilities {
     notify: async () => undefined,
     panels: { open: async () => ({ id: "panel", show: async () => undefined, hide: async () => undefined, postMessage: async () => undefined, close: async () => undefined }) },
     delivery: { teardowns: 0, async register(_pluginId, _descriptor) { let handler: ((reason: "click" | "manual" | "expired" | "plugin-stopped") => void) | undefined; this.dismiss = (reason) => handler?.(reason); return { dismiss: () => this.dismiss?.("manual"), onDismiss: (next) => { handler = next; } }; }, teardown() { this.teardowns += 1; } },
+    companionContext: { facts: [], opportunities: [], clears: 0, async submitFact(pluginId, fact) { this.facts.push({ pluginId, fact }); }, async submitOpportunity(pluginId, opportunity) { this.opportunities.push({ pluginId, opportunity }); }, async remove() {}, clearPlugin() { this.clears += 1; } },
     secrets: { get: async () => undefined, set: async () => undefined, delete: async () => undefined, has: async () => false },
     ai: { available: async () => false, complete: async () => ({ text: "" }), stream: async () => ({ text: "" }) },
     voice: { speak: async () => undefined, listen: async () => ({ text: "" }) },
@@ -336,7 +363,7 @@ function manifest(): OpenPetsJavascriptPluginManifest {
     runtime: "javascript",
     sdkVersion: "3.0.0",
     entry: "index.js",
-    permissions: ["commands", "events", "storage", "auth"],
+    permissions: ["commands", "events", "storage", "auth", "voice:speak", "companion:context"],
     assets: { icons: { focus: "assets/focus.svg" } },
   };
 }

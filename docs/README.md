@@ -19,11 +19,13 @@ Docs here are the *narrative* layer on top of those maps.
 ## Desktop app
 
 - **[desktop.md](desktop.md)** — the Electron app: process model, tray-first UX,
-  Control Center, windows, app state, lifecycle, security model, logging, CSP.
+  Control Center, Companion Conversations, windows, app state, lifecycle,
+  security model, logging, CSP.
 - **[ipc.md](ipc.md)** — the local IPC protocol and `@open-pets/client`:
   discovery, transports, the lease model, request methods, security.
 - **[pets.md](pets.md)** — the pet model end to end: spritesheets, reactions,
-  reaction→animation mapping, installation, Codex pets, motion.
+  reaction→animation mapping, per-pet conversational identity, recent memory,
+  installation, Codex pets, motion.
 - **[lan-mode.md](lan-mode.md)** - experimental LAN office-pet mode: one
   shared default pet moves between PCs on the same network.
 
@@ -38,7 +40,7 @@ Docs here are the *narrative* layer on top of those maps.
 
 - **[agent-integrations.md](agent-integrations.md)** — how Claude Code, MCP,
   OpenCode, Cursor, and Pi are configured and how each turns agent activity into
-  pet reactions, plus the CLI that ties them together.
+  pet reactions, plus the CLI and separate Codex CLI Companion target.
 
 ## Plugins & SDK
 
@@ -49,8 +51,8 @@ Docs here are the *narrative* layer on top of those maps.
   direction, the official plugin lineup, bundling/enabled defaults, and the
   right-click action strategy.
 - **[sdk.md](sdk.md)** — the public SDK v3 contract for plugin authors: the
-  capability namespaces, the permission surface, and the deterministic test
-  harness.
+  capability namespaces, short-lived Companion contributions, the permission
+  surface, and the deterministic test harness.
 
 ## Internationalization
 

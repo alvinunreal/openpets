@@ -10,6 +10,9 @@ import { getAppStateSnapshot, getDesktopAnalyticsConsentState, normalizePetPoolO
 import { applyRoamingToAllPets } from "./pet-roaming-controller.js";
 import { classifyAnalyticsError, trackDesktopAnalyticsConsentChanged, trackDesktopEvent } from "./analytics.js";
 import { createAppIcon } from "./assets.js";
+import { clearCompanionMemory, removeCompanionMemoryForPet } from "./companion-memory.js";
+import { disableCompanion, enableCompanion, getCompanionSettings, removeCompanionPetSettings, updateCompanionPetSettings, updateCompanionSettings } from "./companion-settings.js";
+import { companionTargetIds, type CompanionTargetId } from "./companion-types.js";
 import { getCatalogPageUiState, getCatalogSearchUiState, getCatalogUiState } from "./catalog.js";
 import { getCodexPetsUiState, importCodexPet, readCodexPetSpritesheet } from "./codex-pets.js";
 import { setConfinementEnabled } from "./confinement-manager.js";
@@ -26,17 +29,43 @@ import { defaultPetSprite, reactionAnimationMetadata, selectableAnimationMetadat
 import { readSafePluginManifest } from "./plugin-manifest-reader.js";
 import { registerPluginAssetProtocol } from "./plugin-asset-protocol.js";
 import { checkForGitHubReleaseUpdate, getUpdateStatus, openUpdateReleasePage } from "./update-checker.js";
+import { getVoicePlatform } from "./voice-platform.js";
+import { getVoiceSecretStatus, setVoiceSecret, type VoiceSecretProviderId } from "./voice-secrets.js";
+import { getVoiceSettings, getVoiceSettingsSnapshot, updateVoiceSettings, voiceProviderIds, type VoiceProviderId } from "./voice-settings.js";
 
 type InternalUiWindowKind = "control-center";
 export type ControlCenterRoute = "dashboard" | "pets" | "settings" | "plugins" | "integrations";
+export type ControlCenterSection = "companion";
+export type ControlCenterRouteRequest = {
+  readonly route: ControlCenterRoute;
+  readonly petId?: string;
+  readonly section?: ControlCenterSection;
+  readonly notice?: "pet-unavailable";
+};
 
 const controlCenterRoutes = new Set<ControlCenterRoute>(["dashboard", "pets", "settings", "plugins", "integrations"]);
 let controlCenterWindow: BrowserWindow | null = null;
 let internalUiHandlersInstalled = false;
-let pendingControlCenterRoute: ControlCenterRoute | null = null;
+let pendingControlCenterRoute: ControlCenterRouteRequest | null = null;
 let pendingDockTimer: NodeJS.Timeout | null = null;
 let lastDockHideAt = 0;
 const dockHideShowCooldownMs = 1100;
+
+function validateVoiceProviderId(value: unknown): VoiceProviderId {
+  if (!voiceProviderIds.includes(value as VoiceProviderId)) throw new Error("Invalid voice provider.");
+  return value as VoiceProviderId;
+}
+
+function validateCompanionTargetId(value: unknown): CompanionTargetId {
+  if (!companionTargetIds.includes(value as CompanionTargetId)) throw new Error("Invalid companion target.");
+  return value as CompanionTargetId;
+}
+
+function requireVoicePlatform() {
+  const platform = getVoicePlatform();
+  if (!platform) throw new Error("Voice platform is still starting.");
+  return platform;
+}
 
 function hasOpenInternalUiWindows(): boolean {
   if (controlCenterWindow && !controlCenterWindow.isDestroyed()) return true;
@@ -73,7 +102,7 @@ function getPetsStateSnapshot(): { preferences: { defaultPetId: string }; pets: 
 }
 
 function getSettingsStateSnapshot(): {
-  preferences: Pick<ReturnType<typeof getAppStateSnapshot>["preferences"], "openDefaultPetOnLaunch" | "petScale" | "reactionAnimationOverrides" | "petPoolOrder" | "petPoolEnabled" | "petConfinementEnabled" | "petCrossDisplayEnabled" | "petGravityEnabled">;
+  preferences: Pick<ReturnType<typeof getAppStateSnapshot>["preferences"], "openDefaultPetOnLaunch" | "readSpeechBubblesAloud" | "petScale" | "reactionAnimationOverrides" | "petPoolOrder" | "petPoolEnabled" | "petConfinementEnabled" | "petCrossDisplayEnabled" | "petGravityEnabled">;
   petScaleOptions: typeof petScaleOptions;
   analytics: ReturnType<typeof getDesktopAnalyticsConsentState>;
   /** Non-broken, non-built-in installed pets available for pool selection. */
@@ -83,6 +112,7 @@ function getSettingsStateSnapshot(): {
   return {
     preferences: {
       openDefaultPetOnLaunch: state.preferences.openDefaultPetOnLaunch,
+      readSpeechBubblesAloud: state.preferences.readSpeechBubblesAloud,
       petScale: state.preferences.petScale,
       reactionAnimationOverrides: state.preferences.reactionAnimationOverrides,
       petPoolOrder: state.preferences.petPoolOrder,
@@ -185,6 +215,74 @@ export function installInternalUiHandlers(): void {
   ipcMain.handle("openpets:get-settings-state", (event) => {
     assertAllowedSender(event, ["control-center"]);
     return getSettingsStateSnapshot();
+  });
+
+  ipcMain.handle("openpets:companion-settings-get", (event) => {
+    assertAllowedSender(event, ["control-center"]);
+    return getCompanionSettings();
+  });
+
+  ipcMain.handle("openpets:companion-enable", (event) => {
+    assertAllowedSender(event, ["control-center"]);
+    const settings = enableCompanion();
+    trackDesktopEvent("desktop_companion_enabled", { frequency: settings.proactivity.frequency, target: settings.target });
+    return settings;
+  });
+
+  ipcMain.handle("openpets:companion-disable", (event) => {
+    assertAllowedSender(event, ["control-center"]);
+    const settings = disableCompanion();
+    getVoicePlatform()?.companion.cancelAll();
+    trackDesktopEvent("desktop_companion_disabled");
+    return settings;
+  });
+
+  ipcMain.handle("openpets:companion-settings-update", (event, patch: unknown) => {
+    assertAllowedSender(event, ["control-center"]);
+    const previousTarget = getCompanionSettings().target;
+    const settings = updateCompanionSettings(patch);
+    if (settings.target !== previousTarget) getVoicePlatform()?.companion.cancelAll();
+    debug("companion", "settings updated", { enabled: settings.enabled, target: settings.target, memoryEnabled: settings.memory.enabled, proactivityEnabled: settings.proactivity.enabled, frequency: settings.proactivity.frequency, pluginContext: settings.context.pluginEnabled, sensitivePluginContext: settings.context.sensitivePluginEnabled, screenContext: settings.context.screenEnabled });
+    return settings;
+  });
+
+  ipcMain.handle("openpets:companion-pet-settings-update", (event, petId: unknown, patch: unknown) => {
+    assertAllowedSender(event, ["control-center"]);
+    if (typeof petId !== "string" || !getAppStateSnapshot().pets.installed.some((pet) => pet.id === petId && !pet.broken && !pet.brokenReason)) throw new Error("The selected pet is unavailable.");
+    return updateCompanionPetSettings(petId, patch);
+  });
+
+  ipcMain.handle("openpets:companion-memory-clear", (event, petId: unknown) => {
+    assertAllowedSender(event, ["control-center"]);
+    if (petId !== undefined && typeof petId !== "string") throw new Error("Invalid pet id.");
+    clearCompanionMemory(petId);
+    debug("companion", "recent memory cleared", { petId: typeof petId === "string" ? petId : undefined });
+    return { ok: true } as const;
+  });
+
+  ipcMain.handle("openpets:companion-target-health", async (event, targetId: unknown, force: unknown) => {
+    assertAllowedSender(event, ["control-center"]);
+    const selected = targetId === undefined ? getCompanionSettings().target : validateCompanionTargetId(targetId);
+    return requireVoicePlatform().companion.health(selected, force === true);
+  });
+
+  ipcMain.handle("openpets:companion-send", async (event, request: unknown) => {
+    assertAllowedSender(event, ["control-center"]);
+    if (!isPlainObject(request) || typeof request.petId !== "string" || typeof request.text !== "string") throw new Error("Invalid companion message.");
+    return requireVoicePlatform().companion.sendUserTurn({ petId: request.petId, text: request.text, kind: "typed", speak: request.speak === true });
+  });
+
+  ipcMain.handle("openpets:companion-cancel", (event, petId: unknown) => {
+    assertAllowedSender(event, ["control-center"]);
+    if (typeof petId !== "string") throw new Error("Invalid pet id.");
+    requireVoicePlatform().companion.cancel(petId);
+    return { ok: true } as const;
+  });
+
+  ipcMain.handle("openpets:companion-display-ack", (event, petId: unknown, token: unknown) => {
+    assertAllowedSender(event, ["control-center"]);
+    if (typeof petId !== "string" || typeof token !== "string" || token.length > 300) throw new Error("Invalid companion display acknowledgement.");
+    return { ok: requireVoicePlatform().companion.acknowledgeDisplay(petId, token) };
   });
 
   ipcMain.handle("openpets:get-lan-status", (event) => {
@@ -351,6 +449,111 @@ export function installInternalUiHandlers(): void {
     const capabilities = getPluginHostCapabilitiesForUi();
     if (!capabilities) return { hasKey: false };
     return { hasKey: await capabilities.secretsStore.has(hostSecretsOwner, hostAiApiKeySecret) };
+  });
+
+  ipcMain.handle("openpets:voice-settings-get", (event) => {
+    assertAllowedSender(event, ["control-center"]);
+    return getVoiceSettingsSnapshot(getAppStateSnapshot().pets.installed);
+  });
+
+  ipcMain.handle("openpets:voice-settings-update", async (event, patch: unknown) => {
+    assertAllowedSender(event, ["control-center"]);
+    if (!isPlainObject(patch)) throw new Error("Invalid voice settings patch.");
+    if (isPlainObject(patch.wake) && patch.wake.enabled === true && !requireVoicePlatform().wake.health().ready) {
+      throw new Error(requireVoicePlatform().wake.health().reason);
+    }
+    if (isPlainObject(patch.conversation) && patch.conversation.target === "codex") {
+      const health = await requireVoicePlatform().companion.health("codex");
+      if (!health.ready) throw new Error(health.reason ?? "Codex CLI conversation is unavailable.");
+    }
+    const settings = updateVoiceSettings(patch);
+    debug("ui", "voice settings updated", { providerId: settings.output.providerId, petOverrides: Object.keys(settings.petOverrides).length });
+    return getVoiceSettingsSnapshot(getAppStateSnapshot().pets.installed);
+  });
+
+  ipcMain.handle("openpets:voice-secret-status", async (event) => {
+    assertAllowedSender(event, ["control-center"]);
+    const { getPluginHostCapabilitiesForUi } = await import("./plugin-host-capabilities.js");
+    const capabilities = getPluginHostCapabilitiesForUi();
+    return capabilities ? getVoiceSecretStatus(capabilities.secretsStore) : { "openai-compatible": { hasKey: false }, elevenlabs: { hasKey: false } };
+  });
+
+  ipcMain.handle("openpets:voice-secret-set", async (event, providerId: unknown, key: unknown) => {
+    assertAllowedSender(event, ["control-center"]);
+    if (providerId !== "openai-compatible" && providerId !== "elevenlabs") throw new Error("Invalid voice secret provider.");
+    if (key !== null && typeof key !== "string") throw new Error("Invalid voice API key.");
+    const { getPluginHostCapabilitiesForUi } = await import("./plugin-host-capabilities.js");
+    const capabilities = getPluginHostCapabilitiesForUi();
+    if (!capabilities) throw new Error("Voice secret storage is unavailable.");
+    await setVoiceSecret(capabilities.secretsStore, providerId as VoiceSecretProviderId, key as string | null);
+    getVoicePlatform()?.providers.invalidate(providerId as VoiceProviderId);
+    return getVoiceSecretStatus(capabilities.secretsStore);
+  });
+
+  ipcMain.handle("openpets:voice-provider-health", async (event, providerId: unknown) => {
+    assertAllowedSender(event, ["control-center"]);
+    const provider = validateVoiceProviderId(providerId);
+    const platform = requireVoicePlatform();
+    return platform.providers.health(provider);
+  });
+
+  ipcMain.handle("openpets:voice-provider-voices", async (event, providerId: unknown) => {
+    assertAllowedSender(event, ["control-center"]);
+    const provider = validateVoiceProviderId(providerId);
+    return requireVoicePlatform().providers.listVoices(provider);
+  });
+
+  ipcMain.handle("openpets:voice-test-speech", async (event, request: unknown) => {
+    assertAllowedSender(event, ["control-center"]);
+    if (!isPlainObject(request)) throw new Error("Invalid voice test request.");
+    const text = typeof request.text === "string" ? request.text.trim() : "";
+    if (!text || text.length > 300 || /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(text)) throw new Error("Voice test text must contain 1–300 printable characters.");
+    const providerId = request.providerId === undefined ? undefined : validateVoiceProviderId(request.providerId);
+    const petId = typeof request.petId === "string" && /^[A-Za-z0-9._:-]{1,200}$/.test(request.petId) ? request.petId : getAppStateSnapshot().preferences.defaultPetId;
+    const voiceId = typeof request.voiceId === "string" ? request.voiceId.trim().slice(0, 200) || undefined : undefined;
+    const model = typeof request.model === "string" ? request.model.trim().slice(0, 200) || undefined : undefined;
+    const result = await requireVoicePlatform().output.speak({ text, reason: "settings-test", target: { kind: "installed-pet", petId }, requestedProviderId: providerId, requestedVoiceId: voiceId, requestedModel: model, overlapPolicy: "interrupt" });
+    debug("ui", "voice speech test finished", { ok: result.ok, providerId: providerId ?? "configured", petId, attempts: result.attempts.length });
+    return result;
+  });
+
+  ipcMain.handle("openpets:voice-stop-speech", (event, petId: unknown) => {
+    assertAllowedSender(event, ["control-center"]);
+    const id = typeof petId === "string" && /^[A-Za-z0-9._:-]{1,200}$/.test(petId) ? petId : getAppStateSnapshot().preferences.defaultPetId;
+    requireVoicePlatform().output.cancel({ kind: "installed-pet", petId: id });
+    return { ok: true };
+  });
+
+  ipcMain.handle("openpets:voice-listening-state-get", (event) => {
+    assertAllowedSender(event, ["control-center"]);
+    return requireVoicePlatform().listening.getSnapshot();
+  });
+
+  ipcMain.handle("openpets:voice-conversation-health", async (event, force: unknown) => {
+    assertAllowedSender(event, ["control-center"]);
+    return requireVoicePlatform().companion.health("codex", force === true);
+  });
+
+  ipcMain.handle("openpets:voice-wake-health", (event) => {
+    assertAllowedSender(event, ["control-center"]);
+    return requireVoicePlatform().wake.health();
+  });
+
+  ipcMain.handle("openpets:voice-ptt-start", async (event, petId: unknown) => {
+    assertAllowedSender(event, ["control-center"]);
+    if (typeof petId !== "string" || !/^[A-Za-z0-9._:-]{1,200}$/.test(petId)) throw new Error("Invalid push-to-talk pet.");
+    if (!getVoiceSettings().listening.pushToTalkEnabled) throw new Error("Enable push-to-talk in Voice Settings first.");
+    return requireVoicePlatform().listening.startPushToTalk(petId);
+  });
+
+  ipcMain.handle("openpets:voice-ptt-stop", async (event) => {
+    assertAllowedSender(event, ["control-center"]);
+    return requireVoicePlatform().listening.stopPushToTalk();
+  });
+
+  ipcMain.handle("openpets:voice-activity-cancel", async (event) => {
+    assertAllowedSender(event, ["control-center"]);
+    return requireVoicePlatform().listening.cancel("control-center");
   });
 
   ipcMain.handle("openpets:get-catalog", async (event) => {
@@ -560,6 +763,9 @@ export function installInternalUiHandlers(): void {
     }
 
     const state = await removePet(petId);
+    removeCompanionPetSettings(petId);
+    removeCompanionMemoryForPet(petId);
+    getVoicePlatform()?.companion.cancel(petId);
     refreshDefaultPetContent();
     return getInternalUiWindowKindForWebContents(event.sender.id) === "control-center" ? getPetsStateSnapshot() : state;
   });
@@ -707,10 +913,10 @@ export function installInternalUiProtocol(): void {
   });
 }
 
-export function openControlCenterWindow(route: ControlCenterRoute = "dashboard"): void {
+export function openControlCenterWindow(route: ControlCenterRoute | ControlCenterRouteRequest = "dashboard"): void {
   const safeRoute = normalizeControlCenterRoute(route);
   if (controlCenterWindow && !controlCenterWindow.isDestroyed()) {
-    trackDesktopEvent("desktop_control_center_opened", { route: safeRoute, entrypoint: "focus_existing" });
+    trackDesktopEvent("desktop_control_center_opened", { route: safeRoute.route, section: safeRoute.section, entrypoint: "focus_existing" });
     syncDockVisibilityForInternalUi();
     if (controlCenterWindow.isMinimized()) controlCenterWindow.restore();
     controlCenterWindow.show();
@@ -719,7 +925,7 @@ export function openControlCenterWindow(route: ControlCenterRoute = "dashboard")
     return;
   }
 
-  trackDesktopEvent("desktop_control_center_opened", { route: safeRoute, entrypoint: "create_window" });
+  trackDesktopEvent("desktop_control_center_opened", { route: safeRoute.route, section: safeRoute.section, entrypoint: "create_window" });
 
   const window = new BrowserWindow({
     title: "OpenPets — Control Center",
@@ -766,7 +972,7 @@ export function openControlCenterWindow(route: ControlCenterRoute = "dashboard")
   window.webContents.on("did-finish-load", () => flushPendingControlCenterRoute(window));
 
   const devUrl = getSafeControlCenterDevUrl();
-  const load = devUrl ? window.loadURL(withControlCenterRoute(devUrl, safeRoute)) : window.loadFile(join(app.getAppPath(), "dist", "renderer", "index.html"), { query: { route: safeRoute } });
+  const load = devUrl ? window.loadURL(withControlCenterRoute(devUrl, safeRoute)) : window.loadFile(join(app.getAppPath(), "dist", "renderer", "index.html"), { query: controlCenterRouteQuery(safeRoute) });
   load.catch((error: unknown) => {
     trackDesktopEvent("desktop_renderer_error", { surface_kind: "control_center", error_code: classifyAnalyticsError(error, "renderer_load_failed") });
     console.error("Failed to load Control Center.", error);
@@ -795,11 +1001,24 @@ export function focusOpenTaskWindows(): void {
   }
 }
 
-function normalizeControlCenterRoute(route: unknown): ControlCenterRoute {
-  return typeof route === "string" && controlCenterRoutes.has(route as ControlCenterRoute) ? route as ControlCenterRoute : "dashboard";
+export function normalizeControlCenterRoute(route: unknown): ControlCenterRouteRequest {
+  const requested = typeof route === "string" ? { route } : isPlainObject(route) ? route : {};
+  const safeRoute = typeof requested.route === "string" && controlCenterRoutes.has(requested.route as ControlCenterRoute)
+    ? requested.route as ControlCenterRoute
+    : "dashboard";
+  if (safeRoute !== "pets") return { route: safeRoute };
+
+  const wantsCompanion = requested.section === "companion";
+  const hasRequestedPet = typeof requested.petId === "string";
+  const petId = hasRequestedPet && /^[A-Za-z0-9._:-]{1,200}$/.test(requested.petId as string) ? requested.petId as string : undefined;
+  if (hasRequestedPet && !petId) return { route: "pets", ...(wantsCompanion ? { section: "companion" as const } : {}), notice: "pet-unavailable" };
+  if (!petId) return { route: "pets", ...(wantsCompanion ? { section: "companion" as const } : {}) };
+  const available = getAppStateSnapshot().pets.installed.some((pet) => pet.id === petId && !pet.broken && !pet.brokenReason);
+  if (!available) return { route: "pets", ...(wantsCompanion ? { section: "companion" as const } : {}), notice: "pet-unavailable" };
+  return { route: "pets", petId, ...(wantsCompanion ? { section: "companion" as const } : {}) };
 }
 
-function sendControlCenterRoute(window: BrowserWindow, route: ControlCenterRoute): void {
+function sendControlCenterRoute(window: BrowserWindow, route: ControlCenterRouteRequest): void {
   if (window.isDestroyed()) return;
   window.webContents.send("openpets:control-center-route", route);
 }
@@ -811,7 +1030,7 @@ function broadcastPluginRecordsRefresh(): void {
   }
 }
 
-function routeControlCenterWindow(window: BrowserWindow, route: ControlCenterRoute): void {
+function routeControlCenterWindow(window: BrowserWindow, route: ControlCenterRouteRequest): void {
   pendingControlCenterRoute = route;
   if (window.webContents.isLoading()) return;
   flushPendingControlCenterRoute(window);
@@ -824,10 +1043,19 @@ function flushPendingControlCenterRoute(window: BrowserWindow): void {
   sendControlCenterRoute(window, route);
 }
 
-function withControlCenterRoute(rawUrl: string, route: ControlCenterRoute): string {
+function withControlCenterRoute(rawUrl: string, route: ControlCenterRouteRequest): string {
   const url = new URL(rawUrl);
-  url.searchParams.set("route", route);
+  for (const [key, value] of Object.entries(controlCenterRouteQuery(route))) url.searchParams.set(key, value);
   return url.toString();
+}
+
+function controlCenterRouteQuery(route: ControlCenterRouteRequest): Record<string, string> {
+  return {
+    route: route.route,
+    ...(route.petId ? { petId: route.petId } : {}),
+    ...(route.section ? { section: route.section } : {}),
+    ...(route.notice ? { notice: route.notice } : {}),
+  };
 }
 
 function pluginUiError(error: string): PluginServiceResult {

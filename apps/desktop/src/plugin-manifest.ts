@@ -28,6 +28,7 @@ export type PluginPermission =
   | "ui:toast"
   | "ui:panel"
   | "ui:delivery"
+  | "companion:context"
   | "notify"
   | "bus"
   | "ai"
@@ -142,6 +143,7 @@ export const pluginV3Permissions = [
   "ui:toast",
   "ui:panel",
   "ui:delivery",
+  "companion:context",
   "notify",
   "bus",
   "ai",

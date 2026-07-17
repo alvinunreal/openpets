@@ -35,6 +35,30 @@ alert, a scheduled job, a stored value), and the host validates and renders it.
 This is the "companion-first" stance: plugins never inject UI into pet windows
 directly; they hand the host descriptors and the host owns layout and lifecycle.
 
+`ctx.pet.speak()` produces an ordinary pet speech bubble. If the user enables
+the host-level **Read speech bubbles aloud** preference, OpenPets may narrate
+that bubble with the user's selected host voice provider; plugins do not need another permission or API
+call, and must not depend on narration being enabled. Plain-text transient
+`ctx.ui.bubble()` content may also be narrated; pinned, markdown-only, and
+interactive bubbles are excluded. Quiet
+hours mute automatic bubble narration as well as the existing plugin voice and
+sound surfaces.
+
+`ctx.voice.speak(text, { petHandleId })` is the explicit audible path and
+requires `voice:speak`. Omitting `petHandleId` targets the default pet; supplying
+a handle returned by `ctx.pets.spawn()` targets only that calling plugin's live
+pet. The host applies the target pet's voice override and fallbacks. Plugins
+never receive provider credentials or generated audio. `ctx.voice.listen()`
+remains one-shot, permission-gated, non-ambient, and uses the same host-owned
+capture/privacy surface as push-to-talk.
+
+`ctx.companion` is intentionally weaker than speech or provider access. A plugin
+may contribute short-lived factual context or offer a short-lived proactive
+opportunity, but it cannot write the pet's line, select a provider, trigger
+speech, persist OpenPets recent memory, or force delivery. The host treats all
+contributed text as untrusted quoted data and asks the selected provider for
+original companion-style wording only after its own consent and policy checks.
+
 ```
 openpets.plugin.json ──validate──▶ plugin-service ──▶ plugin-runtime
                                                           │
@@ -47,7 +71,7 @@ openpets.plugin.json ──validate──▶ plugin-service ──▶ plugin-run
                                   plugin-sdk-bridge
                           (permission + quota checks, then dispatch)
                                            ▼
-              pet · schedule · storage · ui · audio · events · bus · ai · …
+       pet · companion context · schedule · storage · ui · audio · bus · ai · …
 ```
 
 ## The manifest — `openpets.plugin.json`
@@ -105,14 +129,41 @@ Permissions are declared in the manifest, **approved** by the user at install,
 persisted in plugin state, and **re-checked on every SDK call** by the bridge.
 The permission surface (from `plugin-manifest.ts`):
 
-`timer`/`schedule`, `pet:*`, `pets:*`, `audio`, `events`, `ui:*`, `notify`,
-`bus`, `ai`, `secrets`, `voice:*`, `auth`, `files`, `system:*`, `clipboard`,
-`network:*`.
+`timer`/`schedule`, `pet:*`, `pets:*`, `audio`, `events`, `ui:*`,
+`companion:context`, `notify`, `bus`, `ai`, `secrets`, `voice:*`, `auth`,
+`files`, `system:*`, `clipboard`, `network:*`.
 
 A plugin that calls a namespace it didn't declare (or wasn't approved for) is
 denied and the block is recorded in diagnostics. `network:*` is further
 constrained to declared hosts. This is defense in depth: manifest validation,
 user approval, runtime permission check, and quotas all apply.
+
+### Companion context contributions
+
+The `companion:context` permission unlocks three SDK calls:
+`ctx.companion.contributeFact`, `offerOpportunity`, and `remove`. Permission
+approval alone is not consent to disclose data. The host accepts normal
+contributions only while Companion and **Plugin context** are enabled, and
+sensitive contributions additionally require **Sensitive plugin context**.
+Disabled plugins are ignored and their retained contributions are cleared on
+teardown. Calls are rate-limited to 20 per minute.
+
+Facts and opportunities use plugin-scoped keys, plain text capped at 500
+characters, and an expiry within 24 hours. The in-memory host store is capped at
+32 retained items per plugin and 256 overall. It is deliberately not persisted:
+a plugin that needs restart continuity stores its own domain state and
+contributes the current fact/opportunity again. Contributions belong to the
+active default companion. This first contract deliberately has no pet-handle
+override, so plugins cannot retarget context to spawned or agent pets.
+
+An opportunity carries factual `context`, low/normal urgency, an eligibility
+window, a dedupe key, and optional cooldown. The host can ignore it for consent,
+quiet-hours, interaction, provider-health, daily/spacing, plugin-cap, expiry, or
+dedupe reasons. Consumption starts the plugin-scoped cooldown. The bundled
+Focus Buddy is the first pilot: during an active, unpaused focus session it
+offers one low-urgency mid-session opportunity, then removes it when the session
+pauses, ends, or is no longer eligible. Focus Buddy never supplies the final
+check-in sentence.
 
 ### Display deliveries
 
@@ -170,8 +221,13 @@ mirror of all this is the SDK in [sdk.md](sdk.md).
   slots.
 - `plugin-diagnostics.ts` — per-plugin error/quota/settings-block collector for
   the inspector and health UI.
+- `companion-contributions.ts` — process-local, consent-checked, expiring facts
+  and opportunities plus dedupe/cooldown and total/per-plugin caps.
 - `plugin-platform-settings.ts` — global gates for audio, voice, speech,
-  microphone, quiet hours, and AI provider choices.
+  microphone, quiet hours, the host-AI compatibility projection, and the
+  quiet-hours check reused by host speech and proactive check-ins. Provider
+  settings are owned by `host-ai-settings.ts`; configured legacy `ai` data is
+  migrated out of `openpets-plugin-platform.json`.
 - `plugin-user-sound-store.ts` — stores imported user sounds as opaque refs, not
   raw filesystem paths.
 - `plugin-i18n.ts` — resolves plugin locales, manifest `$t:`, and `ctx.t()`.
@@ -283,6 +339,28 @@ plugin release.**
 site can distinguish reviewed first-party plugins from community submissions.
 Community plugins follow the same release validation but cannot set `bundled`.
 
+The tracked producer is `scripts/sync-plugins.mjs`; `web/` itself is an ignored,
+separately deployed workspace and is not the source of the release logic. The
+producer enforces the desktop SDK v3 manifest contract (including config-field
+semantics and asset/panel limits), validates every referenced path, and rejects
+traversal, Windows-reserved path segments, source symlinks, and symlinked output
+ancestry. It resolves English `$t:` card text, sanitizes catalog SVGs, and writes
+store-only deterministic ZIPs in fixed UTF-8 byte order to
+`web/.data/plugin-zips/`. The release validator independently checks each ZIP's
+EOCD/central-directory structure, matching local headers, bounds, sizes, and
+CRC-32 before reading its manifest. The producer also writes plugin catalog v2
+plus the empty v1 compatibility catalog under
+`web/public/plugins/`. `plugins:check` exercises the deterministic ZIP and path
+safety contracts before building the same plan without writing artifacts.
+
+Determinism includes checkout bytes. Root `.gitattributes` forces LF for plugin
+JavaScript, JSON, Markdown, SVG, and `.openpets-approved-hosts` files and marks
+WebP assets binary, so `core.autocrlf` cannot change reviewed-tree or ZIP hashes.
+When a plugin source format is added, classify it there before relying on its
+hash. The producer also validates emitted catalog v2 entries against the
+desktop field limits, including 80-character versions, 253-character network
+hosts, and 100,000-character SVG icon data URLs.
+
 ### Community plugin provenance, pending submissions, and owner safe updates
 
 To lock down the integrity and security of community-submitted plugins without
@@ -294,13 +372,28 @@ sidecars:
 - `web/public/plugins/submissions.json` — pending external GitHub submissions
   shown on the website but not installable yet.
 
+Their tracked sources are `plugins/community/provenance.json` and
+`plugins/community/submissions.json`; packaging validates and copies them into
+the ignored web output. Provenance keys must exactly match the current community
+source folders, while a pending submission must not also be installable.
+
 `provenance.json` maps plugin IDs to their verified upstream metadata:
 - `publisher`: The GitHub username or organization owning the plugin.
 - `sourceUrl`: The canonical upstream GitHub repository URL.
 - `sourceSubdirectory`: Subdirectory in the repository containing the plugin manifest and files (if applicable).
 - `sourceCommit`: The specific git commit SHA that was reviewed and approved.
+- `reviewedTreeSha256`: Deterministic digest of every regular file below the reviewed source directory.
 - `reviewedAt`: ISO date when the current version/commit was reviewed.
 - `updatePolicy`: Can be `safe-auto` (safe for automated publishing of owner updates) or `manual-review` (always requires manual PR review).
+
+`sourceCommit` records the upstream snapshot a maintainer reviewed, while
+`reviewedTreeSha256` is the enforced local content boundary. Packaging and
+local/live release validation recompute that digest from the checked-out
+community directory, so byte drift is detected in shallow/offline CI. They do
+not fetch the repository or cryptographically prove that `sourceCommit` owns
+those bytes; the reviewer must compare the cited repository, commit, and
+subdirectory before recording the digest. Any digest change requires manual
+review and an updated commit, digest, and `reviewedAt`.
 
 Pending entries in `submissions.json` are candidates only. They must not appear
 in the installable catalog until promoted into `plugins/community/`, packaged,

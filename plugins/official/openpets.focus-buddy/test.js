@@ -25,7 +25,7 @@ assert.equal(breakMs(4), LONG_BREAK_MS);
 assert.equal(minutesLeft({ endsAt: 61_000 }, 1_000), 1);
 assert.equal(minutesLeft({ pausedRemainingMs: 121_000 }, 1_000), 3);
 
-const PERMISSIONS = ["pet:speak", "pet:interact", "pet:pin", "audio", "schedule", "storage", "commands", "status"];
+const PERMISSIONS = ["pet:speak", "pet:interact", "pet:pin", "audio", "schedule", "storage", "commands", "status", "companion:context"];
 const LOCALES = { en: JSON.parse(await readFile(new URL("./locales/en.json", import.meta.url), "utf8")) };
 
 // 1) Start schedules/stores and shows one pinned bubble.
@@ -39,6 +39,11 @@ const LOCALES = { en: JSON.parse(await readFile(new URL("./locales/en.json", imp
     (v) => v.mode === "focus" && v.endsAt - v.startedAt === 25 * 60_000,
   );
   assert.equal(h.calls.schedules.size, 1, "expected focus end schedule");
+  const opportunity = h.calls.companionContributions.find((entry) => entry.kind === "opportunity");
+  assert.ok(opportunity, "an active focus session should offer one host-owned check-in opportunity");
+  assert.equal(opportunity.spec.urgency, "low");
+  assert.ok(opportunity.spec.earliestAt > h.calls.storage.get("session").startedAt, "the opportunity should not be eligible at session start");
+  assert.ok(opportunity.spec.expiresAt < h.calls.storage.get("session").endsAt, "the opportunity should expire before deterministic focus completion");
   h.expectBubble({ textMatch: /Focus · 25 min left/, sticky: true });
   assert.equal(h.calls.alerts.length, 0, "start should not duplicate feedback with an alert");
   h.expectNoErrors();
@@ -62,7 +67,50 @@ const LOCALES = { en: JSON.parse(await readFile(new URL("./locales/en.json", imp
   h.expectNoErrors();
 }
 
-// 3) Focus completion alerts once, with break actions and optional normal sound.
+// 3) An optional Companion offer failure does not break the core focus session.
+{
+  const h = createTestHarness(register, { permissions: PERMISSIONS, locales: LOCALES, config: { focusLength: "25" }, nowMs: 2_500_000 });
+  const warnings = [];
+  h.ctx.log.warn = async (message, fields) => warnings.push({ message, fields });
+  h.ctx.companion.offerOpportunity = async () => {
+    throw new Error("quota exceeded");
+  };
+  await h.start();
+  await h.runCommand("start-focus");
+  h.expectStored(
+    "session",
+    (v) => v.mode === "focus" && v.endsAt - v.startedAt === 25 * 60_000,
+  );
+  assert.equal(h.calls.schedules.size, 1, "focus end should still be scheduled when the optional offer is rejected");
+  h.expectBubble({ textMatch: /Focus · 25 min left/, sticky: true });
+  assert.deepEqual(warnings.at(-1), {
+    message: "focus buddy companion contribution skipped",
+    fields: { operation: "offer-opportunity" },
+  });
+  h.expectNoErrors();
+}
+
+// 4) An optional Companion removal failure does not block ending a session.
+{
+  const h = createTestHarness(register, { permissions: PERMISSIONS, locales: LOCALES, nowMs: 2_750_000 });
+  const warnings = [];
+  h.ctx.log.warn = async (message, fields) => warnings.push({ message, fields });
+  await h.start();
+  await h.runCommand("start-focus");
+  h.ctx.companion.remove = async () => {
+    throw new Error("runtime unavailable");
+  };
+  await h.runCommand("end-session");
+  h.expectStored("session", null);
+  assert.equal(h.calls.schedules.size, 0, "ending should still cancel the focus schedule when optional removal is rejected");
+  assert.deepEqual(warnings.at(-1), {
+    message: "focus buddy companion contribution skipped",
+    fields: { operation: "remove" },
+  });
+  h.expectNoErrors();
+}
+
+// 5) Focus completion alerts once, with break actions and optional normal sound.
 {
   const h = createTestHarness(register, { permissions: PERMISSIONS, locales: LOCALES, config: { focusLength: "25", breakStyle: "normal", sound: "gong" }, nowMs: 3_000_000 });
   await h.start();
@@ -79,7 +127,7 @@ const LOCALES = { en: JSON.parse(await readFile(new URL("./locales/en.json", imp
   h.expectNoErrors();
 }
 
-// 4) Break completion alerts, gentle style stays silent, action can start focus.
+// 6) Break completion alerts, gentle style stays silent, action can start focus.
 {
   const h = createTestHarness(register, { permissions: PERMISSIONS, locales: LOCALES, config: { breakStyle: "gentle", sound: "gong" }, nowMs: 4_000_000 });
   const now = Date.now();
@@ -96,7 +144,7 @@ const LOCALES = { en: JSON.parse(await readFile(new URL("./locales/en.json", imp
   h.expectNoErrors();
 }
 
-// 5) Reconcile future and overdue sessions.
+// 7) Reconcile future and overdue sessions.
 {
   const future = createTestHarness(register, { permissions: PERMISSIONS, locales: LOCALES, nowMs: 5_000_000 });
   const futureNow = Date.now();

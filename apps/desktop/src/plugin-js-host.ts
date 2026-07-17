@@ -211,6 +211,10 @@ export const sdkCallHandlers: Record<PluginSdkRoute, SdkCallHandler> = {
   "bus.publish": (sdk, args) => sdk.bus.publish(args[0], args[1]),
   "bus.subscribe": (sdk, args, runCallback) => sdk.bus.subscribe(args[0], callbackOf(runCallback, args[1])),
   "bus.unsubscribe": (sdk, args) => sdk.bus.unsubscribe(args[0]),
+  // Expiring host-owned companion context. Plugins never receive a speech/provider route here.
+  "companion.contributeFact": (sdk, args) => sdk.companion.contributeFact(args[0]),
+  "companion.offerOpportunity": (sdk, args) => sdk.companion.offerOpportunity(args[0]),
+  "companion.remove": (sdk, args) => sdk.companion.remove(args[0]),
   // Scheduling.
   "schedule.once": (sdk, args, runCallback) => sdk.schedule.once(String(args[0]), Number(args[1]), callbackOf(runCallback, args[2])),
   "schedule.every": (sdk, args, runCallback) => sdk.schedule.every(String(args[0]), Number(args[1]), callbackOf(runCallback, args[2])),

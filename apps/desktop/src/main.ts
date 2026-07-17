@@ -5,6 +5,9 @@ import { delimiter, join, resolve } from "node:path";
 import { getAppStateSnapshot, initializeAppState, releaseStartupInstallLock } from "./app-state.js";
 import { initializeDesktopAnalytics, trackDesktopEvent, trackDesktopStartup } from "./analytics.js";
 import { createAppIcon } from "./assets.js";
+import { CompanionContributionStore } from "./companion-contributions.js";
+import { initializeCompanionMemory } from "./companion-memory.js";
+import { getCompanionSettings, initializeCompanionSettings } from "./companion-settings.js";
 import { setLocaleFromPreference } from "./i18n/index.js";
 import { installDefaultPetDisplayHandlers, shouldOpenDefaultPetOnLaunch, showDefaultPet } from "./default-pet-controller.js";
 import { installAppLifecycle } from "./lifecycle.js";
@@ -16,10 +19,12 @@ import { createElectronPluginHostCapabilities } from "./plugin-host-capabilities
 import { defaultPluginPetApi } from "./plugin-pet-api.js";
 import { initializePluginPlatformSettings } from "./plugin-platform-settings.js";
 import { ElectronPluginJsHost } from "./plugin-js-host.js";
-import { initializePluginService } from "./plugin-service.js";
+import { getPluginService, initializePluginService } from "./plugin-service.js";
 import { createAppTray, refreshTrayMenu } from "./tray.js";
 import { checkForGitHubReleaseUpdate } from "./update-checker.js";
 import { installInternalUiHandlers, installInternalUiProtocol } from "./windows.js";
+import { initializeVoicePlatform } from "./voice-platform.js";
+import { initializeVoiceSettings } from "./voice-settings.js";
 
 // OpenPets does not store browser passwords, cookies, or encrypted app secrets.
 // Keep Chromium/Electron from prompting for macOS Keychain or Linux keyring access
@@ -83,6 +88,10 @@ if (!gotSingleInstanceLock) {
     }
 
     initializeAppState();
+    initializeVoiceSettings(app.getPath("userData"));
+    initializeCompanionSettings(app.getPath("userData"));
+    initializeCompanionMemory(app.getPath("userData"));
+    initializePluginPlatformSettings(app.getPath("userData"));
     initializeDesktopAnalytics();
     trackDesktopStartup();
     // Resolve the UI language before any window or the tray is built.
@@ -97,8 +106,20 @@ if (!gotSingleInstanceLock) {
     const roots = parseDevPluginEnv(process.env.OPENPETS_DEV_PLUGIN_ROOTS);
     const paths = parseDevPluginEnv(process.env.OPENPETS_DEV_PLUGIN_PATHS);
     const devPluginMode = roots.length > 0 || paths.length > 0;
-    initializePluginPlatformSettings(app.getPath("userData"));
-    const pluginCapabilities = createElectronPluginHostCapabilities(app.getPath("userData"));
+    const companionContributions = new CompanionContributionStore({
+      canContribute: ({ sensitivity }) => {
+        const companion = getCompanionSettings();
+        return companion.enabled
+          && companion.context.pluginEnabled
+          && (sensitivity === "normal" || companion.context.sensitivePluginEnabled);
+      },
+      isPluginEnabled: (pluginId) => {
+        try { return getPluginService().stateStore.getRecord(pluginId)?.enabled === true; }
+        catch { return false; }
+      },
+    });
+    const pluginCapabilities = createElectronPluginHostCapabilities(app.getPath("userData"), { companionContributions });
+    initializeVoicePlatform(pluginCapabilities);
     let devPluginWatcher: ReturnType<typeof startDevPluginWatcher> | undefined;
     const pluginService = initializePluginService(app.getPath("userData"), defaultPluginPetApi, app.getVersion(), new ElectronPluginJsHost(), writePluginRuntimeLog, process.env.OPENPETS_DISABLE_PLUGIN_CATALOG === "1" || devPluginMode, resolveBundledOfficialPluginRoots(), !devPluginMode, pluginCapabilities, (properties) => {
       trackDesktopEvent("desktop_plugin_runtime_error", properties);

@@ -16,6 +16,7 @@ OpenPets is a pnpm/TypeScript monorepo for an Electron desktop companion app plu
 - `packages/pi/src/extension.ts`: Pi coding-agent extension runtime entry point.
 - `packages/sdk/src/index.ts`: public SDK v3 type contract for plugin authors.
 - `plugins/official/`: first-party SDK v3 plugin product source consumed by desktop dev mode and plugin packaging/catalog release workflows.
+- `scripts/sync-plugins.mjs`: tracked plugin catalog producer; enforces desktop-manifest parity, safe source/output paths and reviewed community tree digests, creates deterministic strictly validated ZIPs, and materializes ignored web release artifacts.
 
 ## Directory Map
 

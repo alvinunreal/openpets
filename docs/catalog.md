@@ -101,6 +101,38 @@ Catalog v2 also carries `publisherType: "official" | "community"`; older
 catalogs without the field are treated as official by the desktop validator.
 Community entries are public catalog plugins but cannot be bundled/default-on.
 
+### Plugin generated artifacts
+
+The tracked root producer, `scripts/sync-plugins.mjs`, discovers
+`plugins/official/` and `plugins/community/` and generates the ignored deploy
+artifacts:
+
+```
+web/public/plugins/
+  catalog.v2.json        active plugin catalog
+  catalog.v1.json        empty compatibility catalog
+  provenance.json        reviewed community snapshots
+  submissions.json       pending, non-installable submissions
+web/.data/plugin-zips/
+  {plugin-id}.zip        deterministic hash-pinned package
+```
+
+Each source plugin appears exactly once. Catalog download URLs are canonical
+`https://zip.openpets.dev/plugins/{id}.zip` URLs, SHA-256 values are computed
+from store-only ZIP bytes ordered by UTF-8 path bytes, network hosts appear only
+with the `network` permission, and community entries are always labeled `publisherType:
+"community"`. The tracked provenance/submission sources live beside community
+plugin source under `plugins/community/`. Generation rejects platform-unsafe
+paths and symlinked output ancestry; release validation checks ZIP CRC-32 plus
+the complete local-header/central-directory/EOCD structure. Catalog generation
+and release validation share the desktop v2 schema limits for versions, SDK
+versions, network hosts, and SVG icon data URLs.
+
+The reviewed tree and ZIP hashes use checkout bytes. Root `.gitattributes`
+forces LF for every text format currently stored below `plugins/` (including
+`.openpets-approved-hosts`) and marks WebP assets binary, keeping hashes stable
+when a contributor enables `core.autocrlf`.
+
 ### Sidecars: plugin provenance and submissions (website-only)
 
 To secure community-contributed plugins without changing the app-facing
@@ -118,8 +150,16 @@ plugin ID and defines:
 * `sourceUrl`: Upstream GitHub repository.
 * `sourceSubdirectory`: Optional subdirectory under the repository root.
 * `sourceCommit`: The reviewed and approved commit SHA.
+* `reviewedTreeSha256`: SHA-256 of the deterministic reviewed-directory file framing.
 * `reviewedAt`: ISO date/time of review.
 * `updatePolicy`: `safe-auto` (safe for automated release updates) or `manual-review`.
+
+`sourceCommit` is the upstream snapshot the maintainer reviewed;
+`reviewedTreeSha256` is the mechanically enforced content boundary and is
+recomputed from every regular file in the current community directory. Offline
+validation deliberately does not fetch or cryptographically link the commit to
+the digest, so reviewers must perform that comparison when accepting a plugin.
+Any digest change requires manual review and a new commit/digest/date.
 
 `submissions.json` is also keyed by plugin ID, but entries are candidates only:
 they must not appear in the installable catalog until promoted into

@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 
-import { defaultPetScale, deriveDisplayKey, markOnboardingCompleted, normalizeOnboardingCompleted, normalizePetScale, petScaleOptions } from "../src/app-state-core.js";
+import { defaultPetScale, deriveDisplayKey, markOnboardingCompleted, normalizeOnboardingCompleted, normalizePetScale, normalizeReadSpeechBubblesAloud, petScaleOptions } from "../src/app-state-core.js";
 
 assert.equal(normalizeOnboardingCompleted({}), false);
 assert.equal(normalizeOnboardingCompleted({ onboardingCompleted: true }), true);
 assert.equal(normalizeOnboardingCompleted({ onboardingCompleted: false }), false);
 assert.equal(normalizeOnboardingCompleted({ onboardingCompleted: "true" }), false);
+assert.equal(normalizeReadSpeechBubblesAloud(undefined), false);
+assert.equal(normalizeReadSpeechBubblesAloud(false), false);
+assert.equal(normalizeReadSpeechBubblesAloud(true), true);
+assert.equal(normalizeReadSpeechBubblesAloud("true"), false);
 
 const state = {
   version: 1,

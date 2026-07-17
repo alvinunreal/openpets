@@ -2,8 +2,7 @@
  * Unit tests for validatePreferencePatch (preference-patch.ts).
  *
  * Covers:
- *   - All four boolean preference keys: petPoolEnabled, petConfinementEnabled,
- *     petGravityEnabled, petCrossDisplayEnabled (the key added in FIX H1).
+ *   - Boolean preference keys, including host speech-bubble narration.
  *   - Each accepts true and false and lands in the returned patch.
  *   - Each throws on a non-boolean value.
  *   - Non-object input throws.
@@ -49,6 +48,7 @@ import { validatePreferencePatch } from "../src/preference-patch.js";
 // ---------------------------------------------------------------------------
 
 const booleanKeys = [
+  { key: "readSpeechBubblesAloud", errMsg: "Invalid read-speech-bubbles-aloud value." },
   { key: "petPoolEnabled", errMsg: "Invalid pet-pool-enabled value." },
   { key: "petConfinementEnabled", errMsg: "Invalid pet-confinement-enabled value." },
   { key: "petGravityEnabled", errMsg: "Invalid pet-gravity-enabled value." },

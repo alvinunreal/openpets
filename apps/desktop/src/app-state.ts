@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join } from "node:path";
 
 import { app } from "electron";
 
-import { defaultPetScale, markOnboardingCompleted, normalizeOnboardingCompleted, normalizePetConfinementEnabled, normalizePetCrossDisplayEnabled, normalizePetGravityEnabled, normalizePetScale, petScaleOptions, type PetScaleValue } from "./app-state-core.js";
+import { defaultPetScale, markOnboardingCompleted, normalizeOnboardingCompleted, normalizePetConfinementEnabled, normalizePetCrossDisplayEnabled, normalizePetGravityEnabled, normalizePetScale, normalizeReadSpeechBubblesAloud, petScaleOptions, type PetScaleValue } from "./app-state-core.js";
 import { builtInPet } from "./built-in-pet.js";
 import type { Point } from "./display.js";
 import { isSupportedLocale, type LocalePreference } from "./i18n/catalog.js";
@@ -43,6 +43,7 @@ export interface OpenPetsStateV1 {
     readonly openDefaultPetOnLaunch: boolean;
     readonly locale: LocalePreference;
     readonly speechBubblesEnabled: boolean;
+    readonly readSpeechBubblesAloud: boolean;
     readonly petScale: number;
     readonly reactionAnimationOverrides?: ReactionAnimationOverrides;
     readonly onboardingCompleted: boolean;
@@ -592,6 +593,7 @@ function normalizePreferences(value: Partial<OpenPetsStateV1["preferences"]>): O
       : defaultState.preferences.openDefaultPetOnLaunch,
     locale: normalizeLocalePreference(value.locale),
     speechBubblesEnabled: true,
+    readSpeechBubblesAloud: normalizeReadSpeechBubblesAloud(value.readSpeechBubblesAloud),
     petScale: normalizePetScale(value.petScale),
     reactionAnimationOverrides: normalizeReactionAnimationOverrides(value.reactionAnimationOverrides),
     onboardingCompleted: normalizeOnboardingCompleted(value),
@@ -672,6 +674,7 @@ function createDefaultState(): OpenPetsStateV1 {
       openDefaultPetOnLaunch: true,
       locale: "system",
       speechBubblesEnabled: true,
+      readSpeechBubblesAloud: false,
       petScale: defaultPetScale,
       reactionAnimationOverrides: undefined,
       onboardingCompleted: false,

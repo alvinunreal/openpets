@@ -4,6 +4,7 @@ export const SCHEDULE_ID = "focus-buddy-session-end";
 export const STORAGE_KEY = "session";
 export const SHORT_BREAK_MS = 5 * 60_000;
 export const LONG_BREAK_MS = 15 * 60_000;
+export const FOCUS_OPPORTUNITY_PREFIX = "focus.mid-session";
 
 const pinnedBubbles = new WeakMap();
 
@@ -32,6 +33,55 @@ export function minutesLeft(session, now = Date.now()) {
 
 function active(session) {
   return session && (session.mode === "focus" || session.mode === "break") && !session.ended;
+}
+
+function focusOpportunityKey(session) {
+  return `${FOCUS_OPPORTUNITY_PREFIX}.${Math.max(0, Math.trunc(Number(session?.startedAt) || 0))}`;
+}
+
+async function bestEffortCompanionContribution(ctx, operation, run) {
+  try {
+    await run();
+  } catch {
+    try {
+      await ctx.log?.warn?.("focus buddy companion contribution skipped", { operation });
+    } catch {}
+  }
+}
+
+async function clearFocusOpportunity(ctx, session) {
+  if (session?.mode !== "focus") return;
+  await bestEffortCompanionContribution(ctx, "remove", () => ctx.companion.remove(focusOpportunityKey(session)));
+}
+
+async function syncFocusOpportunity(ctx, session) {
+  if (session?.mode !== "focus" || session.pausedRemainingMs || !Number.isFinite(session.startedAt) || !Number.isFinite(session.endsAt)) {
+    await clearFocusOpportunity(ctx, session);
+    return;
+  }
+  const now = Date.now();
+  const durationMs = Math.max(1, session.endsAt - session.startedAt);
+  const eligibilityDelayMs = Math.min(10 * 60_000, Math.max(5 * 60_000, Math.floor(durationMs / 3)));
+  const expiryBufferMs = Math.min(2 * 60_000, Math.max(30_000, Math.floor(durationMs / 10)));
+  const earliestAt = Math.max(now, session.startedAt + eligibilityDelayMs);
+  const expiresAt = session.endsAt - expiryBufferMs;
+  if (earliestAt >= expiresAt) {
+    await clearFocusOpportunity(ctx, session);
+    return;
+  }
+  const key = focusOpportunityKey(session);
+  await bestEffortCompanionContribution(ctx, "offer-opportunity", () =>
+    ctx.companion.offerOpportunity({
+      key,
+      context: ctx.t("companion.focusMidSession.context"),
+      urgency: "low",
+      earliestAt,
+      expiresAt,
+      dedupeKey: key,
+      cooldownMs: durationMs,
+      sensitivity: "normal",
+    }),
+  );
 }
 
 async function getSession(ctx) {
@@ -110,9 +160,11 @@ async function updatePinned(ctx, session) {
 }
 
 async function startMode(ctx, mode, durationMs, completedFocusCount) {
+  await clearFocusOpportunity(ctx, await getSession(ctx));
   const now = Date.now();
   const session = await saveSession(ctx, { mode, startedAt: now, endsAt: now + durationMs, pausedRemainingMs: null, completedFocusCount });
   await scheduleEnd(ctx, session);
+  await syncFocusOpportunity(ctx, session);
   await updatePinned(ctx, session);
   return session;
 }
@@ -138,11 +190,13 @@ export async function pauseOrResume(ctx) {
   }
   await saveSession(ctx, session);
   await scheduleEnd(ctx, session);
+  await syncFocusOpportunity(ctx, session);
   await updatePinned(ctx, session);
   return session;
 }
 
 export async function endSession(ctx) {
+  await clearFocusOpportunity(ctx, await getSession(ctx));
   await ctx.schedule.cancel(SCHEDULE_ID);
   await saveSession(ctx, null);
   await updatePinned(ctx, null);
@@ -155,6 +209,7 @@ export async function skipToBreak(ctx) {
 }
 
 async function focusComplete(ctx, session) {
+  await clearFocusOpportunity(ctx, session);
   const completedFocusCount = (session?.completedFocusCount ?? 0) + 1;
   await saveSession(ctx, { ...session, mode: "complete", completedFocusCount });
   await updatePinned(ctx, null);
@@ -199,6 +254,7 @@ export async function reconcile(ctx) {
   if (!active(session)) return updateStatus(ctx, null);
   if (session.pausedRemainingMs || session.endsAt > Date.now()) {
     await scheduleEnd(ctx, session);
+    await syncFocusOpportunity(ctx, session);
     await updatePinned(ctx, session);
     return;
   }

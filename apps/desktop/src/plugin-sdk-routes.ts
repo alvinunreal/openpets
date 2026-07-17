@@ -6,6 +6,7 @@ export const pluginSdkAsyncRoutes = [
   "events.on", "events.off",
   "assets.resolve",
   "bus.publish", "bus.subscribe", "bus.unsubscribe",
+  "companion.contributeFact", "companion.offerOpportunity", "companion.remove",
   "schedule.once", "schedule.every", "schedule.daily", "schedule.cron", "schedule.at", "schedule.list", "schedule.cancel", "schedule.cancelAll",
   "storage.get", "storage.set", "storage.delete", "storage.keys", "storage.subscribe", "storage.unsubscribe",
   "config.get", "config.onChange", "config.offChange",

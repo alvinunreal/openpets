@@ -5,8 +5,14 @@ import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { unzipSync } from "node:zlib";
 import { validateSpriteAssetBytes } from "./plugin-sprite-validation.mjs";
+import {
+  computeReviewedTreeSha256,
+  parseStrictZip,
+  validateCommunityMetadata,
+  validateDesktopCompatiblePluginCatalogV2,
+  validateDesktopCompatibleReleaseManifest,
+} from "./sync-plugins.mjs";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const catalogPath = join(repoRoot, "web", "public", "plugins", "catalog.v2.json");
@@ -93,34 +99,6 @@ async function loadZip(entry) {
   return readFile(path);
 }
 
-function parseZip(buffer) {
-  const files = new Map();
-  let offset = 0;
-  while (offset + 30 <= buffer.length && buffer.readUInt32LE(offset) === 0x04034b50) {
-    const flags = buffer.readUInt16LE(offset + 6);
-    const method = buffer.readUInt16LE(offset + 8);
-    const compressedSize = buffer.readUInt32LE(offset + 18);
-    const uncompressedSize = buffer.readUInt32LE(offset + 22);
-    const nameLength = buffer.readUInt16LE(offset + 26);
-    const extraLength = buffer.readUInt16LE(offset + 28);
-    if ((flags & 0x08) !== 0) throw new Error("ZIP data descriptors are not supported by release validator.");
-    const nameStart = offset + 30;
-    const dataStart = nameStart + nameLength + extraLength;
-    const dataEnd = dataStart + compressedSize;
-    if (dataEnd > buffer.length) throw new Error("ZIP entry exceeds file bounds.");
-    const name = buffer.subarray(nameStart, nameStart + nameLength).toString("utf8");
-    const compressed = buffer.subarray(dataStart, dataEnd);
-    let data;
-    if (method === 0) data = compressed;
-    else if (method === 8) data = unzipSync(compressed);
-    else throw new Error(`Unsupported ZIP compression method ${method}.`);
-    if (data.length !== uncompressedSize) throw new Error(`ZIP entry size mismatch for ${name}.`);
-    files.set(name, data);
-    offset = dataEnd;
-  }
-  return files;
-}
-
 function flattenLocale(value, prefix = "") {
   const out = {};
   if (!isRecord(value)) return out;
@@ -142,8 +120,10 @@ function assertNoTranslationRefs(path, value) {
 }
 
 function validateCatalog(catalog, expectedEntries) {
-  if (!isRecord(catalog)) fail("Plugin catalog must be an object.");
-  if (!Array.isArray(catalog.plugins)) fail("Plugin catalog must contain a plugins array.");
+  if (!isRecord(catalog)) { fail("Plugin catalog must be an object."); return []; }
+  try { validateDesktopCompatiblePluginCatalogV2(catalog); }
+  catch (error) { fail(`catalog: desktop schema validation failed: ${error.message}`); }
+  if (!Array.isArray(catalog.plugins)) { fail("Plugin catalog must contain a plugins array."); return []; }
   const plugins = Array.isArray(catalog.plugins) ? catalog.plugins : [];
   const ids = plugins.map((plugin) => plugin?.id).sort((a, b) => String(a).localeCompare(String(b)));
   const expectedById = new Map(expectedEntries.map((entry) => [entry.id, entry]));
@@ -213,7 +193,7 @@ async function validatePluginPackage(entry) {
 
   let files;
   try {
-    files = parseZip(zip);
+    files = parseStrictZip(zip);
   } catch (error) {
     fail(`${entry.id}: invalid ZIP package: ${error.message}`);
     return;
@@ -229,8 +209,9 @@ async function validatePluginPackage(entry) {
   let localeCatalog = {};
   try {
     manifest = JSON.parse(textDecoder.decode(files.get("openpets.plugin.json")));
+    validateDesktopCompatibleReleaseManifest(manifest);
   } catch (error) {
-    fail(`${entry.id}: invalid manifest JSON in ZIP: ${error.message}`);
+    fail(`${entry.id}: invalid or desktop-incompatible manifest in ZIP: ${error.message}`);
     return;
   }
   try {
@@ -275,11 +256,13 @@ async function loadSubmissions() {
   }
 }
 
-function validateProvenance(provenance, catalogPlugins) {
+async function validateProvenance(provenance, catalogPlugins) {
   if (!isRecord(provenance)) {
     fail("provenance: sidecar must be an object.");
     return;
   }
+  const communityIds = new Set(catalogPlugins.filter((plugin) => plugin.publisherType === "community").map((plugin) => plugin.id));
+  const allowedFields = new Set(["publisher", "sourceUrl", "sourceSubdirectory", "sourceCommit", "reviewedTreeSha256", "reviewedAt", "updatePolicy"]);
   for (const [pluginId, entry] of Object.entries(provenance)) {
     if (!/^[a-z0-9][a-z0-9._-]{1,62}[a-z0-9]$/.test(pluginId)) {
       fail(`provenance: invalid plugin ID key "${pluginId}"`);
@@ -289,6 +272,8 @@ function validateProvenance(provenance, catalogPlugins) {
       fail(`provenance [${pluginId}]: entry must be an object.`);
       continue;
     }
+    if (!communityIds.has(pluginId)) fail(`provenance [${pluginId}]: no matching installable community plugin exists.`);
+    for (const key of Object.keys(entry)) if (!allowedFields.has(key)) fail(`provenance [${pluginId}]: unknown field ${key}.`);
     if (typeof entry.publisher !== "string" || entry.publisher.trim() === "") {
       fail(`provenance [${pluginId}]: publisher must be a non-empty string.`);
     }
@@ -298,8 +283,11 @@ function validateProvenance(provenance, catalogPlugins) {
     if (entry.sourceSubdirectory !== undefined && entry.sourceSubdirectory !== null && typeof entry.sourceSubdirectory !== "string") {
       fail(`provenance [${pluginId}]: sourceSubdirectory must be a string.`);
     }
-    if (typeof entry.sourceCommit !== "string" || !/^[0-9a-f]{40}$/i.test(entry.sourceCommit)) {
-      fail(`provenance [${pluginId}]: sourceCommit must be a 40-character hex commit SHA.`);
+    if (typeof entry.sourceCommit !== "string" || !/^[0-9a-f]{40}$/.test(entry.sourceCommit)) {
+      fail(`provenance [${pluginId}]: sourceCommit must be a lowercase 40-character hex commit SHA.`);
+    }
+    if (typeof entry.reviewedTreeSha256 !== "string" || !/^[0-9a-f]{64}$/.test(entry.reviewedTreeSha256)) {
+      fail(`provenance [${pluginId}]: reviewedTreeSha256 must be a lowercase SHA-256 digest.`);
     }
     if (typeof entry.reviewedAt !== "string" || isNaN(Date.parse(entry.reviewedAt))) {
       fail(`provenance [${pluginId}]: reviewedAt must be a valid ISO date string.`);
@@ -311,8 +299,16 @@ function validateProvenance(provenance, catalogPlugins) {
 
   for (const plugin of catalogPlugins) {
     if (plugin.publisherType === "community") {
-      if (!provenance[plugin.id]) {
+      const entry = provenance[plugin.id];
+      if (!entry) {
         fail(`provenance: community plugin "${plugin.id}" listed in catalog, but missing from provenance.json.`);
+      } else if (isRecord(entry) && typeof entry.reviewedTreeSha256 === "string" && /^[0-9a-f]{64}$/.test(entry.reviewedTreeSha256)) {
+        try {
+          const actual = await computeReviewedTreeSha256(join(communityDir, plugin.id));
+          if (actual !== entry.reviewedTreeSha256) fail(`provenance [${plugin.id}]: current source tree does not match the reviewed tree digest.`);
+        } catch (error) {
+          fail(`provenance [${plugin.id}]: could not verify current source tree: ${error.message}`);
+        }
       }
     }
   }
@@ -349,8 +345,17 @@ const expectedEntries = await expectedPluginEntries();
 const catalog = await loadCatalog();
 const plugins = validateCatalog(catalog, expectedEntries);
 const provenance = await loadProvenance();
-validateProvenance(provenance, plugins);
 const submissions = await loadSubmissions();
+try {
+  validateCommunityMetadata({
+    provenance,
+    submissions,
+    communityIds: plugins.filter((plugin) => plugin.publisherType === "community").map((plugin) => plugin.id),
+  });
+} catch (error) {
+  fail(`community sidecars: ${error.message}`);
+}
+await validateProvenance(provenance, plugins);
 validateSubmissions(submissions, plugins);
 for (const entry of plugins) await validatePluginPackage(entry);
 

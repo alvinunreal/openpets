@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { getAppStateSnapshot, markPetBroken, type PetScaleValue } from "./app-state.js";
 import { clampToNearestDisplayIfOffscreen, clampToVisibleWorkArea, defaultPetWindowSize, getDefaultPetInitialPosition, isCrossDisplayRoamingEnabled, type Point } from "./display.js";
 import { builtInPet } from "./built-in-pet.js";
+import { createOrdinaryBubbleNarrationCandidate, evaluateBubbleNarrationPresentation, type BubbleNarrationCandidate } from "./bubble-tts.js";
 import { getInstalledPetDir } from "./pet-paths.js";
 import { getActiveLocale, getActiveLocaleLang, t } from "./i18n/index.js";
 import { defaultMediaDurationMs, type OpenPetsReaction } from "./local-ipc-protocol.js";
@@ -18,6 +19,7 @@ import type { PluginBubbleIndicator, PluginCommandForm, PluginBubbleHud, PluginB
 import { defaultPetSprite, motionToSpriteState, resolveReactionSpriteState, type PetMotionState, type UniversalSpriteState } from "./reaction-animation-mapping.js";
 import { isFocusActionAvailable } from "./capabilities.js";
 import { canForwardMouseEvents as platformCanForwardMouseEvents, shouldWatchForwardedMouseEvents } from "./mouse-forwarding.js";
+import { isInQuietHours } from "./plugin-platform-settings.js";
 import { computeEffectiveWaylandBackend, shouldPetWindowBeFocusable } from "./wayland-backend.js";
 
 export interface PetWindowInteractionHooks {
@@ -90,9 +92,16 @@ interface PetContentRender {
   readonly bodyHtml: string;
   readonly reactionState: UniversalSpriteState;
   readonly cacheKey: string;
+  readonly narration: BubbleNarrationCandidate | null;
 }
 
 const petWindowRenderCache = new WeakMap<BrowserWindow, string>();
+const petWindowNarrationKeys = new WeakMap<BrowserWindow, string>();
+const petWindowVoiceIdentity = new WeakMap<BrowserWindow, string>();
+const pendingVoicePlayback = new Map<string, { readonly senderId: number; readonly resolve: () => void; readonly reject: (error: Error) => void; readonly timer: NodeJS.Timeout }>();
+const pendingSystemVoiceLists = new Map<string, { readonly senderId: number; readonly resolve: (voices: Array<{ id: string; label: string; language?: string }>) => void; readonly reject: (error: Error) => void; readonly timer: NodeJS.Timeout }>();
+let voiceResultHandlersInstalled = false;
+let nextVoiceRequestId = 0;
 
 const windowLoadChains = new WeakMap<BrowserWindow, Promise<void>>();
 const windowLoadSequences = new WeakMap<BrowserWindow, number>();
@@ -234,12 +243,14 @@ async function buildPetContextMenuTemplate(action: { readonly label: string; rea
     plugins.set(item.pluginId, group);
   }
   const template: Electron.MenuItemConstructorOptions[] = [];
-  const openControlCenter = (route: "dashboard" | "plugins"): void => {
+  const openControlCenter = (route: "dashboard" | "plugins" | { readonly route: "pets"; readonly petId: string; readonly section: "companion" }): void => {
     import("./windows.js").then(({ openControlCenterWindow }) => openControlCenterWindow(route)).catch((error) => logError("pet.window", "open control center failed", error));
   };
   if (topLevel.length > 0) template.push(...topLevel.slice(0, 8), { type: "separator" });
   if (plugins.size > 0) template.push(...[...plugins.values()].map((plugin) => ({ label: plugin.name, submenu: plugin.commands })), { type: "separator" });
+  const defaultPetId = getAppStateSnapshot().preferences.defaultPetId;
   template.push(
+    { label: t("pet.menu.talkToPet"), click: () => openControlCenter({ route: "pets", petId: defaultPetId, section: "companion" }) },
     { label: t("tray.plugins"), click: () => openControlCenter("plugins") },
     { label: t("pet.menu.openControlCenter"), click: () => openControlCenter("dashboard") },
     { label: action.label, click: action.click },
@@ -741,6 +752,7 @@ function applyPetAlwaysOnTop(window: BrowserWindow): void {
 }
 
 export async function loadDefaultPetContent(window: BrowserWindow, paused: boolean, display: PetTransientDisplay | null = null, badge: PetStatusBadgeReaction | null = null, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null): Promise<void> {
+  petWindowVoiceIdentity.set(window, getAppStateSnapshot().preferences.defaultPetId);
   const sequence = allocateWindowLoadSequence(window);
   debug("pet.window", "default content render begin", { windowId: window.id, sequence, paused, hasDisplay: Boolean(display), reaction: display?.reaction, hasMessage: Boolean(display?.message), badge, hasPluginBubble: Boolean(pluginBubbles?.transient), hasPinned: Boolean(pluginBubbles?.pinned), defaultPetId: getAppStateSnapshot().preferences.defaultPetId });
   applyPetWindowFocusPolicy(window, petPluginBubblesHaveInteractiveInput(pluginBubbles));
@@ -748,7 +760,9 @@ export async function loadDefaultPetContent(window: BrowserWindow, paused: boole
   applyLinuxPetWindowShape(window, getAppStateSnapshot().preferences.petScale as PetScaleValue, Boolean(display?.message || display?.reactionMessage || display?.reaction || display?.mediaPath || badge || paused || pluginBubbles?.transient || pluginBubbles?.pinned));
   if (tryUpdateLoadedPetContent(window, render, "default", sequence)) return;
   await loadPetHtmlFile(window, render.html, "default", sequence).then(() => {
+    if (!isLatestWindowLoadSequence(window, sequence)) return;
     petWindowRenderCache.set(window, render.cacheKey);
+    presentBubbleNarration(window, render.narration);
   }).catch((error: unknown) => {
     logError("pet.window", "default content load failed", error instanceof Error ? error : { error });
     console.error("Failed to load default pet URL.", error);
@@ -756,6 +770,7 @@ export async function loadDefaultPetContent(window: BrowserWindow, paused: boole
 }
 
 export async function loadExplicitPetContent(window: BrowserWindow, petId: string, display: PetTransientDisplay | null = null, badge: PetStatusBadgeReaction | null = null, dismissToken?: string, scaleOverride?: PetScaleValue, pluginBubbles: PetPluginBubbles | null = null): Promise<void> {
+  petWindowVoiceIdentity.set(window, petId);
   const sequence = allocateWindowLoadSequence(window);
   try {
     applyPetWindowFocusPolicy(window, petPluginBubblesHaveInteractiveInput(pluginBubbles));
@@ -770,7 +785,9 @@ export async function loadExplicitPetContent(window: BrowserWindow, petId: strin
     applyLinuxPetWindowShape(window, scale, Boolean(display?.message || display?.reactionMessage || display?.reaction || display?.mediaPath || badge || pluginBubbles?.transient || pluginBubbles?.pinned));
     if (tryUpdateLoadedPetContent(window, render, `explicit-${pet.id}`, sequence)) return;
     await loadPetHtmlFile(window, render.html, `explicit-${pet.id}`, sequence);
+    if (!isLatestWindowLoadSequence(window, sequence)) return;
     petWindowRenderCache.set(window, render.cacheKey);
+    presentBubbleNarration(window, render.narration);
   } catch (error: unknown) {
     logError("pet.window", "explicit content load failed", error instanceof Error ? error : { petId, error });
     console.error(`Failed to load explicit pet ${petId} URL.`, error);
@@ -869,6 +886,108 @@ export function stopPetWindowTts(window: BrowserWindow): void {
   window.webContents.send("openpets:tts-stop");
 }
 
+export async function playPetWindowVoiceAudio(window: BrowserWindow, payload: { readonly bytes: Uint8Array; readonly mimeType: string; readonly volume: number }, generation: number): Promise<void> {
+  if (window.isDestroyed()) throw new Error("Target pet was closed before voice playback.");
+  if (!payload.mimeType.startsWith("audio/") && payload.mimeType !== "application/octet-stream") throw new Error("Voice provider returned an unsupported audio type.");
+  const requestId = createVoiceRequestId(window, generation);
+  const completion = waitForVoicePlayback(window, requestId);
+  const dataUrl = `data:${payload.mimeType};base64,${Buffer.from(payload.bytes).toString("base64")}`;
+  window.webContents.send("openpets:voice-play-audio", { requestId, dataUrl, volume: Math.min(1, Math.max(0, payload.volume)) });
+  return completion;
+}
+
+export async function speakPetWindowVoiceTts(window: BrowserWindow, text: string, opts: { readonly voice?: string; readonly rate?: number }, generation: number): Promise<void> {
+  if (window.isDestroyed()) throw new Error("Target pet was closed before voice playback.");
+  const requestId = createVoiceRequestId(window, generation);
+  const completion = waitForVoicePlayback(window, requestId);
+  window.webContents.send("openpets:voice-system-speak", { requestId, text, voice: opts.voice, rate: opts.rate });
+  return completion;
+}
+
+export function stopPetWindowVoice(window: BrowserWindow): void {
+  if (window.isDestroyed()) return;
+  window.webContents.send("openpets:voice-stop");
+  window.webContents.send("openpets:tts-stop");
+  for (const [requestId, pending] of pendingVoicePlayback) {
+    if (pending.senderId !== window.webContents.id) continue;
+    clearTimeout(pending.timer);
+    pendingVoicePlayback.delete(requestId);
+    pending.resolve();
+  }
+}
+
+export function requestPetWindowSystemVoices(window: BrowserWindow): Promise<Array<{ id: string; label: string; language?: string }>> {
+  if (window.isDestroyed()) return Promise.reject(new Error("Show a pet before listing System Voice voices."));
+  ensureVoiceResultHandlers();
+  const requestId = createVoiceRequestId(window, 0);
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingSystemVoiceLists.delete(requestId);
+      reject(new Error("System voice discovery timed out."));
+    }, 3_000);
+    pendingSystemVoiceLists.set(requestId, { senderId: window.webContents.id, resolve, reject, timer });
+    window.webContents.send("openpets:voice-system-list-voices", { requestId });
+  });
+}
+
+export function setPetVoiceListeningState(window: BrowserWindow, state: "idle" | "listening" | "transcribing" | "thinking"): void {
+  if (window.isDestroyed()) return;
+  window.webContents.send("openpets:voice-listening-state", state);
+}
+
+export function playPetVoiceCue(window: BrowserWindow, cue: "voice-start" | "voice-stop" | "voice-wake"): void {
+  if (window.isDestroyed()) return;
+  window.webContents.send("openpets:voice-cue", { cue });
+}
+
+function createVoiceRequestId(window: BrowserWindow, generation: number): string {
+  return `${window.webContents.id}:${generation}:${++nextVoiceRequestId}`;
+}
+
+function waitForVoicePlayback(window: BrowserWindow, requestId: string): Promise<void> {
+  ensureVoiceResultHandlers();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingVoicePlayback.delete(requestId);
+      reject(new Error("Voice playback timed out."));
+    }, 120_000);
+    pendingVoicePlayback.set(requestId, { senderId: window.webContents.id, resolve, reject, timer });
+  });
+}
+
+function ensureVoiceResultHandlers(): void {
+  if (voiceResultHandlersInstalled) return;
+  voiceResultHandlersInstalled = true;
+  ipcMain.on("openpets:voice-playback-finished", (event, payload: unknown) => {
+    if (!payload || typeof payload !== "object") return;
+    const requestId = (payload as { requestId?: unknown }).requestId;
+    if (typeof requestId !== "string") return;
+    const pending = pendingVoicePlayback.get(requestId);
+    if (!pending || pending.senderId !== event.sender.id) return;
+    clearTimeout(pending.timer);
+    pendingVoicePlayback.delete(requestId);
+    (payload as { ok?: unknown }).ok === false ? pending.reject(new Error("Voice playback failed.")) : pending.resolve();
+  });
+  ipcMain.on("openpets:voice-system-voices-result", (event, payload: unknown) => {
+    if (!payload || typeof payload !== "object") return;
+    const requestId = (payload as { requestId?: unknown }).requestId;
+    if (typeof requestId !== "string") return;
+    const pending = pendingSystemVoiceLists.get(requestId);
+    if (!pending || pending.senderId !== event.sender.id) return;
+    clearTimeout(pending.timer);
+    pendingSystemVoiceLists.delete(requestId);
+    const voices = Array.isArray((payload as { voices?: unknown }).voices) ? (payload as { voices: unknown[] }).voices : [];
+    pending.resolve(voices.flatMap((voice) => {
+      if (!voice || typeof voice !== "object") return [];
+      const id = (voice as { id?: unknown }).id;
+      const label = (voice as { label?: unknown }).label;
+      const language = (voice as { language?: unknown }).language;
+      if (typeof id !== "string" || typeof label !== "string") return [];
+      return [{ id: id.slice(0, 160), label: label.slice(0, 160), language: typeof language === "string" ? language.slice(0, 40) : undefined }];
+    }).slice(0, 300));
+  });
+}
+
 function tryUpdateLoadedPetContent(window: BrowserWindow, render: PetContentRender, name: string, sequence: number): boolean {
   if (window.isDestroyed() || window.webContents.isDestroyed()) return false;
   if (petWindowRenderCache.get(window) !== render.cacheKey) return false;
@@ -876,7 +995,29 @@ function tryUpdateLoadedPetContent(window: BrowserWindow, render: PetContentRend
   if (!isAllowedPetDocumentUrl(url)) return false;
   debug("pet.window", "content update in place", { windowId: window.id, name, sequence, reactionState: render.reactionState });
   window.webContents.send("openpets:pet-content-state", { bodyHtml: render.bodyHtml, reactionState: render.reactionState });
+  presentBubbleNarration(window, render.narration);
   return true;
+}
+
+function presentBubbleNarration(window: BrowserWindow, candidate: BubbleNarrationCandidate | null): void {
+  if (window.isDestroyed() || window.webContents.isDestroyed()) return;
+  try {
+    const decision = evaluateBubbleNarrationPresentation({
+      candidate,
+      lastKey: petWindowNarrationKeys.get(window) ?? null,
+      enabled: getAppStateSnapshot().preferences.readSpeechBubblesAloud,
+      quietHours: isInQuietHours(),
+    });
+    if (decision.nextKey) petWindowNarrationKeys.set(window, decision.nextKey);
+    else petWindowNarrationKeys.delete(window);
+    if (decision.shouldSpeak && decision.text) {
+      debug("pet.window", "bubble narration speak requested", { windowId: window.id });
+      const petId = petWindowVoiceIdentity.get(window) ?? getAppStateSnapshot().preferences.defaultPetId;
+      void import("./voice-platform.js").then(({ getVoiceOutputService }) => getVoiceOutputService()?.speak({ text: decision.text!, reason: "bubble-narration", target: { kind: "window", petId, window } })).catch(() => undefined);
+    }
+  } catch {
+    warn("pet.window", "bubble narration failed", { windowId: window.id });
+  }
 }
 
 export function getSafeDefaultPetPosition(position: Point | undefined): Point {
@@ -944,11 +1085,17 @@ async function createDefaultPetRender(paused: boolean, display: PetTransientDisp
     cacheKey: `default:builtin:${paused}:${scale}:${getActiveLocale()}`,
     bodyHtml,
     reactionState,
+    narration: createOrdinaryBubbleNarrationCandidate({
+      message: display?.message,
+      reactionMessage: display?.reactionMessage,
+      pluginMessage: pluginBubbles?.transient?.bubble.text,
+      paused,
+    }),
     html: `<!doctype html>
     <html lang="${getActiveLocaleLang()}" data-reaction-state="${reactionState}" data-motion-state="idle" data-native-pet-drag="${shouldUseWaylandNativePetDrag() ? "wayland" : "manual"}">
       <head>
         <meta charset="utf-8" />
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src file: data:; font-src file:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-src 'none'" />
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src file: data:; media-src data:; font-src file:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-src 'none'" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>OpenPets Default Pet</title>
         <style>
@@ -1021,11 +1168,17 @@ async function createInstalledPetRender(petId: string, displayName: string, paus
     cacheKey: `${cachePrefix}:${paused}:${scale}:${spritesheet.mtimeMs}:${spritesheet.size}:${getActiveLocale()}`,
     bodyHtml,
     reactionState,
+    narration: createOrdinaryBubbleNarrationCandidate({
+      message: display?.message,
+      reactionMessage: display?.reactionMessage,
+      pluginMessage: pluginBubbles?.transient?.bubble.text,
+      paused,
+    }),
     html: `<!doctype html>
       <html lang="${getActiveLocaleLang()}" data-reaction-state="${reactionState}" data-motion-state="idle" data-native-pet-drag="${shouldUseWaylandNativePetDrag() ? "wayland" : "manual"}">
         <head>
           <meta charset="utf-8" />
-          <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src file: data:; font-src file:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-src 'none'" />
+          <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src file: data:; media-src data:; font-src file:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-src 'none'" />
           <meta name="viewport" content="width=device-width, initial-scale=1" />
           <title>OpenPets Default Pet</title>
           <style>
@@ -1527,6 +1680,12 @@ function allocateWindowLoadSequence(window: BrowserWindow): number {
   const sequence = (windowLoadSequences.get(window) ?? 0) + 1;
   windowLoadSequences.set(window, sequence);
   return sequence;
+}
+
+function isLatestWindowLoadSequence(window: BrowserWindow, sequence: number): boolean {
+  return !window.isDestroyed()
+    && !window.webContents.isDestroyed()
+    && windowLoadSequences.get(window) === sequence;
 }
 
 async function loadPetHtmlFile(window: BrowserWindow, html: string, name: string, sequence: number): Promise<void> {

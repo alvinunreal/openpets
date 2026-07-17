@@ -46,6 +46,7 @@ each gated by a permission ([plugins.md](plugins.md)):
 | `ctx.bus` | Inter-plugin publish/subscribe | `bus` |
 | `ctx.audio` | Play plugin/user sounds | `audio` |
 | `ctx.voice` | TTS + one-shot listen | `voice:*` |
+| `ctx.companion` | Offer expiring facts/opportunities to the host Companion | `companion:context` |
 | `ctx.notify` | OS-style notifications/toasts | `notify` |
 | `ctx.ai` | Host-mediated AI gateway | `ai` |
 | `ctx.secrets` | Encrypted plugin-scoped secrets | `secrets` |
@@ -64,9 +65,54 @@ contract, so program against it rather than any list copied into a doc.
 `OpenPetsPermission` in the SDK mirrors manifest validation so authors get
 autocomplete for exactly the capabilities they can request.
 
+`ctx.pet.speak()` always means "show an ordinary pet speech bubble." Users can
+optionally ask the host to read those bubbles aloud with its selected voice
+provider; that preference is outside the plugin contract, requires no plugin changes, respects
+quiet hours, and is never guaranteed audio. Use `ctx.voice.speak()` only when
+audible TTS is an explicit part of the plugin's own behavior and declare its
+permission normally. Plain-text `ctx.ui.bubble()` content may also be narrated
+when it is the visible transient bubble; pinned, markdown-only, and interactive
+bubbles are excluded.
+
+`ctx.voice.speak()` accepts an optional `petHandleId`. A plugin may omit it to
+use the default pet or pass a handle returned by its own `ctx.pets.spawn()` call;
+the desktop bridge injects the calling plugin ID and rejects cross-plugin or dead
+handles before selecting that pet's configured voice. `ctx.voice.listen()` is
+still a bounded one-shot operation—wake-word listening is a separate host
+feature and never broadens the plugin permission.
+
 Commands time out after five seconds by default. A command that deliberately
 waits for user interaction, such as host-mediated OAuth, may declare a bounded
 `timeoutMs` between one second and five minutes.
+
+### `ctx.companion`
+
+`ctx.companion` is a context-contribution API, not a conversation or speech API.
+It requires the manifest's `companion:context` permission and separate user
+consent in Companion settings. Normal contributions require **Plugin context**;
+`sensitivity: "sensitive"` additionally requires **Sensitive plugin context**.
+The host may ignore every call when consent, plugin enablement, expiry, quota,
+the active companion target, cooldown, or proactive policy does not allow it.
+
+- `contributeFact({ key, text, expiresAt, sensitivity? })` offers
+  a short factual statement for bounded prompt context.
+- `offerOpportunity({ key, context, urgency, earliestAt, expiresAt, dedupeKey,
+  cooldownMs?, sensitivity? })` offers a time window in which the
+  host may generate its own proactive check-in.
+- `remove(key)` withdraws either kind by its plugin-scoped key.
+
+Keys are stable plugin-scoped identifiers. Fact text and opportunity context are
+plain text of 1–500 characters; expiry must be within 24 hours, and opportunity
+cooldown is bounded to seven days. Contributions belong to the active default
+companion; plugins cannot retarget them to spawned or agent pets. The desktop
+also enforces 20 calls per minute, 32 retained contributions
+per plugin, and 256 overall. Contributions are process-local and never become
+core recent memory. They are untrusted quoted context: do not put commands or
+final pet copy in them.
+
+The bundled Focus Buddy demonstrates the intended pattern. It offers a low-
+urgency mid-session context window and removes it on pause/end. It does not call
+speech, choose the Companion provider, or assume the host will interrupt.
 
 ### OAuth installed-app credentials
 
@@ -103,6 +149,9 @@ host lifecycle signal rather than a durable acknowledgement.
 - **Everything is permission-gated and quota-bound.** A namespace call without
   the declared+approved permission is denied; storage and other namespaces have
   quotas (`plugin-sdk-quotas`). Design for graceful denial.
+- **Contributions are advisory.** `ctx.companion` data is expiring, untrusted,
+  separately consented, and optional. Keep durable plugin facts in
+  `ctx.storage`, then re-contribute only the current bounded context.
 - **State survives restarts.** `ctx.storage` persists; schedules reconcile after
   restart/sleep. Stateful companions (reminders, virtual pet) rely on this.
 - **Localize by reference.** Use `$t:` in the manifest and `ctx.t(key, vars)` in
@@ -122,7 +171,8 @@ without Electron, then exposes controls and assertions:
   `fireBubbleAction(...)`.
 - **Assert on recorded effects** (descriptors, not pixels): helpers like
   `expectSpoke`, `expectBubble`, `expectScheduled`, plus recorded
-  storage/config/network/AI/sound/panel/pet actions and recorded deliveries.
+  storage/config/network/AI/sound/panel/pet actions, deliveries, and
+  `calls.companionContributions` / `removedCompanionContributions`.
 
 This is why official plugins can have fast, deterministic `test.js` suites:
 they assert that a scheduled job *would* fire and the pet *would* speak, by

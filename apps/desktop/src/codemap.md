@@ -55,8 +55,9 @@ pet-window.ts
 │   ├── reaction-animation-mapping.ts (resolveReactionSpriteState)
 │   ├── reaction-messages.ts (pickReactionMessage for bubbles)
 │   ├── i18n/reactions (localized reaction speech pools)
-│   └── Speech bubbles, alert indicators, pinned HUDs, and status reactions
-└── pet-preload.cjs (renderer IPC for drag/click-through)
+│   ├── Speech bubbles, alert indicators, pinned HUDs, and status reactions
+│   └── bubble-tts.ts → default-off, quiet-hours-aware presentation dedupe
+└── pet-preload.cjs (renderer IPC for drag/click-through and system TTS)
 
 Plugin motion APIs:
 plugin-sdk-bridge.ts → plugin-sdk-routes.ts → plugin-pet-registry.ts
@@ -96,6 +97,24 @@ tray.ts → openControlCenterWindow(route) → windows.ts
 └── renderer/src/main.tsx routes Dashboard/Pets/Integrations/Plugins/Settings
 ```
 
+**Companion + Voice Platform Flow**:
+```
+Pet details Companion panel / Voice Settings / pet bubbles / plugin context
+├── companion-settings.ts + companion-memory.ts → opt-in host settings, per-pet personality, rolling recent memory
+├── companion-orchestrator.ts → shared typed/PTT turn lifecycle, cancellation, display acknowledgement, memory commits
+│   ├── companion-context.ts → bounded provider-neutral personality/profile/time/memory/plugin prompt
+│   └── companion-target-* → Codex CLI or configured host-AI provider inference
+├── companion-proactive-service.ts + companion-proactivity.ts → time/goal/plugin candidates and bounded check-in policy
+├── companion-contributions.ts → consent-gated, expiring in-memory plugin facts/opportunities for the active default companion
+├── voice-settings.ts + voice-secrets.ts → normalized settings + encrypted key status
+├── voice-output-service.ts → pet targeting, overlap, voice/provider fallbacks
+│   └── voice-provider-* → System Voice, PocketTTS, OpenAI-compatible, ElevenLabs
+├── voice-capture.ts → one global mic owner + voice-privacy-indicator.ts
+├── voice-listening-service.ts → push-to-talk, cues, transcription, barge-in
+├── host-ai-settings.ts + host-ai-gateway.ts → host-owned OpenAI/Anthropic/Ollama configuration and cancellable inference/transcription
+└── voice-wake-word-service.ts remains unavailable behind its privacy/packaging gate
+```
+
 **Plugin Flow**:
 ```
 main.ts → initializePluginService(userData, defaultPluginPetApi, appVersion, ElectronPluginJsHost).start()
@@ -112,7 +131,8 @@ main.ts → initializePluginService(userData, defaultPluginPetApi, appVersion, E
 │       ├── plugin-sdk-bus.ts/plugin-sdk-events.ts → curated pub/sub and host event streams
 │       ├── plugin-sdk-config.ts/plugin-sdk-storage.ts/plugin-sdk-state.ts → config, persistent plugin data, and subscriptions
 │       ├── plugin-sdk-ui.ts/plugin-panels.ts/plugin-toast.ts → bubbles, alerts, commands, panels, and toasts
-│       ├── plugin-oauth.ts/plugin-secrets.ts/plugin-ai-gateway.ts → host-mediated auth, encrypted secrets, and AI gateway
+│       ├── plugin-oauth.ts/plugin-secrets.ts/host-ai-gateway.ts → host-mediated auth, encrypted secrets, and shared host AI gateway
+│       ├── companion-contributions.ts → bounded `companion:context` facts/opportunities under separate Companion consent
 │       └── plugin-pet-api.ts/plugin-pet-registry.ts/default-pet-controller → default/spawned pet actions
 ├── plugin-service.ts orchestrates UI actions, permission confirmation, config validation, install/update/uninstall/load-local, and runtime reloads
 └── lifecycle.ts → stopPluginService() on quit
@@ -169,24 +189,29 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `main.ts`: Entry, single-instance lock, bootstrap sequence, JavaScript plugin host construction
 - `lifecycle.ts`: App event handlers (quit, window-all-closed, second-instance) with logging; stops plugin service, IPC, and pet windows on quit
 - `state.ts`: Simple shell pause state
-- `app-state.ts`: Persistent JSON state with V1 schema, atomic writes, reaction animation overrides
-- `app-state-core.ts`: Pet scale options, onboarding normalization
+- `app-state.ts`: Persistent JSON state with V1 schema, atomic writes, reaction animation overrides, and the speech-bubble narration preference
+- `app-state-core.ts`: Pet scale options plus onboarding and speech-bubble narration preference normalization
 - `logger.ts`: Structured logging with scopes (app, ipc, lease, pet.default, pet.agent, pet.window, state, tray, ui), log rotation, redaction
 
 **UI**:
 - `tray.ts`: Tray icon (nativeImage), context menu builder, update status integration, route-targeted Control Center entries, logs folder
 - `windows.ts`: Control Center BrowserWindow factory, Dashboard snapshot, IPC handler registration, route targeting, reaction animation settings, plugin/integration/pet/settings UI IPC endpoints, and scoped internal protocols
-- `preference-patch.ts`: Pure validation of Control Center preference patches (`validatePreferencePatch`/`PreferencePatch`) for the `update-preferences` IPC path, including the `petCrossDisplayEnabled` toggle; consumed by `windows.ts`
+- `preference-patch.ts`: Pure validation of Control Center preference patches (`validatePreferencePatch`/`PreferencePatch`) for the `update-preferences` IPC path, including display and speech-bubble narration toggles; consumed by `windows.ts`
 - `assets.ts`: Tray icon loading with generated fallback
 - `display.ts`: Screen geometry helpers, pet window positioning
 - `window-tracker-latch.ts`: Re-entrancy latch helper (`createLatchedTick`) that prevents overlapping async ticks from stacking; used by the window-tracking poller
 - `renderer/`: Vite React/Tailwind Control Center shell for Dashboard, Pets, Integrations, Plugins, and Settings.
 
 **Pets**:
-- `pet-window.ts`: Window creation (transparent, frameless, always-on-top), HTML/CSS generation, sprite animation states, speech bubbles, status badges, transient displays
+- `pet-window.ts`: Window creation (transparent, frameless, always-on-top), HTML/CSS generation, sprite animation states, speech bubbles, status badges, transient displays, and isolated voice/system-TTS playback channels
+- `companion-settings.ts` / `companion-memory.ts`: Atomic opt-in preferences, minimal user profile, per-pet personality, and bounded rolling recent conversation memory.
+- `companion-orchestrator.ts` / `companion-context.ts`: Provider-independent turn lifecycle and prompt assembly with display-before-memory semantics.
+- `companion-proactive-service.ts` / `companion-proactivity.ts`: Visible default-pet time expression plus policy-limited time, goal, and plugin check-ins.
+- `companion-target-codex.ts` / `companion-target-host-ai.ts`: Thin inference adapters over the Codex CLI and host AI gateway.
+- `bubble-tts.ts`: Pure visible transient-bubble narration candidate, quiet-hours gate, and per-presentation dedupe decisions
 - `default-pet-controller.ts`: Default pet visibility, position persistence, transient reactions, status badges, logging
 - `agent-pet-controller.ts`: Lease-triggered pet windows, dismissal tracking, transient displays, status badges, logging
-- `pet-motion-engine.ts`: Interpolated movement vector/tick engine for plugin-driven pet motion and target-following behavior
+- `pet-motion-engine.ts`: Shared-ticker interpolation for plugin-driven target moves, physics, and cursor following; accepted targets remain ticker work until completion or supersession
 - `built-in-pet.ts`: Built-in pet constant
 - `reaction-messages.ts`: Message pools for each reaction type
 - `reaction-animation-mapping.ts`: Reaction-to-animation state mapping, user-configurable overrides, sprite state definitions
@@ -208,7 +233,7 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `zip-safety.ts`: ZIP entry path validation (traversal prevention, case collision detection)
 
 **Plugins**:
-- `plugin-manifest.ts`: Manifest V1/V2/V3 schema/types and validation for declarative and JavaScript runtimes, permissions (`timer`/`schedule`, `pet:*`, `pets:*`, `audio`, `events`, `ui:*`, `notify`, `bus`, `ai`, `secrets`, `voice:*`, `auth`, `files`, `system:*`, `clipboard`, `network:*`), config schema, timer triggers, assets, panels, entry files, and pet actions.
+- `plugin-manifest.ts`: Manifest V1/V2/V3 schema/types and validation for declarative and JavaScript runtimes, permissions (`timer`/`schedule`, `pet:*`, `pets:*`, `audio`, `events`, `ui:*`, `notify`, `bus`, `ai`, `companion:context`, `secrets`, `voice:*`, `auth`, `files`, `system:*`, `clipboard`, `network:*`), config schema, timer triggers, assets, panels, entry files, and pet actions.
 - `plugin-manifest-reader.ts`: Safe manifest reader with realpath/allowed-root checks, root filename enforcement, size limit, and expected id/version matching.
 - `plugin-config.ts`: Config defaulting, replacement validation, and runtime resolution for string/number config references.
 - `plugin-state.ts`: Persistent plugin state store (`openpets-plugin-state.json`) with atomic temp+rename writes, normalized records, approved permissions, config, source, and broken reason.
@@ -236,6 +261,8 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `plugin-diagnostics.ts`: Per-plugin error/quota/settings-block collector surfaced to inspector and plugin health views.
 - `plugin-events-source.ts`: Host event source adapter for pet/window/system events consumed by `plugin-sdk-events.ts`.
 - `plugin-host-capabilities.ts`: Main-process capability bundle injected into the bridge for Electron side effects.
+- `companion-contributions.ts`: Process-local, quota-bound plugin fact/opportunity store that rechecks plugin enablement and normal/sensitive Companion consent on read.
+- `host-ai-settings.ts` / `host-ai-gateway.ts`: Host-owned provider settings, legacy migration, health evidence, completion/streaming, and transcription used by Companion and approved plugin AI calls.
 - `plugin-i18n.ts`: Plugin locale catalog loader and `$t:`/`ctx.t()` resolver with English fallback.
 - `plugin-oauth.ts`: Host-mediated OAuth/PKCE flow and token session lifecycle for plugins.
 - `plugin-panels.ts`: Sandboxed plugin panel BrowserWindow coordinator and message bridge.

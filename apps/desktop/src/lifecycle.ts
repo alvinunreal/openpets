@@ -7,6 +7,7 @@ import { info } from "./logger.js";
 import { stopLocalIpcServer } from "./local-ipc.js";
 import { stopPluginService } from "./plugin-service.js";
 import { focusOpenTaskWindows } from "./windows.js";
+import { shutdownVoicePlatform } from "./voice-platform.js";
 
 let intentionalQuit = false;
 let hardExitTimer: NodeJS.Timeout | null = null;
@@ -34,6 +35,7 @@ export function installAppLifecycle(): void {
     intentionalQuit = true;
     info("app", "before quit cleanup begin");
     scheduleHardExitFallback("before-quit");
+    shutdownVoicePlatform();
     stopPluginService();
     stopLocalIpcServer();
     closeAllAgentPets();

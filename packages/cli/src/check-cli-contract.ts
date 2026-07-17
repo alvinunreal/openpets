@@ -87,6 +87,9 @@ try {
   assert.ok(existsSync(join(target, "test.js")));
   assert.equal(validatePluginFolder(target).ok, true, JSON.stringify(validatePluginFolder(target).issues));
   const petConfigManifest = JSON.parse(readFileSync(result.manifestPath, "utf8")) as Record<string, unknown>;
+  petConfigManifest.permissions = ["companion:context"];
+  writeFileSync(result.manifestPath, JSON.stringify(petConfigManifest, null, 2), "utf8");
+  assert.equal(validatePluginFolder(target).ok, true, "companion:context is a valid SDK v3 permission");
   petConfigManifest.configSchema = { companion: { type: "pet", label: "Companion" } };
   writeFileSync(result.manifestPath, JSON.stringify(petConfigManifest, null, 2), "utf8");
   assert.equal(validatePluginFolder(target).ok, false, "legacy pet config fields are removed");

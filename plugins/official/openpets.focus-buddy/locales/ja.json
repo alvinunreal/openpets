@@ -26,6 +26,7 @@
   "mode.break": "休憩",
   "status.idle": "Focus Buddy 準備完了",
   "status.active": "{mode} · 残り{minutes}分",
+  "companion.focusMidSession.context": "Focus Buddy の集中セッションがかなり進んでいます。",
   "bubble.active": "{mode} · 残り{minutes}分",
   "bubble.paused": "{mode}一時停止 · 残り{minutes}分",
   "alert.focusComplete.title": "休憩しますか？",

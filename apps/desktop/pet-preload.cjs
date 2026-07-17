@@ -269,6 +269,9 @@ const namedSoundRecipes = {
   tick: [{ freq: 1000, type: "square", start: 0, duration: 0.03 }],
   success: [{ freq: 587.33, type: "sine", start: 0, duration: 0.14 }, { freq: 880, type: "sine", start: 0.14, duration: 0.24 }],
   error: [{ freq: 311.13, type: "sine", start: 0, duration: 0.18 }, { freq: 233.08, type: "sine", start: 0.2, duration: 0.28 }],
+  "voice-start": [{ freq: 659.25, type: "sine", start: 0, duration: 0.08 }, { freq: 880, type: "sine", start: 0.08, duration: 0.12 }],
+  "voice-stop": [{ freq: 880, type: "sine", start: 0, duration: 0.08 }, { freq: 659.25, type: "sine", start: 0.08, duration: 0.12 }],
+  "voice-wake": [{ freq: 523.25, type: "sine", start: 0, duration: 0.08 }, { freq: 783.99, type: "sine", start: 0.08, duration: 0.16 }],
 };
 
 ipcRenderer.on("openpets:play-audio", (_event, payload) => {
@@ -320,6 +323,129 @@ ipcRenderer.on("openpets:stop-audio", () => {
   activeAudioNodes = [];
   for (const element of activeAudioElements) { try { element.pause(); } catch { /* noop */ } }
   activeAudioElements = [];
+});
+
+// --- Host voice output (isolated from plugin audio) --------------------------
+
+let activeVoiceAudioEntries = [];
+let activeVoiceUtteranceEntries = [];
+
+const createVoicePlaybackFinish = (requestId) => {
+  let finished = false;
+  return (ok) => {
+    if (finished) return false;
+    finished = true;
+    if (requestId) ipcRenderer.send("openpets:voice-playback-finished", { requestId, ok });
+    return true;
+  };
+};
+
+ipcRenderer.on("openpets:voice-play-audio", (_event, payload) => {
+  const requestId = payload && typeof payload.requestId === "string" ? payload.requestId : null;
+  const finish = createVoicePlaybackFinish(requestId);
+  let entry = null;
+  const settle = (ok) => {
+    if (!finish(ok)) return;
+    if (entry) activeVoiceAudioEntries = activeVoiceAudioEntries.filter((candidate) => candidate !== entry);
+  };
+  try {
+    if (!requestId || typeof payload.dataUrl !== "string" || !payload.dataUrl.startsWith("data:audio/")) { settle(false); return; }
+    const element = new Audio(payload.dataUrl);
+    element.volume = Math.min(1, Math.max(0, Number(payload.volume) || 1));
+    entry = { requestId, element, finish: settle };
+    activeVoiceAudioEntries.push(entry);
+    element.addEventListener("ended", () => settle(true), { once: true });
+    element.addEventListener("error", () => settle(false), { once: true });
+    void element.play().catch(() => settle(false));
+  } catch { settle(false); }
+});
+
+ipcRenderer.on("openpets:voice-system-speak", (_event, payload) => {
+  const requestId = payload && typeof payload.requestId === "string" ? payload.requestId : null;
+  const finish = createVoicePlaybackFinish(requestId);
+  let entry = null;
+  const settle = (ok) => {
+    if (!finish(ok)) return;
+    if (entry) activeVoiceUtteranceEntries = activeVoiceUtteranceEntries.filter((candidate) => candidate !== entry);
+  };
+  try {
+    if (!requestId || typeof payload.text !== "string" || !window.speechSynthesis) { settle(false); return; }
+    const utterance = new SpeechSynthesisUtterance(payload.text.slice(0, 4000));
+    if (typeof payload.rate === "number" && payload.rate >= 0.5 && payload.rate <= 2) utterance.rate = payload.rate;
+    if (typeof payload.voice === "string" && payload.voice) {
+      const match = window.speechSynthesis.getVoices().find((voice) => voice.name === payload.voice || voice.voiceURI === payload.voice || voice.lang === payload.voice);
+      if (match) utterance.voice = match;
+    }
+    entry = { requestId, utterance, finish: settle };
+    activeVoiceUtteranceEntries.push(entry);
+    utterance.addEventListener("end", () => settle(true), { once: true });
+    utterance.addEventListener("error", () => settle(false), { once: true });
+    window.speechSynthesis.speak(utterance);
+  } catch { settle(false); }
+});
+
+ipcRenderer.on("openpets:voice-stop", () => {
+  const audioEntries = activeVoiceAudioEntries;
+  activeVoiceAudioEntries = [];
+  for (const entry of audioEntries) {
+    entry.finish(false);
+    try { entry.element.pause(); } catch { /* noop */ }
+  }
+  const utteranceEntries = activeVoiceUtteranceEntries;
+  activeVoiceUtteranceEntries = [];
+  // Settle cancellation before invoking browser APIs: speechSynthesis.cancel()
+  // may synchronously emit an end/error event on some platforms.
+  for (const entry of utteranceEntries) entry.finish(false);
+  try { if (utteranceEntries.length > 0 && window.speechSynthesis) window.speechSynthesis.cancel(); } catch { /* noop */ }
+});
+
+ipcRenderer.on("openpets:voice-system-list-voices", (_event, payload) => {
+  const requestId = payload && typeof payload.requestId === "string" ? payload.requestId : null;
+  if (!requestId) return;
+  const synthesis = window.speechSynthesis;
+  let sent = false;
+  let timer = null;
+  let onVoicesChanged = null;
+  const send = () => {
+    if (sent) return;
+    sent = true;
+    if (timer !== null) clearTimeout(timer);
+    if (synthesis && onVoicesChanged) synthesis.removeEventListener("voiceschanged", onVoicesChanged);
+    const discovered = synthesis ? synthesis.getVoices().map((voice) => ({ id: voice.voiceURI || voice.name, label: voice.name, language: voice.lang })) : [];
+    const voices = [...new Map(discovered.map((voice) => [voice.id, voice])).values()]
+      .sort((a, b) => String(a.language).localeCompare(String(b.language)) || a.label.localeCompare(b.label))
+      .slice(0, 300);
+    ipcRenderer.send("openpets:voice-system-voices-result", { requestId, voices });
+  };
+  if (synthesis && synthesis.getVoices().length === 0) {
+    onVoicesChanged = send;
+    timer = setTimeout(send, 500);
+    synthesis.addEventListener("voiceschanged", onVoicesChanged, { once: true });
+  } else send();
+});
+
+ipcRenderer.on("openpets:voice-listening-state", (_event, state) => {
+  const allowed = ["idle", "listening", "transcribing", "thinking"];
+  document.documentElement.dataset.voiceState = allowed.includes(state) ? state : "idle";
+});
+
+ipcRenderer.on("openpets:voice-cue", (_event, payload) => {
+  const recipe = payload && namedSoundRecipes[payload.cue];
+  if (!recipe) return;
+  const ctxAudio = getAudioContext();
+  const now = ctxAudio.currentTime;
+  for (const note of recipe) {
+    const osc = ctxAudio.createOscillator();
+    const gain = ctxAudio.createGain();
+    osc.type = note.type;
+    osc.frequency.value = note.freq;
+    gain.gain.setValueAtTime(0, now + note.start);
+    gain.gain.linearRampToValueAtTime(0.22, now + note.start + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + note.start + note.duration);
+    osc.connect(gain).connect(ctxAudio.destination);
+    osc.start(now + note.start);
+    osc.stop(now + note.start + note.duration + 0.04);
+  }
 });
 
 // --- Plugin TTS ---------------------------------------------------------------

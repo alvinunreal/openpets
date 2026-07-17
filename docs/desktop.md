@@ -33,10 +33,13 @@ launching a second one.
 ## Startup sequence
 
 `main.ts` runs a deterministic bootstrap (see `src/codemap.md` for the exact
-order): install lifecycle handlers → initialize app state → initialize the
-logger → create the tray → start the local IPC server → initialize the plugin
-service (with the Electron JS host) → optionally show the default pet. Shutdown
-runs the reverse: stop the plugin service, IPC server, and pet windows on quit.
+order): install lifecycle handlers → initialize the logger → initialize app
+state → initialize voice, Companion settings/memory, plugin-platform and host-AI
+settings → install the internal UI protocol/handlers → create the tray → start
+the local IPC server → create the host voice/Companion platform → initialize the
+plugin service (with the Electron JS host) → optionally show the default pet.
+Shutdown cancels microphone, proactive, provider, speech, and Companion work
+before stopping the plugin service, IPC server, and pet windows.
 
 Key files: `main.ts` (entry/bootstrap), `lifecycle.ts` (app events + cleanup),
 `state.ts` (shell pause flag).
@@ -101,6 +104,10 @@ pet keeps rendering during fullscreen video and games.
   `BrowserWindow`, loads the Vite renderer (dev) or packaged `dist/renderer`
   (prod), targets a route, registers all renderer-facing IPC handlers, builds
   the Dashboard snapshot, and defines the internal asset protocols.
+  Route requests can carry `{ route, petId, section, notice }`; a pet's
+  **Talk to this pet** menu item opens `route: "pets"`, selects that installed
+  pet, and focuses its `section: "companion"` composer. Invalid/uninstalled pets
+  resolve to a bounded `pet-unavailable` notice instead of an arbitrary route.
 - `display.ts` provides screen-geometry helpers for positioning pet windows,
   including the permissive `clampToNearestDisplayIfOffscreen` helper that allows
   pets to roam across display seams while only snapping when fully off-screen.
@@ -114,11 +121,94 @@ capability of its own. The renderer is the only "frontend" in scope for these
 docs (the `web/` marketing site is out of scope). See
 `src/renderer/src/codemap.md` for component structure.
 
+The selected installed-pet detail owns `PetCompanionPanel`: disclosure and
+enablement, the pet-specific personality, the small shared user profile,
+provider/frequency selection, independent context toggles, typed composer,
+push-to-talk controls, recent-memory clearing, and Companion disablement. The
+Control Center never calls a provider directly and never receives credentials,
+raw microphone audio, or the persisted recent-memory file.
+
 ### Pet windows
 
 Pet rendering lives in `pet-window.ts` plus the two controllers
 (`default-pet-controller.ts`, `agent-pet-controller.ts`) and the motion/mapping
 helpers. This is covered in depth in [pets.md](pets.md).
+
+Pet windows also own the presentation endpoints for the host-level voice
+platform. When **Read speech bubbles aloud** is enabled in Settings, a newly
+presented plain-text transient bubble enters `VoiceOutputService`, which resolves
+the global or per-pet provider/voice selection. System Voice uses renderer
+`speechSynthesis`; PocketTTS, OpenAI-compatible TTS, and ElevenLabs return
+bounded audio to a separate voice-only playback element. Interruption, queueing,
+and cancellation never stop the existing plugin-audio channel. Narration is
+default-off, best-effort, quiet-hours aware, and deduplicated per pet window;
+the visual bubble remains authoritative.
+
+Control Center → Settings → Voice stores non-secret configuration in
+`openpets-voice-settings.json`. API keys are stored through the encrypted host
+secrets store and IPC exposes only boolean key status. PocketTTS is not bundled:
+run its separately installed service and configure its loopback URL (normally
+`http://127.0.0.1:8000`); the adapter sends multipart `text` and `voice_url` to
+`POST /tts`. Provider responses are MIME-checked, streamed through a 10 MiB cap,
+and never expose credentials or raw provider payloads to renderers.
+
+Push-to-talk uses one host-owned capture service and one microphone owner. The
+privacy-indicator window is shown only after a media track is live and remains
+until all tracks stop; pet poses and start/stop cues mirror listening state.
+Raw audio stays main-process side and is bounded before transcription. Optional
+Codex conversation uses `codex exec --json` and session UUID resume events—not
+terminal scraping—and owns cancellable child processes per pet session. Wake
+word health intentionally reports unavailable and cannot be enabled until a
+local runtime/model clears packaging, license, signing, resource, and teardown
+validation.
+
+### Companion conversations
+
+`voice-platform.ts` owns the shared Companion runtime alongside voice output:
+`CompanionOrchestrator`, the Codex and host-AI targets, push-to-talk handoff, and
+`CompanionProactiveService`. Typed messages and transcribed PTT messages use the
+same prompt construction, cancellation, bubble, recent-memory, and optional TTS
+path. Runtime sessions are pet-scoped and reset when the selected target changes;
+an invalid resumed Codex session is retried once without the stale session.
+
+Companion starts disabled with consent version `0`. The first enable writes one
+atomic disclosed state: Companion enabled, recent memory enabled, gentle
+check-ins enabled at **Sometimes**, while plugin context, sensitive plugin
+context, screen context, and wake listening remain off. Later disable/re-enable
+cycles preserve the user's independently reversible choices. Screen context is
+a reserved consent bit only—this build does not collect or send screen content.
+Wake is displayed as unavailable and cannot be enabled through the UI.
+
+Host-owned persistence is deliberately separate from installed-pet app state:
+
+- `openpets-companion-settings.json` — consent, selected target, explicit user
+  profile (name, preferred address, up to five goals), per-installed-pet
+  personality, memory/proactivity/context/wake choices.
+- `openpets-companion-memory.json` — rolling displayed conversation. Startup
+  rewrites it after pruning malformed/expired/over-limit entries. Retention is
+  24 hours, with global, per-pet, prompt-entry, text, and file-size bounds.
+- `openpets-host-ai-settings.json` — provider, model, and optional base URL for
+  Anthropic, OpenAI, or Ollama-compatible completion/transcription paths. On
+  first launch after the split, a configured legacy `ai` block is migrated out
+  of `openpets-plugin-platform.json` and removed from that file. The old
+  plugin-platform settings API projects the host settings for compatibility but
+  no longer creates a second source of truth. API keys remain in the host
+  secrets store; renderer IPC exposes only boolean key status.
+
+`CompanionProactiveService` evaluates once after startup and then every five
+minutes for the visible, unpaused default pet. It derives local day parts and
+activity hints, can express morning/midday/evening/night posture without a
+bubble, and considers host time prompts, explicit goals, and eligible plugin
+opportunities. Quiet hours, an active interaction, provider health, daily caps,
+per-plugin caps, dedupe, and minimum spacing all suppress delivery. Rarely,
+Sometimes, and Often currently cap host check-ins at 1/3/5 per local day with
+minimum spacing of 6 hours/3 hours/90 minutes; these are ceilings, not schedules.
+
+The main process logs bounded decisions under the `companion` scope: settings
+changes, target/kind/input sizes, selected memory/fact counts, cancellations,
+proactive suppression reasons, and display/failure outcomes. It does not log
+prompts, responses, personality, goals, plugin fact text, credentials, or raw
+audio.
 
 ### Local IPC server
 
@@ -142,8 +232,10 @@ installed.
 installed pets, the default-pet config, reaction→animation overrides, onboarding
 state, locale preference, the pet pool preference (ordered pet list +
 `petPoolEnabled` toggle), and display-roaming preferences (`petConfinementEnabled`,
-`petCrossDisplayEnabled`). `app-state-core.ts` holds pure helpers (scale
-options, onboarding normalization) that are testable without Electron.
+`petCrossDisplayEnabled`). It also stores the default-off
+`readSpeechBubblesAloud` accessibility preference. `app-state-core.ts` holds
+pure helpers (scale options, onboarding and narration-preference normalization)
+that are testable without Electron.
 
 #### Pet pool preference
 
@@ -223,7 +315,7 @@ and Dashboard; `update-version.ts` does version parsing/comparison.
 ### Logging
 
 `logger.ts` provides scoped, structured logging (scopes: `app`, `ipc`, `lease`,
-`pet.*`, `state`, `tray`, `ui`) with log rotation (~2MB) and redaction of
+`pet.*`, `state`, `tray`, `ui`, `companion`) with log rotation (~2MB) and redaction of
 sensitive data, written to `userData/logs/openpets.log`. Renderer diagnostics
 should be routed here so failures are visible in the log file, not only DevTools
 (see the logging guidance in `AGENTS.md`).
@@ -295,6 +387,10 @@ a GitHub draft. See [development.md](development.md) for the release flow.
 | Pet appearance / animation | `pet-window.ts`, `reaction-animation-mapping.ts` ([pets.md](pets.md)) |
 | Agent → pet command path | `local-ipc.ts`, `lease-manager.ts` ([ipc.md](ipc.md)) |
 | Persisted settings | `app-state.ts` |
+| Companion consent/profile/personality | `companion-settings.ts` |
+| Companion prompt/memory/orchestration | `companion-context.ts`, `companion-memory.ts`, `companion-orchestrator.ts` |
+| Companion targets/check-ins | `companion-target-*.ts`, `companion-proactive-service.ts`, `companion-proactivity.ts` |
+| Host AI configuration/gateway | `host-ai-settings.ts`, `host-ai-gateway.ts` |
 | Plugin behavior | `plugin-service.ts` + `plugin-*.ts` ([plugins.md](plugins.md)) |
 | Agent configuration | `agent-setup.ts` ([agent-integrations.md](agent-integrations.md)) |
 | Install / catalog | `catalog.ts`, `pet-installation.ts` ([catalog.md](catalog.md)) |

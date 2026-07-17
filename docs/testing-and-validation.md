@@ -29,11 +29,19 @@ Run the suite with `pnpm test` (builds first, then each package's tests) and
 
 The desktop runner (`apps/desktop/scripts/run-tests.mjs`) orchestrates:
 preload syntax checks → test compilation → behavior tests → contract tests →
-dist checks. Three buckets:
+dist checks. Test compilation refreshes the production main-process `dist/`
+before compiling `.test-dist/`, so runtime checks never consume stale output.
+Desktop contracts use tracked desktop/repository inputs only; an optional
+ignored website checkout is outside this suite's boundary. Three buckets:
 
 - **Behavior** (`apps/desktop/tests/*.test.ts`): lease manager, app state,
   version checking, ZIP safety, Codex pets, Claude memory, reaction-animation
-  mapping. Compiled to `.test-dist/`.
+  mapping, voice settings/target resolution, bounded provider responses,
+  plugin-to-pet speech targeting, Codex JSON session parsing, Companion
+  consent/settings normalization, 24-hour memory pruning/bounds, safe context
+  construction, time/proactivity decisions, shared orchestrator behavior,
+  host-AI settings/migration/abortable probes, expiring plugin contributions,
+  and the wake-word packaging gate. Compiled to `.test-dist/`.
 - **Contract** (`apps/desktop/contracts/*.contract.ts`): the public boundaries —
   - `catalog-fixture.contract.ts` — catalog validation against fixture data.
   - `local-ipc-protocol.contract.ts` — IPC request/response parsing
@@ -47,6 +55,41 @@ dist checks. Three buckets:
     guard that a *packaged* build is actually shippable.
   - `check-opencode-desktop-setup.ts` — verifies the bundled OpenCode setup
     preview matches expectations.
+
+For voice-platform changes, run the desktop test and typecheck plus a manual
+Control Center smoke test. Verify System Voice discovery/test, the configured
+PocketTTS loopback service, secret boolean status, per-pet fallback behavior,
+voice-only cancellation, and the microphone indicator's exact track lifetime.
+Codex conversation health must verify the installed CLI's `--json` exec/resume
+contract; wake word must remain unavailable unless the packaged runtime gate has
+explicitly changed and its teardown tests exist.
+
+For Companion changes, the observable contracts to protect are:
+
+- the first consent action enables memory + Sometimes proactivity atomically but
+  leaves plugin, sensitive, screen, and wake context off;
+- pet personalities remain pet-specific while profile/provider choices are
+  host-owned and provider-independent;
+- typed and PTT turns share context, bubble display, cancellation, memory, and
+  target health; assistant memory is written only after successful display;
+- memory is pruned at 24 hours and obeys entry/per-pet/file/prompt bounds;
+- proactive decisions honor quiet hours, current activity, readiness, daily and
+  per-plugin caps, spacing, expiry, and dedupe; time expression does not create
+  a conversation;
+- plugin facts/opportunities require permission plus host consent, expire, stay
+  process-local, cannot override the active default companion target, and never bypass host
+  wording/delivery authority; and
+- host-AI provider settings migrate once from the legacy plugin-platform `ai`
+  field, credentials stay opaque, and abort cancels completion/transcription/
+  health work.
+
+Run `pnpm --filter @open-pets/desktop test` and its typecheck, then manually open
+an installed pet from **Talk to this pet**. Verify disclosure defaults, per-pet
+personality/profile edits, Codex and configured host-AI health, typed response,
+PTT privacy indicator/transcript response, provider-switch cancellation, memory
+clear, and disabled wake/screen truthfulness. Diagnostics should show bounded
+`companion` decisions and plugin quota counts, never prompt, response, profile,
+fact text, credential, endpoint, or raw-audio payloads.
 
 ## Package tests & contracts
 
@@ -71,9 +114,23 @@ Each package runs its own `check`/`test`. Notable contract/boundary coverage:
   assertions, no Electron. Run via `pnpm plugins:test`, which first runs
   `pnpm plugins:locales` (`scripts/check-plugin-locales.mjs`) to verify every
   `$t:`/`ctx.t()` key resolves. See [sdk.md](sdk.md).
+- **Package producer**: `pnpm plugins:package:test` protects fixed UTF-8 ZIP
+  ordering, CRC/central-directory parsing, desktop-manifest parity, traversal +
+  Windows-path rejection, source/output symlink rejection, and exact
+  community-sidecar/digest coverage. It also covers catalog parity limits and
+  legacy ASCII ZIP names without the UTF-8 flag. Root `.gitattributes` fixes
+  plugin text to LF and WebP to binary so checkout settings do not perturb
+  hashes. `pnpm plugins:check` runs those tests before a no-write package-plan
+  build.
 - **Manifest validation**: `openpets plugin validate <dir>` checks manifest,
   permissions, SDK compatibility, config field types, network hosts, asset
   formats/size caps, entry files, and panels — run it before packaging.
+
+- **Companion contribution contract**: run
+  `pnpm --filter @open-pets/plugin-sdk check` and the desktop bridge/contribution
+  tests when changing `ctx.companion` or `companion:context`. The harness records
+  contributed/removed facts and opportunities; Focus Buddy's test verifies a
+  delayed low-urgency focus opportunity and removal/reconciliation behavior.
 
 - **Calendar Airmail**: its deterministic harness coverage should exercise the
   primary-calendar reconciliation, state-appropriate connection commands,
@@ -97,7 +154,7 @@ the production gate (`scripts/validate-plugin-release.mjs`):
 | Command | When | Catches |
 |---------|------|---------|
 | `pnpm plugins:package` | build artifacts | (produces catalog + ZIP staging) |
-| `pnpm plugins:validate-release` | **before deploy** | unresolved `$t:` names/descriptions in catalog cards, missing plugin ZIPs, SHA mismatches, missing `locales/en.json`, missing declared assets/entry files (including courier sprites), catalog/package drift, and **community plugin sidecar validation** (`provenance.json`, `submissions.json`) |
+| `pnpm plugins:validate-release` | **before deploy** | unresolved `$t:` names/descriptions in catalog cards, missing plugin ZIPs, SHA mismatches, strict ZIP EOCD/central/header/CRC failures, desktop-incompatible manifests, missing `locales/en.json`, missing declared assets/entry files (including courier sprites), catalog/package drift, and **community plugin sidecar + reviewed-tree digest validation** (`provenance.json`, `submissions.json`) |
 | `pnpm plugins:validate-live` | **after deploy/R2 upload** | the same, against the live catalog + live ZIPs & live sidecars |
 
 ### Plugin sidecar validation
@@ -105,9 +162,20 @@ the production gate (`scripts/validate-plugin-release.mjs`):
 The release validator automatically loads `web/public/plugins/provenance.json`
 and `web/public/plugins/submissions.json` and asserts:
 1. Every community plugin mapped in the catalog has a matching provenance entry.
-2. All provenance entries contain valid URLs, hex SHAs (40 characters), and formatted dates.
+2. All provenance entries contain valid URLs, commit SHAs (40 hex characters), reviewed tree SHA-256 digests, and formatted dates.
 3. Update policy is strictly limited to either `safe-auto` or `manual-review`.
 4. Pending submissions are well-formed and are not also present in the installable catalog.
+
+Before those generated copies exist, `scripts/sync-plugins.mjs` validates the
+tracked sources under `plugins/community/` more narrowly: provenance keys must
+exactly cover the current community folders (no missing or stale extras), fields
+and GitHub owner/repository relationships are validated, and pending submissions
+cannot overlap. The digest is the enforced reviewed content boundary: the
+validator recomputes it from every current source file, so any byte change
+requires manual review and all three review fields to be refreshed. Offline
+validation does not fetch or cryptographically bind `sourceCommit`; reviewers
+are responsible for comparing that upstream snapshot before approving the new
+digest.
 
 The full pre-ship sequence (from `AGENTS.md`):
 `pnpm plugins:package` → `pnpm plugins:validate-release` → deploy/upload →

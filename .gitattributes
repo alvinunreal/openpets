@@ -1,0 +1,8 @@
+# Plugin release bytes feed reviewed-tree and ZIP SHA-256 values. Keep text
+# checkout bytes stable across core.autocrlf settings and preserve sprite bytes.
+/plugins/**/*.js text eol=lf
+/plugins/**/*.json text eol=lf
+/plugins/**/*.md text eol=lf
+/plugins/**/*.svg text eol=lf
+/plugins/**/.openpets-approved-hosts text eol=lf
+/plugins/**/*.webp binary

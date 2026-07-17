@@ -50,6 +50,7 @@ export type OpenPetsPermission =
   | "ui:toast"
   | "ui:panel"
   | "ui:delivery"
+  | "companion:context"
   | "notify"
   | "bus"
   | "ai"
@@ -357,6 +358,53 @@ export interface OpenPetsUiApi {
 /** OS notifications. Requires `notify`. */
 export interface OpenPetsNotifyApi {
   notify(spec: { title: string; body?: string; sound?: boolean }): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
+// Companion context
+// ---------------------------------------------------------------------------
+
+/** Consent class applied by the host in addition to `companion:context`. */
+export type OpenPetsCompanionContextSensitivity = "normal" | "sensitive";
+
+/** Short-lived factual context. It is not pet speech and is never written to core memory. */
+export interface OpenPetsCompanionFact {
+  /** Stable plugin-scoped id (`[A-Za-z0-9._:-]`, 1-96 chars). */
+  key: string;
+  /** Plain factual text for host context construction (1-500 characters). */
+  text: string;
+  /** Finite epoch milliseconds within the next 24 hours. */
+  expiresAt: number;
+  sensitivity?: OpenPetsCompanionContextSensitivity;
+}
+
+/**
+ * A short-lived chance for the host to consider a proactive interaction.
+ * `context` is factual background, never suggested or final pet wording. The
+ * host may ignore every opportunity.
+ */
+export interface OpenPetsCompanionOpportunity {
+  /** Stable plugin-scoped id (`[A-Za-z0-9._:-]`, 1-96 chars). */
+  key: string;
+  /** Plain factual background for candidate generation (1-500 characters). */
+  context: string;
+  urgency: "low" | "normal";
+  earliestAt: number;
+  /** Finite epoch milliseconds within the next 24 hours and after earliestAt. */
+  expiresAt: number;
+  /** Plugin-scoped semantic identity used by the host for dedupe/cooldown. */
+  dedupeKey: string;
+  /** Optional host cooldown after consumption, up to seven days. */
+  cooldownMs?: number;
+  sensitivity?: OpenPetsCompanionContextSensitivity;
+}
+
+/** Expiring companion inputs. Requires `companion:context` plus host consent. */
+export interface OpenPetsCompanionApi {
+  contributeFact(fact: OpenPetsCompanionFact): Promise<void>;
+  offerOpportunity(opportunity: OpenPetsCompanionOpportunity): Promise<void>;
+  /** Remove a fact or opportunity by its plugin-scoped key. */
+  remove(key: string): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -804,7 +852,8 @@ export interface OpenPetsSecretsApi {
 
 /** TTS out (`voice:speak`) and opt-in, push-to-talk STT in (`voice:listen`). */
 export interface OpenPetsVoiceApi {
-  speak(text: string, opts?: { voice?: string; rate?: number }): Promise<void>;
+  /** Omit petHandleId to target the default pet; otherwise use a handle returned by ctx.pets.spawn(). */
+  speak(text: string, opts?: { voice?: string; rate?: number; petHandleId?: string }): Promise<void>;
   /**
    * One-shot speech-to-text. Off by default, never ambient, clearly
    * indicated. Requires `voice:listen` (sensitive) and a configured
@@ -946,6 +995,7 @@ export interface OpenPetsContext {
   events: OpenPetsEventsApi;
   assets: OpenPetsAssetsApi;
   bus: OpenPetsBusApi;
+  companion: OpenPetsCompanionApi;
   schedule: OpenPetsScheduleApi;
   storage: OpenPetsStorageApi;
   config: OpenPetsConfigApi;

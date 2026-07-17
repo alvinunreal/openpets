@@ -26,6 +26,7 @@
   "mode.break": "Break",
   "status.idle": "Focus Buddy ready",
   "status.active": "{mode} · {minutes} min left",
+  "companion.focusMidSession.context": "A Focus Buddy focus session is well underway.",
   "bubble.active": "{mode} · {minutes} min left",
   "bubble.paused": "{mode} paused · {minutes} min left",
   "alert.focusComplete.title": "Break time?",

@@ -1,7 +1,7 @@
 import { BrowserWindow } from "electron";
 
 import { getAppStateSnapshot, type PetScaleValue } from "./app-state.js";
-import { applyExternalPetReaction, applyExternalPetStatusReaction, getDefaultPetPaused, getDefaultPetWindowForPlugins, defaultPetBubbleArbiter } from "./default-pet-controller.js";
+import { applyExternalPetReaction, applyExternalPetSay, applyExternalPetStatusReaction, getDefaultPetPaused, getDefaultPetWindowForPlugins, defaultPetBubbleArbiter } from "./default-pet-controller.js";
 import { clampToNearestDisplayIfOffscreen, clampToVisibleWorkArea, defaultPetWindowSize, getDefaultPetInitialPosition, isCrossDisplayRoamingEnabled, type Point } from "./display.js";
 import { builtInPet } from "./built-in-pet.js";
 import { debug, info } from "./logger.js";
@@ -69,6 +69,49 @@ export function listPluginPets(): PluginPetInfo[] {
     out.push({ id: pet.handleId, name: pet.name, kind: "plugin", visible: pet.window !== null && !pet.window.isDestroyed() && pet.window.isVisible() });
   }
   return out;
+}
+
+export function resolvePluginPetVoiceTarget(pluginId: string, petHandleId: string): { readonly key: string; readonly petId: string; readonly window: BrowserWindow } {
+  if (petHandleId === "default") {
+    const window = getDefaultPetWindowForPlugins();
+    if (!window || window.isDestroyed()) throw new Error("Pet is not available: default");
+    const petId = getAppStateSnapshot().preferences.defaultPetId;
+    return { key: `${petId}:${window.id}`, petId, window };
+  }
+  const pet = spawnedPets.get(petHandleId);
+  if (!pet) throw new Error(`Pet is not available: ${petHandleId}`);
+  if (pet.ownerPluginId !== pluginId) throw new Error("Plugins may only target pets they spawned.");
+  if (!pet.window || pet.window.isDestroyed()) throw new Error(`Pet is not available: ${petHandleId}`);
+  return { key: `${pet.petId}:${pet.window.id}`, petId: pet.petId, window: pet.window };
+}
+
+export function resolveInstalledPetVoiceTarget(petId: string): { readonly key: string; readonly petId: string; readonly window: BrowserWindow } {
+  const state = getAppStateSnapshot();
+  const installed = state.pets.installed.find((pet) => pet.id === petId && !pet.broken);
+  if (!installed) throw new Error(`Pet is not available: ${petId}`);
+  if (state.preferences.defaultPetId === petId) {
+    const window = getDefaultPetWindowForPlugins();
+    if (!window || window.isDestroyed()) throw new Error("Show the default pet before speaking.");
+    return { key: `${petId}:${window.id}`, petId, window };
+  }
+  const spawned = [...spawnedPets.values()].find((pet) => pet.petId === petId && pet.window && !pet.window.isDestroyed());
+  if (!spawned?.window) throw new Error(`Show ${installed.displayName} before testing its voice.`);
+  return { key: `${petId}:${spawned.window.id}`, petId, window: spawned.window };
+}
+
+export function showInstalledPetHostBubble(petId: string, text: string): boolean {
+  const state = getAppStateSnapshot();
+  if (state.preferences.defaultPetId === petId) {
+    return applyExternalPetSay(text).shown;
+  }
+  const spawned = [...spawnedPets.values()].find((pet) => pet.petId === petId && pet.window && !pet.window.isDestroyed());
+  if (!spawned) return false;
+  spawned.arbiter.show("__openpets-voice-conversation", { text, priority: "high", durationMs: 12_000 }, {
+    onAction() {},
+    onSubmit() {},
+    onDismiss() {},
+  });
+  return true;
 }
 
 export function onPluginPetsChange(listener: (pets: PluginPetInfo[]) => void): () => void {

@@ -26,6 +26,7 @@
   "mode.break": "Pausa",
   "status.idle": "Focus Buddy pronto",
   "status.active": "{mode} · faltam {minutes} min",
+  "companion.focusMidSession.context": "Uma sessão de foco do Focus Buddy já está bem avançada.",
   "bubble.active": "{mode} · faltam {minutes} min",
   "bubble.paused": "{mode} pausado · faltam {minutes} min",
   "alert.focusComplete.title": "Hora da pausa?",

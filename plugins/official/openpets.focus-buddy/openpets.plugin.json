@@ -3,10 +3,10 @@
   "id": "openpets.focus-buddy",
   "name": "$t:plugin.name",
   "description": "$t:plugin.description",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "runtime": "javascript",
   "icon": "timer",
-  "sdkVersion": "3.0.0",
+  "sdkVersion": "3.3.0",
   "entry": "index.js",
   "assets": {
     "icons": {
@@ -21,7 +21,8 @@
     "storage",
     "commands",
     "status",
-    "audio"
+    "audio",
+    "companion:context"
   ],
   "configSchema": {
     "focusLength": {

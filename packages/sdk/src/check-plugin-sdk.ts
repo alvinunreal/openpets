@@ -64,6 +64,8 @@ const plugin: OpenPetsPluginDefinition = {
     } satisfies OpenPetsBubble);
     const delivery = await ctx.ui.delivery({ key: "sample.delivery", courier: ctx.assets.sprite("courier"), title: "Delivery", detail: "Sample", expiresAt: Date.now() + 60_000 });
     delivery.onDismiss(() => undefined);
+    await ctx.companion.contributeFact({ key: "sample.fact", text: "The user is testing a plugin.", expiresAt: Date.now() + 60_000 });
+    await ctx.companion.offerOpportunity({ key: "sample.opportunity", context: "A short test has been running for a while.", urgency: "low", earliestAt: Date.now() + 1_000, expiresAt: Date.now() + 60_000, dedupeKey: "sample.test", cooldownMs: 60_000 });
     await ctx.schedule.every("tick", 60_000, async () => {
       await ctx.storage.set("lastTick", "now");
     });
@@ -107,6 +109,8 @@ assert.equal(calls.bubbles[3]!.spec.hud?.items[0]?.tone, "amber");
 assert.equal(calls.bubbles[3]!.spec.hud?.items[0]?.label, "Food");
 assert.equal(calls.alerts.length, 1);
 assert.equal(calls.deliveries.length, 1);
+assert.equal(calls.companionContributions.length, 2);
+assert.equal(calls.companionContributions[1]?.kind, "opportunity");
 assert.ok(calls.deliveries[0]?.id.startsWith("delivery-"), "recorded deliveries expose deterministic ids");
 assert.equal(calls.alerts[0]!.acknowledged, true);
 assert.equal(calls.sounds[0]!.sound, "alert");

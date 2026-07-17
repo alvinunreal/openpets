@@ -1,0 +1,29 @@
+{
+  "openpets.higgsfield-watch": {
+    "publisher": "aniketshaw748-hub",
+    "sourceUrl": "https://github.com/aniketshaw748-hub/openpets",
+    "sourceSubdirectory": "plugins/community/openpets.higgsfield-watch",
+    "sourceCommit": "182ca166e8b040618f5c9bc20ca94358d6b9089c",
+    "reviewedTreeSha256": "bd13c6e8a2f2de3f0483b122746e038a8e3178ccf82467543a9d8e72048d7676",
+    "reviewedAt": "2026-07-13T05:36:54Z",
+    "updatePolicy": "manual-review"
+  },
+  "openpets.spotify-buddy": {
+    "publisher": "alvinunreal",
+    "sourceUrl": "https://github.com/alvinunreal/openpets",
+    "sourceSubdirectory": "plugins/community/openpets.spotify-buddy",
+    "sourceCommit": "146122db9d0cb53470a6f03a7e1d96118f679e65",
+    "reviewedTreeSha256": "72b2aa7ca32198ef70d99ce40c0a0de89b6f5689425d69f8f0f161cc89e94966",
+    "reviewedAt": "2026-07-11T09:22:49Z",
+    "updatePolicy": "manual-review"
+  },
+  "openpets.walkabout": {
+    "publisher": "alvinunreal",
+    "sourceUrl": "https://github.com/alvinunreal/openpets",
+    "sourceSubdirectory": "plugins/community/openpets.walkabout",
+    "sourceCommit": "c0136fc19ee4e822a446a8fb155f492c11b8aa22",
+    "reviewedTreeSha256": "9116e88e7750084c75093b5c8077ba5cd1c8debce8ca325ebb3109ccaa0ac84d",
+    "reviewedAt": "2026-06-21T20:33:20Z",
+    "updatePolicy": "manual-review"
+  }
+}

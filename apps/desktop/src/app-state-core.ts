@@ -20,6 +20,14 @@ export function normalizeOnboardingCompleted(value: OnboardingPreferenceLike): b
   return typeof value.onboardingCompleted === "boolean" ? value.onboardingCompleted : false;
 }
 
+/**
+ * Normalize the host-level speech-bubble narration preference.
+ * Narration is opt-in, so malformed or missing values always default to off.
+ */
+export function normalizeReadSpeechBubblesAloud(value: unknown, defaultValue = false): boolean {
+  return typeof value === "boolean" ? value : defaultValue;
+}
+
 export function markOnboardingCompleted<T extends { readonly preferences: Record<string, unknown> }>(state: T): T {
   return {
     ...state,

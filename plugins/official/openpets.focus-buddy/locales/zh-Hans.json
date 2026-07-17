@@ -26,6 +26,7 @@
   "mode.break": "休息",
   "status.idle": "Focus Buddy 已准备好",
   "status.active": "{mode} · 剩余 {minutes} 分钟",
+  "companion.focusMidSession.context": "Focus Buddy 专注会话已经进行了一段时间。",
   "bubble.active": "{mode} · 剩余 {minutes} 分钟",
   "bubble.paused": "{mode}已暂停 · 剩余 {minutes} 分钟",
   "alert.focusComplete.title": "休息一下？",

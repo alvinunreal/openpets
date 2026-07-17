@@ -127,4 +127,4 @@ const LOCALES = { en: JSON.parse(await readFile(new URL("./locales/en.json", imp
 }
 
 // Keep selectMessage covered without harness side effects.
-assert.equal(selectMessage({ t: (k) => k }, normalizeConfig({ greetingMode: "smart" }), Date.UTC(2026, 0, 1, 23)), "message.smart.night");
+assert.equal(selectMessage({ t: (k) => k }, normalizeConfig({ greetingMode: "smart" }), new Date(2026, 0, 1, 23).getTime()), "message.smart.night");
