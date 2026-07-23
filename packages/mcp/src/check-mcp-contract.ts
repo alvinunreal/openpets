@@ -34,6 +34,7 @@ await checkStdioServerContract();
 await checkT6TransportOnclose();
 await checkT7EnsureLeaseHeartbeatFirst();
 await checkT8ExitOnce();
+await checkT9CloseDuringStartupAcquire();
 const builtEntrypoint = readFileSync(join("dist", "index.js"), "utf8");
 if (!builtEntrypoint.startsWith("#!/usr/bin/env node")) {
   throw new Error("Built MCP entrypoint is missing a Node shebang.");
@@ -388,5 +389,74 @@ async function checkT8ExitOnce(): Promise<void> {
   }
   if (releaseIdx >= exitIdx) {
     throw new Error("T8: release did not precede exit. Order: " + releaseOrder.join(","));
+  }
+}
+
+/**
+ * T9 — Closing while startup acquisition is unresolved must wait for that
+ * acquisition, release its eventual lease, and only then exit. Cursor can
+ * replace an MCP process during startup; leaking that process's lease briefly
+ * displays a second pool pet until the lease TTL expires.
+ */
+async function checkT9CloseDuringStartupAcquire(): Promise<void> {
+  const order: string[] = [];
+  const startupLeaseId = "t9-startup-lease";
+  let finishStartup: (() => void) | undefined;
+  const leaseReady = new Promise<void>((resolve) => {
+    finishStartup = resolve;
+  });
+  const lease: LeaseContext = {};
+  const fakeTransport: { onclose?: (() => void) | undefined } = {};
+  const fakeClient = {
+    status: async () => ({ ok: true, appRunning: true }),
+    listPets: async () => ({ ok: true as const, pets: [], defaultPetId: "builtin" }),
+    installPet: async () => { throw new Error("unused"); },
+    installLocalPet: async () => { throw new Error("unused"); },
+    acquireLease: async () => { throw new Error("unused"); },
+    heartbeatLease: async (leaseId: string) => ({ leaseId, expiresAt: Date.now() + 15_000 }),
+    releaseLease: async (leaseId: string) => { order.push(`release:${leaseId}`); return { released: true }; },
+    react: async () => ({ ok: true }),
+    say: async () => ({ ok: true }),
+    showMedia: async () => ({ ok: true, shown: true }),
+    hello: async () => ({ ok: true }),
+  };
+  const fakeServer = { close: async () => { order.push("server.close"); } };
+
+  wireTransportLifecycle({
+    transport: fakeTransport,
+    server: fakeServer,
+    client: fakeClient,
+    lease,
+    leaseReady,
+    exit: () => { order.push("exit"); },
+  });
+
+  fakeTransport.onclose?.();
+  fakeTransport.onclose?.();
+  await Promise.resolve();
+  if (order.includes("exit")) {
+    throw new Error(`T9: process exited before startup acquisition settled. Order: ${order.join(",")}`);
+  }
+
+  lease.lease = {
+    leaseId: startupLeaseId,
+    requestedPetId: undefined,
+    targetKind: "explicit",
+    actualTargetPetId: "snoopy",
+    actualTargetPetName: "Snoopy",
+    usingDefaultPet: false,
+    expiresAt: Date.now() + 15_000,
+    leaseActive: true,
+  };
+  finishStartup?.();
+  await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+  const releaseIndex = order.indexOf(`release:${startupLeaseId}`);
+  const exitIndex = order.indexOf("exit");
+  if (releaseIndex === -1 || exitIndex === -1 || releaseIndex >= exitIndex) {
+    throw new Error(`T9: startup lease was not released before exit. Order: ${order.join(",")}`);
+  }
+  if (order.filter((event) => event === "exit").length !== 1) {
+    throw new Error(`T9: repeated close exited more than once. Order: ${order.join(",")}`);
   }
 }

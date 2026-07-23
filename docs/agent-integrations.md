@@ -101,10 +101,13 @@ are what the Control Center Integrations page and the CLI call.
 A standalone stdio MCP server (`open-pets-mcp`) for any MCP-capable agent. It
 registers exactly three tools — `openpets_status`, `openpets_react`,
 `openpets_say` — with Zod-validated input and read-only/idempotent annotations.
-On startup it acquires a lease, heartbeats every ~5s, and releases on
-SIGINT/SIGTERM. Errors are sanitized so IPC paths/tokens/sockets never leak into
-tool output. It is spawned by the CLI (`runMcp()`) which forwards stdio and
-signals. `--pet <id>` targets a specific pet.
+On startup it acquires a lease, heartbeats every ~5s, and releases on transport
+close or SIGINT/SIGTERM. Shutdown waits for any in-flight startup acquisition
+before releasing, so an agent that replaces an MCP process during startup
+cannot leave a temporary second pool pet behind. Errors are sanitized so IPC
+paths/tokens/sockets never leak into tool output. It is spawned by the CLI
+(`runMcp()`) which forwards stdio and signals. `--pet <id>` targets a specific
+pet.
 
 > **Window confinement requires an installed pet.** Passing `--pet <id>` only
 > activates window confinement when the requested pet is actually installed. If

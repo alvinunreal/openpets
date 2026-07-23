@@ -51,6 +51,7 @@ export function wireTransportLifecycle(opts: TransportLifecycleOptions): { close
   let retryDelayMs = 5_000;
   const MAX_RETRY_DELAY_MS = 60_000;
   let closing = false;
+  let closePromise: Promise<void> | null = null;
 
   function scheduleRetry(): void {
     if (retryTimer || closing) return;
@@ -93,7 +94,7 @@ export function wireTransportLifecycle(opts: TransportLifecycleOptions): { close
   }
 
   leaseReady.then(() => {
-    if (!lease.lease) return;
+    if (closing || !lease.lease) return;
     heartbeatTimer = setInterval(() => {
       if (closing || !lease.lease) return;
       void client.heartbeatLease(lease.lease.leaseId).catch((error: unknown) => {
@@ -109,19 +110,23 @@ export function wireTransportLifecycle(opts: TransportLifecycleOptions): { close
     heartbeatTimer.unref?.();
   }).catch(() => {});
 
-  const close = async (): Promise<void> => {
-    if (closing) return;
+  const close = (): Promise<void> => {
+    if (closePromise) return closePromise;
     closing = true;
-    if (heartbeatTimer) clearInterval(heartbeatTimer);
-    heartbeatTimer = null;
-    if (retryTimer) clearTimeout(retryTimer);
-    retryTimer = null;
-    const leaseId = lease.lease?.leaseId;
-    lease.lease = undefined;
-    if (leaseId) {
-      try { await client.releaseLease(leaseId); } catch { /* best effort */ }
-    }
-    try { await server.close(); } catch { /* ignore shutdown errors */ }
+    closePromise = (async () => {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+      if (retryTimer) clearTimeout(retryTimer);
+      retryTimer = null;
+      try { await leaseReady; } catch { /* startup already records its degraded state */ }
+      const leaseId = lease.lease?.leaseId;
+      lease.lease = undefined;
+      if (leaseId) {
+        try { await client.releaseLease(leaseId); } catch { /* best effort */ }
+      }
+      try { await server.close(); } catch { /* ignore shutdown errors */ }
+    })();
+    return closePromise;
   };
 
   // Fix 3: exit after teardown so the process doesn't linger as an orphan
