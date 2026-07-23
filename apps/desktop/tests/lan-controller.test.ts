@@ -39,6 +39,20 @@ try {
   assert.equal(betaRegister.body.currentHost, "alpha", "second register should not steal current ownership");
   assert.deepEqual(betaRegister.body.clients.map((client) => client.host), ["alpha", "beta"]);
 
+  const alphaPetRegister = await requestJson<LanState>("POST", "/register", { host: "alpha", petId: "cat", position: { x: 10, y: 20 } }, token);
+  const betaPetRegister = await requestJson<LanState>("POST", "/register", { host: "beta", petId: "cat", position: { x: 400, y: 20 } }, token);
+  assert.deepEqual(betaPetRegister.body.pets?.map((pet) => [pet.ownerHost, pet.petId, pet.currentHost]), [
+    ["alpha", "cat", "alpha"],
+    ["beta", "cat", "beta"],
+  ], "HTTP registration should preserve separate owners even when both choose the same pet ID");
+  const armBetaPet = await requestJson<LanState>("POST", "/position", { host: "beta", ownerHost: "beta", position: { x: 200, y: 20 }, edge: null }, token);
+  assert.equal(armBetaPet.status, 200);
+  const moveBetaPet = await requestJson<LanState>("POST", "/position", { host: "beta", ownerHost: "beta", position: { x: 5, y: 20 }, edge: "left" }, token);
+  assert.deepEqual(moveBetaPet.body.pets?.map((pet) => [pet.ownerHost, pet.currentHost]), [
+    ["alpha", "alpha"],
+    ["beta", "alpha"],
+  ], "HTTP position updates should allow two pets to meet on one host");
+
   now += 100;
   const moveAway = await requestJson<LanState>("POST", "/position", { host: "alpha", position: { x: 200, y: 20 }, edge: null }, token);
   assert.equal(moveAway.body.currentHost, "alpha", "moving away from the edge arms handoff without migrating");
@@ -56,6 +70,8 @@ try {
 
   const missingHostRegister = await requestJson("POST", "/register", {}, token);
   assert.equal(missingHostRegister.status, 400, "register should reject requests without a host");
+  const invalidPetRegister = await requestJson("POST", "/register", { host: "alpha", petId: "../cat" }, token);
+  assert.equal(invalidPetRegister.status, 400, "register should reject unsafe pet IDs instead of silently downgrading to legacy state");
 
   now += 11_000;
   const staleOwnerPrune = await requestJson<LanState>("POST", "/position", { host: "beta", position: { x: 420, y: 20 }, edge: null }, token);

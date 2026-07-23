@@ -4,11 +4,13 @@ import { hostname } from "node:os";
 import { URL } from "node:url";
 
 import { defaultPetWindowSize } from "./display.js";
+import { getAppStateSnapshot } from "./app-state.js";
 import { getDefaultPetLanPosition, hideDefaultPetForLan, showDefaultPetForLan } from "./default-pet-controller.js";
 import { resolveLanAuthConfig, type LanAuthSource } from "./lan-auth.js";
 import { defaultLanRetryOptions, getLanRetryDelayMs, shouldHideLanPetAfterMisses, shouldLogLanPollFailure } from "./lan-client-retry.js";
 import { createLanRequestHandler } from "./lan-http-controller.js";
 import { readPersistedLanState, writePersistedLanState } from "./lan-persistence.js";
+import { getLanVisitingPetPosition, syncLanVisitingPets } from "./lan-pet-controller.js";
 import { LanCoordinator, countLanTopologyLinks, normalizeLanHost, normalizeLanTopology, validateLanTopology, type LanEdge, type LanPoint, type LanState, type LanTopology, type LanTopologyIssue } from "./lan-state.js";
 import { info, warn, error as logError } from "./logger.js";
 
@@ -46,6 +48,8 @@ let serverStarted = false;
 let serverStarting = false;
 let missedPolls = 0;
 let lastPollWarningAt = 0;
+let multiPetEnabled = false;
+let lastLanState: LanState | null = null;
 
 export function startLanController(): void {
   const mode = normalizeMode(process.env.OPENPETS_LAN_MODE);
@@ -57,6 +61,7 @@ export function startLanController(): void {
   const auth = resolveLanAuthConfig(app.getPath("userData"), process.env, { serverMode: mode === "server" });
   const token = auth.token;
   const topology = parseLanTopology(process.env.OPENPETS_LAN_TOPOLOGY);
+  multiPetEnabled = process.env.OPENPETS_LAN_PETS === "multi";
   const topologyIssues = validateLanTopology(topology);
   coordinator = new LanCoordinator({ staleClientMs, topology });
   for (const issue of topologyIssues) warn("app", "lan topology issue", issue);
@@ -126,13 +131,20 @@ function startLanClient(serverUrl: string, localHost: string, token: string | nu
 async function registerLanClient(serverUrl: string, localHost: string, token: string | null): Promise<void> {
   try {
     const position = getDefaultPetLanPosition();
-    const state = await postJson<LanState>(`${serverUrl}/register`, { host: localHost, position }, token);
+    const state = await postJson<LanState>(`${serverUrl}/register`, {
+      host: localHost,
+      position,
+      ...(multiPetEnabled ? { petId: getAppStateSnapshot().preferences.defaultPetId } : {}),
+    }, token);
     missedPolls = 0;
     applyLanState(state, localHost);
   } catch (registerError) {
     missedPolls += 1;
     warn("app", "lan register failed", { error: registerError instanceof Error ? registerError.message : String(registerError), missedPolls });
-    if (shouldHideLanPetAfterMisses(missedPolls)) hideDefaultPetForLan();
+    if (shouldHideLanPetAfterMisses(missedPolls)) {
+      hideDefaultPetForLan();
+      if (multiPetEnabled) syncLanVisitingPets(localHost, []);
+    }
   }
 }
 
@@ -146,10 +158,30 @@ function scheduleLanPoll(serverUrl: string, localHost: string, token: string | n
   pollTimer.unref?.();
 }
 async function pollLanServer(serverUrl: string, localHost: string, token: string | null): Promise<void> {
-  const position = getDefaultPetLanPosition();
-  const edge = position ? detectEdge(position) : null;
   try {
-    const state = await postJson<LanState>(`${serverUrl}/position`, { host: localHost, position, edge }, token);
+    let state: LanState;
+    if (multiPetEnabled && lastLanState?.pets) {
+      state = await postJson<LanState>(`${serverUrl}/position`, {
+        host: localHost,
+        position: getDefaultPetLanPosition(),
+        edge: null,
+      }, token);
+      for (const pet of lastLanState.pets) {
+        if (pet.currentHost !== localHost) continue;
+        const position = pet.ownerHost === localHost ? getDefaultPetLanPosition() : getLanVisitingPetPosition(pet.ownerHost);
+        if (!position) continue;
+        state = await postJson<LanState>(`${serverUrl}/position`, {
+          host: localHost,
+          ownerHost: pet.ownerHost,
+          position,
+          edge: detectEdge(position),
+        }, token);
+      }
+    } else {
+      const position = getDefaultPetLanPosition();
+      const edge = position ? detectEdge(position) : null;
+      state = await postJson<LanState>(`${serverUrl}/position`, { host: localHost, position, edge }, token);
+    }
     missedPolls = 0;
     applyLanState(state, localHost);
   } catch (pollError) {
@@ -159,11 +191,22 @@ async function pollLanServer(serverUrl: string, localHost: string, token: string
       lastPollWarningAt = now;
       warn("app", "lan poll failed", { error: pollError instanceof Error ? pollError.message : String(pollError), missedPolls, nextPollMs: getLanRetryDelayMs(missedPolls) });
     }
-    if (shouldHideLanPetAfterMisses(missedPolls)) hideDefaultPetForLan();
+    if (shouldHideLanPetAfterMisses(missedPolls)) {
+      hideDefaultPetForLan();
+      if (multiPetEnabled) syncLanVisitingPets(localHost, []);
+    }
   }
 }
 
 function applyLanState(state: LanState, localHost: string): void {
+  lastLanState = state;
+  if (multiPetEnabled && state.pets) {
+    const localPet = state.pets.find((pet) => pet.ownerHost === localHost);
+    if (localPet?.currentHost === localHost) showDefaultPetForLan();
+    else hideDefaultPetForLan();
+    syncLanVisitingPets(localHost, state.pets);
+    return;
+  }
   if (state.currentHost === localHost) showDefaultPetForLan();
   else hideDefaultPetForLan();
 }

@@ -12,6 +12,7 @@ import { PetBubbleArbiter, type ActiveBubble, type PetBubbleSink } from "./plugi
 import { publishPluginPetEvent } from "./plugin-events-source.js";
 import { reclampAgentPetWindows } from "./agent-pet-controller.js";
 import { reclampPluginPetWindows } from "./plugin-pet-registry.js";
+import { reclampLanVisitingPetWindows } from "./lan-pet-controller.js";
 
 let defaultPetWindow: BrowserWindow | null = null;
 let paused = false;
@@ -497,6 +498,7 @@ function reclampDefaultPetWindow(reason: DisplayChangeReason, changedDisplay?: D
 function reclampAllLivePetWindows(reason: DisplayChangeReason, changedDisplay?: Display): void {
   reclampDefaultPetWindow(reason, changedDisplay);
   reclampAgentPetWindows();
+  reclampLanVisitingPetWindows();
   reclampPluginPetWindows();
 }
 

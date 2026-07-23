@@ -761,12 +761,14 @@ export async function loadExplicitPetContent(window: BrowserWindow, petId: strin
     applyPetWindowFocusPolicy(window, petPluginBubblesHaveInteractiveInput(pluginBubbles));
     const state = getAppStateSnapshot();
     const pet = state.pets.installed.find((candidate) => candidate.id === petId);
-    if (!pet || pet.broken || pet.id === builtInPet.id) {
+    if (!pet || pet.broken) {
       throw new Error(`Cannot render explicit pet: ${petId}`);
     }
     debug("pet.window", "explicit content render begin", { windowId: window.id, sequence, petId, displayName: pet.displayName, hasDisplay: Boolean(display), reaction: display?.reaction, hasMessage: Boolean(display?.message), badge });
     const scale = scaleOverride ?? state.preferences.petScale as PetScaleValue;
-    const render = await createInstalledPetRender(pet.id, pet.displayName, false, display, scale, badge, `explicit:${pet.id}`, dismissToken, pluginBubbles);
+    const render = pet.id === builtInPet.id
+      ? createBuiltInPetRender(false, display, badge, scale, `explicit:${pet.id}`, dismissToken, pluginBubbles)
+      : await createInstalledPetRender(pet.id, pet.displayName, false, display, scale, badge, `explicit:${pet.id}`, dismissToken, pluginBubbles);
     applyLinuxPetWindowShape(window, scale, Boolean(display?.message || display?.reactionMessage || display?.reaction || display?.mediaPath || badge || pluginBubbles?.transient || pluginBubbles?.pinned));
     if (tryUpdateLoadedPetContent(window, render, `explicit-${pet.id}`, sequence)) return;
     await loadPetHtmlFile(window, render.html, `explicit-${pet.id}`, sequence);
@@ -933,15 +935,19 @@ async function createDefaultPetRender(paused: boolean, display: PetTransientDisp
     return installedPetRender;
   }
 
+  const scale = getAppStateSnapshot().preferences.petScale as PetScaleValue;
+  return createBuiltInPetRender(paused, display, badge, scale, "default:builtin", dismissToken, pluginBubbles);
+}
+
+function createBuiltInPetRender(paused: boolean, display: PetTransientDisplay | null, badge: PetStatusBadgeReaction | null, scale: PetScaleValue, cachePrefix: string, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null): PetContentRender {
   const spriteUrl = pathToFileURL(join(app.getAppPath(), "assets", defaultPetSprite.fileName)).toString();
   const hasPinned = Boolean(pluginBubbles?.pinned);
   const bodyHtml = createPetBodyMarkup("OpenPets default pet", createBubbleMarkup(display, paused, badge, dismissToken, pluginBubbles), `<div class="sprite" role="img" aria-label="Claude animated default pet"></div>`, createPinnedBubbleMarkup(pluginBubbles), hasPinned);
   const reactionState = getReactionSpriteState(display?.reaction);
   const stateRows = defaultPetSprite.states;
-  const scale = getAppStateSnapshot().preferences.petScale as PetScaleValue;
 
   return {
-    cacheKey: `default:builtin:${paused}:${scale}:${getActiveLocale()}`,
+    cacheKey: `${cachePrefix}:${paused}:${scale}:${getActiveLocale()}`,
     bodyHtml,
     reactionState,
     html: `<!doctype html>

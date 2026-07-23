@@ -11,11 +11,33 @@ connected host. Each record keeps the pet's owner host, selected pet ID, current
 host, and latest position. This foundation allows two pets to occupy the same
 host while preserving the existing single-pet fields and behavior.
 
-Rendering two pets, meeting interactions, privacy-preserving MCP work signals,
-and Control Center setup are intentionally deferred to later phases of
+Meeting interactions, privacy-preserving MCP work signals, and Control Center
+setup are intentionally deferred to later phases of
 [issue #93](https://github.com/alvinunreal/openpets/issues/93). Multi-machine GUI
 validation is pending while the second test system is unavailable, so this work
 remains experimental.
+
+### Experimental visiting-pet rendering
+
+Set `OPENPETS_LAN_PETS=multi` on every participating host to exercise the next
+experimental phase. Each host registers its selected default pet. When that pet
+migrates away, its default window hides; the destination opens a dedicated
+visiting-pet window keyed by owner host. Owner identity—not pet package ID—is
+the window key, so two people may select the same pet without colliding.
+
+The destination must have the selected pet installed and healthy. The bundled
+built-in pet works without extra setup. Missing or broken catalog assets are
+skipped with a scoped diagnostic;
+the local pet and LAN polling continue normally. Visiting windows close when
+their pet leaves, their owner disconnects, or LAN polling exceeds its failure
+threshold. This phase contains no meeting dialogue, MCP relay, or social
+animation.
+
+This rendering phase has been exercised with two isolated Electron profiles on
+one computer. The test covered both handoff directions, two independently
+draggable built-in pets on one host, return cleanup, and stale-client pruning
+after one instance disconnected. Validation across two physical machines is
+still pending.
 
 ## Server PC
 

@@ -48,6 +48,15 @@ local-ipc.ts → parseIpcRequest() → handleRequest()
 
 **Pet Display Flow**:
 ```
+
+**LAN visiting-pet flow**: with `OPENPETS_LAN_PETS=multi`, each client
+registers its selected default pet through `lan-http-controller.ts`.
+`lan-controller.ts` reports positions for every pet currently hosted locally
+and reconciles coordinator snapshots through `lan-pet-controller.ts`.
+Visiting windows are keyed by owner host, use `lan-pet-presence.ts` for pure
+show/close and asset-availability decisions, and stay isolated from agent
+leases. The bundled pet can render explicitly for fresh-profile LAN testing;
+missing or broken catalog assets are skipped without stopping LAN polling.
 pet-window.ts
 ├── createDefaultPetWindow() / createAgentPetWindow()
 ├── loadDefaultPetContent() / loadExplicitPetContent()

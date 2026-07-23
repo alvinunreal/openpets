@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { URL } from "node:url";
 
-import { LanCoordinator, normalizeLanEdge, normalizeLanHost, normalizeLanPoint, type LanState } from "./lan-state.js";
+import { LanCoordinator, normalizeLanEdge, normalizeLanHost, normalizeLanPetId, normalizeLanPoint, type LanState } from "./lan-state.js";
 
 const maxLanRequestBodyBytes = 16 * 1024;
 
@@ -50,8 +50,13 @@ async function routeLanRequest(req: IncomingMessage, res: ServerResponse, lanCoo
       writeJson(res, 400, { error: "missing_host" });
       return;
     }
+    const petId = normalizeLanPetId(body.petId);
+    if (body.petId !== undefined && !petId) {
+      writeJson(res, 400, { error: "invalid_pet_id" });
+      return;
+    }
     const previousHost = lanCoordinator.currentHost();
-    const state = lanCoordinator.register(host, normalizeLanPoint(body.position), now());
+    const state = lanCoordinator.register(host, normalizeLanPoint(body.position), now(), petId ?? undefined);
     writeJson(res, 200, state);
     notifyStateChangeIfOwnerChanged(previousHost, state, options);
     return;
@@ -79,7 +84,8 @@ async function routeLanRequest(req: IncomingMessage, res: ServerResponse, lanCoo
       return;
     }
     const previousHost = lanCoordinator.currentHost();
-    const state = lanCoordinator.updatePosition(host, normalizeLanPoint(body.position), normalizeLanEdge(body.edge), now());
+    const ownerHost = normalizeLanHost(body.ownerHost) ?? undefined;
+    const state = lanCoordinator.updatePosition(host, normalizeLanPoint(body.position), normalizeLanEdge(body.edge), now(), ownerHost);
     writeJson(res, 200, state);
     notifyStateChangeIfOwnerChanged(previousHost, state, options);
     return;
