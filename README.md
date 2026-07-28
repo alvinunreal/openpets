@@ -264,13 +264,15 @@ docs/                     Technical specifications and architecture documentatio
 ## Documentation
 
 Explore detailed architectural and platform documentation inside the `docs/` folder:
-- [`docs/plugins.md`](docs/plugins.md) - Plugin platform SDK v3 manifest, permissions, and testing kit.
-- [`docs/claude-integration.md`](docs/claude-integration.md) - Integrating with Claude Code (memory, hooks, MCP).
-- [`docs/opencode.md`](docs/opencode.md) - Integrating with OpenCode workspaces.
-- [`docs/wsl-ipc.md`](docs/wsl-ipc.md) - Setting up the WSL-to-Windows TCP bridge.
-- [`docs/testing.md`](docs/testing.md) - Workspace test and conformance strategy.
+- [`docs/architecture.md`](docs/architecture.md) - The one-page mental model: runtime topology, package spine, end-to-end flows.
+- [`docs/desktop.md`](docs/desktop.md) - The Electron app: process model, tray-first UX, Control Center, security model.
+- [`docs/agent-integrations.md`](docs/agent-integrations.md) - How Claude Code, MCP, OpenCode, Cursor, and Pi are configured.
+- [`docs/plugins.md`](docs/plugins.md) - Plugin platform SDK v3 manifest, permissions, and sandboxed runtime.
+- [`docs/sdk.md`](docs/sdk.md) - Public SDK v3 contract for plugin authors: capability namespaces, permission surface, test harness.
+- [`docs/catalog.md`](docs/catalog.md) - Pet and plugin catalog contracts: v3/v2, pagination, install artifacts.
+- [`docs/development.md`](docs/development.md) - Developer experience: monorepo layout, command surface, dev modes.
+- [`docs/testing-and-validation.md`](docs/testing-and-validation.md) - Quality gates: behavior tests, runtime checks, release validators.
 - [`docs/release.md`](docs/release.md) - Application packaging and release processes.
-- [`docs/workflow.md`](docs/workflow.md) - Core development and contributions workflow.
 
 ---
 
