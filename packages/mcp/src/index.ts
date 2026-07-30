@@ -27,6 +27,9 @@ export interface TransportLifecycleOptions {
   readonly lease: LeaseContext;
   readonly leaseReady: Promise<void>;
   readonly requestedPetId?: string;
+  /** Test/runtime timing overrides; production defaults remain five seconds. */
+  readonly heartbeatIntervalMs?: number;
+  readonly retryDelayMs?: number;
   /**
    * Called after teardown when the transport closes. Defaults to `() => process.exit(0)`.
    * Override in tests to prevent the process from actually exiting.
@@ -48,10 +51,13 @@ export function wireTransportLifecycle(opts: TransportLifecycleOptions): { close
 
   let heartbeatTimer: NodeJS.Timeout | null = null;
   let retryTimer: NodeJS.Timeout | null = null;
-  let retryDelayMs = 5_000;
+  const heartbeatIntervalMs = opts.heartbeatIntervalMs ?? 5_000;
+  const initialRetryDelayMs = opts.retryDelayMs ?? 5_000;
+  let retryDelayMs = initialRetryDelayMs;
   const MAX_RETRY_DELAY_MS = 60_000;
   let closing = false;
   let closePromise: Promise<void> | null = null;
+  let recoveryPromise: Promise<void> | null = null;
 
   function scheduleRetry(): void {
     if (retryTimer || closing) return;
@@ -59,7 +65,7 @@ export function wireTransportLifecycle(opts: TransportLifecycleOptions): { close
       retryTimer = null;
       if (closing || lease.lease) return;
       // Fix 2: attempt heartbeat-first recovery when a stale lease is saved
-      void (async () => {
+      recoveryPromise = (async () => {
         const staleLeaseId = lease.staleLeaseId;
         const staleLease = lease.staleLease;
         if (staleLeaseId && staleLease) {
@@ -70,7 +76,7 @@ export function wireTransportLifecycle(opts: TransportLifecycleOptions): { close
             lease.staleLeaseId = undefined;
             lease.staleLease = undefined;
             lease.degradedReason = undefined;
-            retryDelayMs = 5_000;
+            retryDelayMs = initialRetryDelayMs;
             return;
           } catch {
             // Heartbeat failed — fall through to acquireLease
@@ -82,13 +88,15 @@ export function wireTransportLifecycle(opts: TransportLifecycleOptions): { close
           lease.staleLeaseId = undefined;
           lease.staleLease = undefined;
           lease.degradedReason = undefined;
-          retryDelayMs = 5_000;
+          retryDelayMs = initialRetryDelayMs;
         } catch (error: unknown) {
           lease.degradedReason = sanitizeMcpRuntimeError(error);
           retryDelayMs = Math.min(retryDelayMs * 2, MAX_RETRY_DELAY_MS);
           scheduleRetry();
         }
-      })();
+      })().finally(() => {
+        recoveryPromise = null;
+      });
     }, retryDelayMs);
     retryTimer.unref?.();
   }
@@ -103,10 +111,10 @@ export function wireTransportLifecycle(opts: TransportLifecycleOptions): { close
         lease.staleLeaseId = lease.lease?.leaseId;
         lease.degradedReason = sanitizeMcpRuntimeError(error);
         lease.lease = undefined;
-        retryDelayMs = 5_000;
+        retryDelayMs = initialRetryDelayMs;
         scheduleRetry();
       });
-    }, 5_000);
+    }, heartbeatIntervalMs);
     heartbeatTimer.unref?.();
   }).catch(() => {});
 
@@ -119,6 +127,7 @@ export function wireTransportLifecycle(opts: TransportLifecycleOptions): { close
       if (retryTimer) clearTimeout(retryTimer);
       retryTimer = null;
       try { await leaseReady; } catch { /* startup already records its degraded state */ }
+      if (recoveryPromise) await recoveryPromise;
       const leaseId = lease.lease?.leaseId;
       lease.lease = undefined;
       if (leaseId) {

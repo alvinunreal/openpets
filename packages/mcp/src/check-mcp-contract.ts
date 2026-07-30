@@ -7,7 +7,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 
 import { parseMcpArgs } from "./args.js";
-import { wireTransportLifecycle } from "./index.js";
+import { wireTransportLifecycle, type OpenPetsLeaseResult } from "./index.js";
 import { createOpenPetsMcpServer } from "./server.js";
 import { createMcpStatus, sanitizeUnavailableReason, type LeaseContext, type OpenPetsMcpStatus } from "./tools.js";
 
@@ -35,6 +35,7 @@ await checkT6TransportOnclose();
 await checkT7EnsureLeaseHeartbeatFirst();
 await checkT8ExitOnce();
 await checkT9CloseDuringStartupAcquire();
+await checkT10CloseDuringRecoveryAcquire();
 const builtEntrypoint = readFileSync(join("dist", "index.js"), "utf8");
 if (!builtEntrypoint.startsWith("#!/usr/bin/env node")) {
   throw new Error("Built MCP entrypoint is missing a Node shebang.");
@@ -458,5 +459,86 @@ async function checkT9CloseDuringStartupAcquire(): Promise<void> {
   }
   if (order.filter((event) => event === "exit").length !== 1) {
     throw new Error(`T9: repeated close exited more than once. Order: ${order.join(",")}`);
+  }
+}
+
+/**
+ * T10 — If shutdown begins while retry recovery is acquiring a replacement
+ * lease, teardown must join that recovery and release its eventual result.
+ */
+async function checkT10CloseDuringRecoveryAcquire(): Promise<void> {
+  const order: string[] = [];
+  const recoveredLeaseId = "t10-recovered-lease";
+  let finishAcquire: ((lease: OpenPetsLeaseResult) => void) | undefined;
+  const acquireResult = new Promise<OpenPetsLeaseResult>((resolve) => {
+    finishAcquire = resolve;
+  });
+  const lease: LeaseContext = {
+    lease: {
+      leaseId: "t10-stale-lease",
+      requestedPetId: undefined,
+      targetKind: "explicit",
+      actualTargetPetId: "snoopy",
+      actualTargetPetName: "Snoopy",
+      usingDefaultPet: false,
+      expiresAt: Date.now() + 15_000,
+      leaseActive: true,
+    },
+  };
+  const fakeTransport: { onclose?: (() => void) | undefined } = {};
+  const fakeClient = {
+    status: async () => ({ ok: true, appRunning: true }),
+    listPets: async () => ({ ok: true as const, pets: [], defaultPetId: "builtin" }),
+    installPet: async () => { throw new Error("unused"); },
+    installLocalPet: async () => { throw new Error("unused"); },
+    acquireLease: async () => { order.push("acquire:start"); return acquireResult; },
+    heartbeatLease: async () => { throw new Error("simulated heartbeat failure"); },
+    releaseLease: async (leaseId: string) => { order.push(`release:${leaseId}`); return { released: true }; },
+    react: async () => ({ ok: true }),
+    say: async () => ({ ok: true }),
+    showMedia: async () => ({ ok: true, shown: true }),
+    hello: async () => ({ ok: true }),
+  };
+
+  wireTransportLifecycle({
+    transport: fakeTransport,
+    server: { close: async () => { order.push("server.close"); } },
+    client: fakeClient,
+    lease,
+    leaseReady: Promise.resolve(),
+    heartbeatIntervalMs: 1,
+    retryDelayMs: 1,
+    exit: () => { order.push("exit"); },
+  });
+
+  for (let attempts = 0; attempts < 20 && !order.includes("acquire:start"); attempts += 1) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 2));
+  }
+  if (!order.includes("acquire:start")) {
+    throw new Error(`T10: recovery acquisition did not start. Order: ${order.join(",")}`);
+  }
+
+  fakeTransport.onclose?.();
+  await Promise.resolve();
+  if (order.includes("exit")) {
+    throw new Error(`T10: process exited while recovery acquisition was unresolved. Order: ${order.join(",")}`);
+  }
+
+  finishAcquire?.({
+    leaseId: recoveredLeaseId,
+    requestedPetId: undefined,
+    targetKind: "explicit",
+    actualTargetPetId: "snoopy",
+    actualTargetPetName: "Snoopy",
+    usingDefaultPet: false,
+    expiresAt: Date.now() + 15_000,
+    leaseActive: true,
+  });
+  await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+  const releaseIndex = order.indexOf(`release:${recoveredLeaseId}`);
+  const exitIndex = order.indexOf("exit");
+  if (releaseIndex === -1 || exitIndex === -1 || releaseIndex >= exitIndex) {
+    throw new Error(`T10: recovered lease was not released before exit. Order: ${order.join(",")}`);
   }
 }

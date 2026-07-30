@@ -14,7 +14,7 @@ Source implementation for the OpenPets MCP stdio server, including argument pars
 ## Data & Control Flow
 
 1. `index.ts` parses `--pet`, `--help`, and `--version`, creates a client-backed tool context, and starts the stdio transport.
-2. Startup lease acquisition runs asynchronously; heartbeat keeps the configured pet route alive while the MCP server is connected. Shutdown joins any in-flight startup acquisition before releasing its result, preventing replaced MCP processes from leaking temporary pool pets.
+2. Startup lease acquisition runs asynchronously; heartbeat keeps the configured pet route alive while the MCP server is connected. Shutdown joins in-flight startup and retry-recovery acquisitions before releasing their result, preventing replaced MCP processes from leaking temporary pool pets.
 3. `server.ts` registers `openpets_status`, `openpets_react`, and `openpets_say` against handlers in `tools.ts`.
 4. Handlers validate input, wait for lease readiness, acquire/reacquire a lease if needed, call `@open-pets/client`, and return text plus structured content.
 
