@@ -10,6 +10,10 @@ The coordinator state can also represent one independently traveling pet per
 connected host. Each record keeps the pet's owner host, selected pet ID, current
 host, and latest position. This foundation allows two pets to occupy the same
 host while preserving the existing single-pet fields and behavior.
+Pet IDs are normalized at registration, and clearing a host's selection removes
+its coordinator record. Every edge-crossing attempt consumes its arm; returning
+a pet to its owner after host loss also requires a fresh move away from the edge
+before another handoff.
 
 Rendering two pets, meeting interactions, privacy-preserving MCP work signals,
 and Control Center setup are intentionally deferred to later phases of
