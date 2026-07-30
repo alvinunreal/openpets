@@ -121,6 +121,10 @@ and the runbooks under `web/docs/`.
   mounted macOS checkout (platform-specific `node_modules`).
 - Use the VM to validate Linux/Wayland renderer, tray, pet-window drag, IPC,
   plugin, and packaging behavior.
+- Linux defaults to a one-time early browser-process relaunch with
+  `--ozone-platform=x11`; seeing two short-lived startup PIDs is expected. Set
+  `OPENPETS_ALLOW_WAYLAND=1` only when intentionally testing the documented
+  native-Wayland limitations.
 - **WSL** cross-platform IPC (WSL client → Windows host over private TCP) is part
   of the protocol — see [ipc.md](ipc.md).
 

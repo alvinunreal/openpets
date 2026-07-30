@@ -63,6 +63,12 @@ plugin-sdk-bridge.ts → plugin-sdk-routes.ts → plugin-pet-registry.ts
 └── pet-motion-engine.ts tick() calculates interpolated target vectors for spawned/default pets
 ```
 
+**Linux Ozone bootstrap**: before acquiring the single-instance lock,
+`main.ts` uses the pure planner in `linux-ozone-startup.ts` to relaunch once
+with `--ozone-platform=x11` in the browser process argv. The relaunched process
+then registers the same switch for GPU/renderer children. The
+`OPENPETS_ALLOW_WAYLAND=1` escape hatch bypasses this relaunch.
+
 **Agent Setup Flow**:
 ```
 windows.ts (IPC handlers)

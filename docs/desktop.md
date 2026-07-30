@@ -43,14 +43,20 @@ Key files: `main.ts` (entry/bootstrap), `lifecycle.ts` (app events + cleanup),
 
 ## Linux display backend (Ozone/Wayland)
 
-On Linux, `main.ts` appends `--ozone-platform=x11` **before** `app` is ready, so
-the app always runs under x11/XWayland. This is required because OpenPets pets
-depend on programmatic top-level window positioning (`setPosition`/`setBounds`)
-and z-order control (`setAlwaysOnTop`); native Wayland forbids clients from
-positioning or restacking their own toplevels, which silently breaks motion,
-gravity, walkabout, drag, and always-on-top stacking. The forcing is
-unconditional (it overrides even an explicit `--ozone-platform=wayland`) so a
-mistaken launch flag cannot disable pet movement.
+On Linux, `main.ts` ensures the browser process itself starts with
+`--ozone-platform=x11`. If the initial process lacks that argument,
+`linux-ozone-startup.ts` performs one early relaunch with conflicting Ozone
+arguments replaced; the relaunched process also registers the switch through
+`app.commandLine` for child processes and diagnostics. This avoids mixing a
+Wayland browser process with X11 GPU/renderers, which can leave every OpenPets
+window invisible.
+
+OpenPets requires x11/XWayland because pets depend on programmatic top-level
+window positioning (`setPosition`/`setBounds`) and z-order control
+(`setAlwaysOnTop`); native Wayland forbids clients from positioning or
+restacking their own toplevels, which silently breaks motion, gravity,
+walkabout, drag, and always-on-top stacking. The forcing overrides even an
+explicit `--ozone-platform=wayland` unless the escape hatch is enabled.
 
 The escape hatch is the environment variable `OPENPETS_ALLOW_WAYLAND=1`: when
 set, the app honors the system default backend (or an explicit
@@ -64,8 +70,9 @@ decision (platform + `--ozone-platform` + `XDG_SESSION_TYPE`/`WAYLAND_DISPLAY`)
 is factored into `computeEffectiveWaylandBackend()` in `wayland-backend.ts`;
 `pet-window.ts` delegates to it and owns only the cache.
 
-The x11-forcing branch and the `OPENPETS_ALLOW_WAYLAND` opt-out are asserted by
-`check-packaging-contract.ts`, so this behavior cannot silently regress.
+The browser-process relaunch, x11 child-process switch, and
+`OPENPETS_ALLOW_WAYLAND` opt-out are protected by behavior and packaging
+contract tests so this behavior cannot silently regress.
 
 On Windows, the shell silently strips `HWND_TOPMOST` from other windows when an
 app enters fullscreen (browser video, games) and never restores it — and no
