@@ -133,6 +133,11 @@ export class LanCoordinator {
     return this.#currentHost;
   }
 
+  hasClient(host: string, now: number): boolean {
+    this.prune(now);
+    return this.#clients.has(host);
+  }
+
   publishActivity(ownerHost: string, now: number): LanState | null {
     const pet = this.#pets.get(ownerHost);
     const meetingSize = pet

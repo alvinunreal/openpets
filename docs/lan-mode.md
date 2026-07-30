@@ -52,6 +52,13 @@ Actual MCP messages, prompts, speech, media, tool names, and explicit-lease pet
 activity never cross the LAN boundary. Message-bearing activity requests are
 rejected by the coordinator.
 
+The shared LAN token grants access to the coordinator but does not establish a
+host identity. Registration therefore issues a random per-host session
+credential. Position, claim, activity, and return mutations must present the
+session belonging to the host they act for. An active identity cannot be
+replaced by another shared-token peer; after its client becomes stale, a
+restarted client can register again and receives a rotated session.
+
 The meeting host consumes each fresh work sequence once. The visiting pet says
 the built-in line “Oh, I've got to get back to work!”, plays its configured
 `running` animation as a dash, and then returns to its owner. No signal is sent

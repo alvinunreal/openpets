@@ -84,6 +84,9 @@ Experimental multi-pet LAN mode converts only default-target `working`,
 `work` activity when the owner's pet is away and meeting another pet. The LAN
 request contains no MCP text or arbitrary message field; `pet.say`,
 `pet.showMedia`, non-work reactions, and explicit lease targets remain local.
+The LAN coordinator binds these mutations to a per-host session credential
+issued during registration; possession of the shared LAN token alone cannot
+publish activity or return a pet for another active host.
 
 `pet.showMedia` renders a local image file as a transient media bubble on the
 pet — for example an image a local generation tool just produced. Params:
