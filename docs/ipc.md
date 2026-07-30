@@ -79,6 +79,12 @@ Client method names (`hello()`, `status()`, `listPets()`, `installPet()`,
 absolute path and an explicit `zip`/`folder` kind. `react()`/`say()`/
 `showMedia()` accept an optional `leaseId` to target a specific pet.
 
+Experimental multi-pet LAN mode converts only default-target `working`,
+`editing`, `running`, and `testing` reactions into a coarse authenticated
+`work` activity when the owner's pet is away and meeting another pet. The LAN
+request contains no MCP text or arbitrary message field; `pet.say`,
+`pet.showMedia`, non-work reactions, and explicit lease targets remain local.
+
 `pet.showMedia` renders a local image file as a transient media bubble on the
 pet — for example an image a local generation tool just produced. Params:
 `path` (required absolute path, extension must be `.png`/`.jpg`/`.jpeg`/

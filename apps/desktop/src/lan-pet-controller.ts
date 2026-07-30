@@ -5,7 +5,8 @@ import { clampToVisibleWorkArea, defaultPetWindowSize, getDefaultPetInitialPosit
 import { debug, info, warn } from "./logger.js";
 import { planLanPetPresence, resolveRenderableLanPetId } from "./lan-pet-presence.js";
 import type { LanPetRecord, LanPoint } from "./lan-state.js";
-import { createAgentPetWindow, readWindowPosition } from "./pet-window.js";
+import { createAgentPetWindow, getTransientDisplayDurationMs, loadExplicitPetContent, readWindowPosition } from "./pet-window.js";
+import type { OpenPetsReaction } from "./local-ipc-protocol.js";
 import { registerRoamingPet, unregisterRoamingPet } from "./pet-roaming-controller.js";
 
 type VisitingPetWindow = {
@@ -19,6 +20,7 @@ type VisitingPetWindow = {
 const visitingPetWindows = new Map<string, VisitingPetWindow>();
 const dismissedOwnerHosts = new Set<string>();
 const unavailablePetWarnings = new Set<string>();
+const displayClearTimers = new Map<string, NodeJS.Timeout>();
 
 export function syncLanVisitingPets(localHost: string, pets: readonly LanPetRecord[]): void {
   const plan = planLanPetPresence(localHost, pets, [...visitingPetWindows.keys()]);
@@ -45,6 +47,23 @@ export function closeAllLanVisitingPets(): void {
   for (const ownerHost of [...visitingPetWindows.keys()]) closeLanVisitingPet(ownerHost);
   dismissedOwnerHosts.clear();
   unavailablePetWarnings.clear();
+}
+
+export function applyLanVisitingPetSay(ownerHost: string, message: string, reaction: OpenPetsReaction, sequence: number): boolean {
+  const entry = visitingPetWindows.get(ownerHost);
+  if (!entry || entry.window.isDestroyed()) return false;
+  const existingTimer = displayClearTimers.get(ownerHost);
+  if (existingTimer) clearTimeout(existingTimer);
+  const display = { message, reaction, suppressReactionMessage: true, dismissToken: `lan-work:${ownerHost}:${sequence}` };
+  void loadExplicitPetContent(entry.window, entry.renderedPetId, display, null, display.dismissToken, getAppStateSnapshot().preferences.petScale as PetScaleValue);
+  const timer = setTimeout(() => {
+    displayClearTimers.delete(ownerHost);
+    const current = visitingPetWindows.get(ownerHost);
+    if (current && !current.window.isDestroyed()) void loadExplicitPetContent(current.window, current.renderedPetId);
+  }, getTransientDisplayDurationMs(display));
+  timer.unref?.();
+  displayClearTimers.set(ownerHost, timer);
+  return true;
 }
 
 export function reclampLanVisitingPetWindows(): void {
@@ -119,6 +138,9 @@ function showLanVisitingPet(pet: LanPetRecord): void {
 }
 
 function closeLanVisitingPet(ownerHost: string): void {
+  const displayTimer = displayClearTimers.get(ownerHost);
+  if (displayTimer) clearTimeout(displayTimer);
+  displayClearTimers.delete(ownerHost);
   const entry = visitingPetWindows.get(ownerHost);
   if (!entry) return;
   visitingPetWindows.delete(ownerHost);

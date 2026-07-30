@@ -83,6 +83,18 @@ assert.deepEqual(multiPetState.pets?.map((pet) => [pet.ownerHost, pet.currentHos
   ["alpha", "beta"],
   ["beta", "beta"],
 ], "one LAN pet should migrate onto a host that already has another pet");
+multiPetState = multiPetCoordinator.publishActivity("alpha", 7_400) ?? assert.fail("a visiting pet in a meeting should accept coarse work activity");
+assert.deepEqual(multiPetState.pets?.find((pet) => pet.ownerHost === "alpha")?.activity, { kind: "work", sequence: 7_400, createdAt: 7_400 }, "activity should contain only coarse kind, ordering, and coordinator time");
+multiPetState = multiPetCoordinator.returnPet("beta", "alpha", 7_500) ?? assert.fail("the current host should be able to return a visiting pet");
+assert.equal(multiPetState.pets?.find((pet) => pet.ownerHost === "alpha")?.currentHost, "alpha", "work return should send the visitor back to its owner");
+assert.equal(multiPetState.pets?.find((pet) => pet.ownerHost === "alpha")?.activity, undefined, "return should consume the coarse activity");
+assert.equal(multiPetCoordinator.returnPet("beta", "alpha", 7_600), null, "a host that no longer holds the pet cannot return it again");
+assert.equal(multiPetCoordinator.publishActivity("missing", 7_700), null, "unknown owners cannot publish activity");
+assert.equal(multiPetCoordinator.publishActivity("alpha", 7_800), null, "a pet at home must not publish LAN work activity");
+multiPetCoordinator.updatePosition("alpha", { x: 50, y: 20 }, null, 7_900, "alpha");
+multiPetState = multiPetCoordinator.updatePosition("alpha", { x: 0, y: 20 }, "left", 8_000, "alpha");
+multiPetState = multiPetCoordinator.publishActivity("alpha", 8_100) ?? assert.fail("a pet should publish again during a later meeting");
+assert.equal(multiPetState.pets?.find((pet) => pet.ownerHost === "alpha")?.activity?.sequence, 8_100, "later visits must use a sequence newer than the consumed activity");
 
 // Registration is the coordinator trust boundary: unsafe IDs must never enter
 // snapshots, and a host that no longer selects a pet must remove its old record.

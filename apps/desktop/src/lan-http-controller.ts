@@ -91,6 +91,35 @@ async function routeLanRequest(req: IncomingMessage, res: ServerResponse, lanCoo
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/activity") {
+    const body = await readBody(req);
+    const ownerHost = normalizeLanHost(body.ownerHost);
+    if (!ownerHost || body.kind !== "work" || Object.keys(body).some((key) => key !== "ownerHost" && key !== "kind")) {
+      writeJson(res, 400, { error: "invalid_activity" });
+      return;
+    }
+    const state = lanCoordinator.publishActivity(ownerHost, now());
+    if (!state) {
+      writeJson(res, 400, { error: "unknown_pet" });
+      return;
+    }
+    writeJson(res, 200, state);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/return") {
+    const body = await readBody(req);
+    const host = normalizeLanHost(body.host);
+    const ownerHost = normalizeLanHost(body.ownerHost);
+    const state = host && ownerHost ? lanCoordinator.returnPet(host, ownerHost, now()) : null;
+    if (!state) {
+      writeJson(res, 400, { error: "invalid_return" });
+      return;
+    }
+    writeJson(res, 200, state);
+    return;
+  }
+
   writeJson(res, 404, { error: "not_found" });
 }
 

@@ -21,6 +21,7 @@ import { findTerminalWindowForPid, subscribeWindowTracking, type TerminalWindowI
 import { warnPetFallback } from "./pet-fallback-notify.js";
 import { getEligiblePoolPetIds, resolvePoolAssignment } from "./pet-pool.js";
 import { t } from "./i18n/index.js";
+import { broadcastLanPetActivity } from "./lan-controller.js";
 
 let ipcServer: net.Server | null = null;
 let ipcDiscovery: OpenPetsDiscoveryFile | null = null;
@@ -431,6 +432,7 @@ async function handleRequest(request: OpenPetsIpcRequest): Promise<unknown> {
       return { ok: true, reaction, shown: applied.shown, reason: applied.reason, leaseId: lease.leaseId };
     }
     const applied = applyExternalPetReaction(reaction);
+    broadcastLanPetActivity(reaction);
     safeRecordOpenPetsActivity({ kind: "react", reaction, petId, surface: "default" });
     trackDesktopIntegrationActivity("react", { integration_type: "ipc", target_kind: lease?.targetKind ?? "default", shown: applied.shown, reason: applied.reason });
     return { ok: true, reaction, shown: applied.shown, reason: applied.reason };

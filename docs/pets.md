@@ -54,6 +54,9 @@ Experimental multi-pet LAN mode adds a third, isolated controller for visiting
 pets. Windows are keyed by LAN owner host rather than pet ID, so they do not
 collide with lease-managed agent pets or with another visitor using the same
 pet package. Unavailable remote assets are logged and skipped safely.
+Fresh coarse work activity can temporarily render a built-in return-to-work
+line with the visitor's `running` animation; after the dash delay, coordinator
+state returns that visitor to its owner.
 
 While a pet is click-through it only learns that the cursor is over it through
 *forwarded* mouse events (`setIgnoreMouseEvents(true, { forward: true })`), which

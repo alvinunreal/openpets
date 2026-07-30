@@ -52,6 +52,18 @@ try {
     ["alpha", "alpha"],
     ["beta", "alpha"],
   ], "HTTP position updates should allow two pets to meet on one host");
+  const workActivity = await requestJson<LanState>("POST", "/activity", { ownerHost: "beta", kind: "work" }, token);
+  assert.equal(workActivity.status, 200);
+  assert.deepEqual(workActivity.body.pets?.find((pet) => pet.ownerHost === "beta")?.activity, { kind: "work", sequence: now, createdAt: now }, "HTTP activity should expose only the coarse authenticated work signal");
+  const messageBearingActivity = await requestJson("POST", "/activity", { ownerHost: "beta", kind: "work", message: "private MCP text" }, token);
+  assert.equal(messageBearingActivity.status, 400, "LAN activity must reject message-bearing payloads");
+  const returnBetaPet = await requestJson<LanState>("POST", "/return", { host: "alpha", ownerHost: "beta" }, token);
+  assert.equal(returnBetaPet.status, 200);
+  assert.equal(returnBetaPet.body.pets?.find((pet) => pet.ownerHost === "beta")?.currentHost, "beta", "the meeting host should be able to return a visitor after its dash animation");
+  const repeatedReturn = await requestJson("POST", "/return", { host: "alpha", ownerHost: "beta" }, token);
+  assert.equal(repeatedReturn.status, 400, "a host must not return a pet it no longer holds");
+  const activityAtHome = await requestJson("POST", "/activity", { ownerHost: "beta", kind: "work" }, token);
+  assert.equal(activityAtHome.status, 400, "the coordinator must reject activity when the pet is not visiting a meeting");
 
   now += 100;
   const moveAway = await requestJson<LanState>("POST", "/position", { host: "alpha", position: { x: 200, y: 20 }, edge: null }, token);

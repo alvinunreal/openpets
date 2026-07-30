@@ -43,6 +43,24 @@ draggable built-in pets on one host, return cleanup, and stale-client pruning
 after one instance disconnected. Validation across two physical machines is
 still pending.
 
+### Experimental privacy-preserving work returns
+
+Phase 3 adds an intentionally narrow MCP-to-LAN signal. When a host's default
+pet is visiting another pet and receives a `working`, `editing`, `running`, or
+`testing` reaction, its client may publish only `{ ownerHost, kind: "work" }`.
+Actual MCP messages, prompts, speech, media, tool names, and explicit-lease pet
+activity never cross the LAN boundary. Message-bearing activity requests are
+rejected by the coordinator.
+
+The meeting host consumes each fresh work sequence once. The visiting pet says
+the built-in line “Oh, I've got to get back to work!”, plays its configured
+`running` animation as a dash, and then returns to its owner. No signal is sent
+when the pet is already home, is not meeting another pet, or receives a
+non-work reaction. The coordinator independently enforces the active-meeting
+condition. Stale signals are consumed without replaying dialogue, activity
+ordering remains monotonic across later visits, and a transient return failure
+is retried without repeating the dialogue.
+
 ## Server PC
 
 PowerShell:

@@ -57,6 +57,10 @@ Visiting windows are keyed by owner host, use `lan-pet-presence.ts` for pure
 show/close and asset-availability decisions, and stay isolated from agent
 leases. The bundled pet can render explicitly for fresh-profile LAN testing;
 missing or broken catalog assets are skipped without stopping LAN polling.
+`lan-pet-activity.ts` gates coarse work signals to active meetings and plans
+single-use visitor departures. `lan-pet-controller.ts` renders the built-in
+return line plus `running` animation before `lan-controller.ts` requests the
+coordinator return the visitor to its owner.
 pet-window.ts
 ├── createDefaultPetWindow() / createAgentPetWindow()
 ├── loadDefaultPetContent() / loadExplicitPetContent()
