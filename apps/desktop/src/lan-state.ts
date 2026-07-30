@@ -67,15 +67,19 @@ export class LanCoordinator {
   }
 
   register(host: string, position: LanPoint | undefined, now: number, petId?: string): LanState {
-    this.#clients.set(host, { host, lastSeen: now, position, petId });
-    if (petId) {
+    const normalizedPetId = normalizeLanPetId(petId) ?? undefined;
+    this.#clients.set(host, { host, lastSeen: now, position, petId: normalizedPetId });
+    if (normalizedPetId) {
       const existingPet = this.#pets.get(host);
       this.#pets.set(host, {
         ownerHost: host,
-        petId,
+        petId: normalizedPetId,
         currentHost: existingPet?.currentHost && this.#clients.has(existingPet.currentHost) ? existingPet.currentHost : host,
         position: existingPet?.position ?? position,
       });
+    } else {
+      this.#pets.delete(host);
+      this.#petEdgeArmed.delete(host);
     }
     if (host === this.#preferredHost && this.#currentHost !== host) {
       this.#currentHost = host;
@@ -141,6 +145,7 @@ export class LanCoordinator {
         this.#petEdgeArmed.delete(ownerHost);
       } else if (!this.#clients.has(pet.currentHost)) {
         this.#pets.set(ownerHost, { ...pet, currentHost: ownerHost });
+        this.#petEdgeArmed.delete(ownerHost);
       }
     }
     if (this.#currentHost && !this.#clients.has(this.#currentHost)) {
@@ -154,9 +159,9 @@ export class LanCoordinator {
     if (!pet || pet.currentHost !== host) return;
     let currentHost = pet.currentHost;
     if (!edge) this.#petEdgeArmed.add(ownerHost);
-    else if (position && this.#petEdgeArmed.has(ownerHost)) {
-      currentHost = this.#getPetNeighbor(currentHost, edge) ?? currentHost;
+    else if (this.#petEdgeArmed.has(ownerHost)) {
       this.#petEdgeArmed.delete(ownerHost);
+      if (position) currentHost = this.#getPetNeighbor(currentHost, edge) ?? currentHost;
     }
     this.#pets.set(ownerHost, { ...pet, currentHost, position });
   }
