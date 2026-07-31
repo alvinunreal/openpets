@@ -20,11 +20,16 @@ import { createAppTray, refreshTrayMenu } from "./tray.js";
 import { checkForGitHubReleaseUpdate } from "./update-checker.js";
 import { installInternalUiHandlers, installInternalUiProtocol } from "./windows.js";
 
-// OpenPets does not store browser passwords, cookies, or encrypted app secrets.
-// Keep Chromium/Electron from prompting for macOS Keychain or Linux keyring access
-// during startup/profile initialization.
+// OpenPets stores plugin secrets via Electron safeStorage, which requires a
+// real encryption backend. On Linux use the keyring (gnome-libsecret) so
+// safeStorage can encrypt; on macOS/Windows keep Chromium from prompting for
+// Keychain during startup/profile initialization.
 app.commandLine.appendSwitch("use-mock-keychain");
-app.commandLine.appendSwitch("password-store", "basic");
+if (process.platform === "linux") {
+  app.commandLine.appendSwitch("password-store", "gnome-libsecret");
+} else {
+  app.commandLine.appendSwitch("password-store", "basic");
+}
 
 // Chromium's native window occlusion tracker treats every window on a display
 // as occluded while a fullscreen app is active there and stops painting it.
