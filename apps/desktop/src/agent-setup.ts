@@ -11,6 +11,7 @@ import { doctorOpenCodeGlobalSetup, getGlobalOpenCodeConfigDir, parseOpenCodeCon
 
 import { getAppStateSnapshot, updatePreferences, type InstalledPetState, type OpenPetsStateV1 } from "./app-state.js";
 import { doctorClaudeOpenPetsMemory, installClaudeOpenPetsMemory, uninstallClaudeOpenPetsMemory, type ClaudeOpenPetsMemoryStatus } from "./claude-memory.js";
+import { getDefaultOpenCodeCommand, getOpenCodeCommandCandidates } from "./opencode-command.js";
 
 export type AgentSetupAction = "configure" | "replace" | "remove" | "install-memory" | "doctor-hooks" | "install-hooks" | "uninstall-hooks" | "opencode-install" | "opencode-remove" | "cursor-install" | "cursor-replace" | "cursor-remove";
 export type JournalAction = "configure" | "update" | "replace" | "remove";
@@ -342,14 +343,14 @@ async function getOpenCodeSetup(commandMode: OpenPetsCommandMode, selectedPetId:
   const pluginVersion = getOpenCodePackageVersion();
   const cliEntryPath = commandMode === "published" ? undefined : getDesktopCliEntryPath(commandMode);
   const prepared = safePrepareOpenCode(configDir, petId, cliVersion, pluginVersion, commandMode, cliEntryPath);
-  const detected = await runCommand({ command: getPreferredOpenCodeCommand(), args: ["--version"] });
+  const detected = await runOpenCodeCommand(["--version"]);
   const globalState = doctorOpenCodeGlobalSetup(configDir);
   const configured = globalState.status === "installed";
   return {
     status: {
       state: globalState.status === "error" || globalState.status === "custom" || globalState.status === "conflict" ? "error" : configured ? "configured" : detected.ok ? "needs_setup" : "not_detected",
       label: configured ? "Installed" : globalState.status === "custom" || globalState.status === "conflict" ? "Needs attention" : detected.ok ? "Ready" : "Not detected",
-      details: globalState.status === "custom" || globalState.status === "conflict" || globalState.status === "error" ? globalState.message : configured ? globalState.message : detected.ok ? "OpenCode was detected. Desktop setup writes global OpenCode config." : getPreferredOpenCodeCommand() === (process.platform === "win32" ? "opencode.cmd" : "opencode") ? "OpenCode was not found on PATH. You can still preview setup, but OpenCode must be installed to use it." : "OpenCode did not run from the saved command path. You can still preview setup, but OpenCode must be installed to use it.",
+      details: globalState.status === "custom" || globalState.status === "conflict" || globalState.status === "error" ? globalState.message : configured ? globalState.message : detected.ok ? "OpenCode was detected. Desktop setup writes global OpenCode config." : getPreferredOpenCodeCommand() === getDefaultOpenCodeCommand() ? "OpenCode was not found on PATH or in a Scoop shim directory. You can still preview setup, but OpenCode must be installed to use it." : "OpenCode did not run from the saved command path. You can still preview setup, but OpenCode must be installed to use it.",
       configDir: formatUserPath(configDir) ?? configDir,
       canInstall: prepared.ok && !configured,
       canRemove: configured,
@@ -455,7 +456,7 @@ function getPreferredNodeCommand(): string {
 }
 
 function getPreferredOpenCodeCommand(): string {
-  return getAppStateSnapshot().preferences.opencodeCommandPath || (process.platform === "win32" ? "opencode.cmd" : "opencode");
+  return getAppStateSnapshot().preferences.opencodeCommandPath || getDefaultOpenCodeCommand();
 }
 
 function normalizeOptionalCommandPath(value: unknown, label: string): string | undefined {
@@ -735,6 +736,21 @@ async function runClaudeCommand(spec: ClaudeCommandSpec): Promise<CommandResult>
     if (result.ok || !isCommandNotFound(result)) return result;
   }
   return { ok: false, timedOut: false, exitCode: null, stdout: "", stderr: "", error: "Claude command was not found." };
+}
+
+async function runOpenCodeCommand(args: readonly string[]): Promise<CommandResult> {
+  const preferences = getAppStateSnapshot().preferences;
+  const commands = getOpenCodeCommandCandidates({
+    configuredCommand: preferences.opencodeCommandPath,
+    env: process.env,
+    homeDir: app.getPath("home"),
+    platform: process.platform,
+  });
+  for (const command of commands) {
+    const result = await runCommand({ command, args });
+    if (result.ok || !isCommandNotFound(result)) return result;
+  }
+  return { ok: false, timedOut: false, exitCode: null, stdout: "", stderr: "", error: "OpenCode command was not found." };
 }
 
 function runCommand(spec: ClaudeCommandSpec): Promise<CommandResult> {

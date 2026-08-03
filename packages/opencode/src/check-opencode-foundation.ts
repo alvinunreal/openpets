@@ -25,9 +25,10 @@ try {
 
   assert.equal(getGlobalOpenCodeConfigDir({ OPENCODE_CONFIG_DIR: join(root, "custom") }, root, "linux"), join(root, "custom"));
   assert.equal(getGlobalOpenCodeConfigDir({ XDG_CONFIG_HOME: join(root, "xdg") }, root, "linux"), join(root, "xdg", "opencode"));
-  assert.equal(getGlobalOpenCodeConfigDir({ APPDATA: join(root, "appdata") }, root, "win32"), join(root, "appdata", "opencode"));
+  assert.equal(getGlobalOpenCodeConfigDir({ APPDATA: join(root, "appdata") }, root, "win32"), join(root, ".config", "opencode"), "Windows OpenCode config is XDG-based, not stored under APPDATA.");
+  assert.equal(getGlobalOpenCodeConfigDir({ XDG_CONFIG_HOME: join(root, "xdg") }, root, "win32"), join(root, "xdg", "opencode"));
   assert.deepEqual(getGlobalOpenCodeConfigPaths({ OPENCODE_CONFIG_DIR: join(root, "global") }, root, "linux").candidates.map((path) => path.slice(join(root, "global").length + 1)), ["config.json", "opencode.json", "opencode.jsonc"]);
-  assert.deepEqual(createOpenCodeExecutableDetection({ platform: "win32" }).command, "opencode.cmd");
+  assert.deepEqual(createOpenCodeExecutableDetection({ platform: "win32" }).command, "opencode");
   assert.deepEqual(createOpenCodeExecutableDetection({ platform: "darwin" }).command, "opencode");
 
   assert.deepEqual(formatOpenCodeMcpConfig({ cliVersion: "0.0.0", petId: "fixer" }), { mcp: { openpets: { type: "local", command: ["npx", "-y", "@open-pets/cli@0.0.0", "mcp", "--pet", "fixer"], enabled: true } } });

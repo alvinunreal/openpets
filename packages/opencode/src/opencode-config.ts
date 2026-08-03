@@ -51,9 +51,8 @@ export function selectProjectOpenCodeConfigPath(projectDir: string): string {
   return paths.candidates.find((candidate) => existsSync(candidate)) ?? paths.defaultCreatePath;
 }
 
-export function getGlobalOpenCodeConfigDir(env: NodeJS.ProcessEnv = process.env, homeDir = homedir(), platform = process.platform): string {
+export function getGlobalOpenCodeConfigDir(env: NodeJS.ProcessEnv = process.env, homeDir = homedir(), _platform = process.platform): string {
   if (env.OPENCODE_CONFIG_DIR) return env.OPENCODE_CONFIG_DIR;
-  if (platform === "win32") return join(env.APPDATA || join(homeDir, "AppData", "Roaming"), "opencode");
   return join(env.XDG_CONFIG_HOME || join(homeDir, ".config"), "opencode");
 }
 
@@ -68,7 +67,7 @@ export function getGlobalOpenCodeConfigPaths(env: NodeJS.ProcessEnv = process.en
 export function createOpenCodeExecutableDetection(input: Partial<OpenCodeExecutableDetection> & { readonly platform?: NodeJS.Platform | string } = {}): OpenCodeExecutableDetection {
   const platform = input.platform ?? process.platform;
   return {
-    command: input.command ?? (platform === "win32" ? "opencode.cmd" : "opencode"),
+    command: input.command ?? "opencode",
     platform,
     available: input.available ?? false,
     version: input.version,

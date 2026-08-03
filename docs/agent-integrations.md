@@ -123,13 +123,19 @@ Ships both a config manager and a runtime plugin.
   global `~/.config/opencode/`), choosing the right file among `config.json` /
   `opencode.json` / `opencode.jsonc` and preserving user arrays. Managed
   instruction blocks use `<!-- OPENPETS:START/END -->` markers. Full
-  prepare/write/remove/doctor lifecycle.
+  prepare/write/remove/doctor lifecycle. OpenCode uses the XDG-style
+  `~/.config/opencode/` location on Windows as well; it does not use
+  `%APPDATA%\opencode`.
 - **Runtime** (`opencode-plugin-runtime.ts`, plugin id `open-pets-opencode`):
   hooks `event`, `chat.message`, `tool.execute.before/after`, classifies them to
   reactions/speech, manages a lease (renew with a 2s buffer), and applies the
   same throttle windows as Claude. The optional `excludeReactions` plugin option is an
   array of reactions to suppress before IPC or throttling. It can be used without a
   `pet` target: `["@open-pets/opencode", { "excludeReactions": ["success", "thinking"] }]`.
+- **Windows detection**: the desktop app checks user and global Scoop shim
+  directories before falling back to `opencode` / `opencode.cmd` on `PATH`, so
+  a Scoop installation is detectable even when Electron inherited an older
+  environment.
 
 ## Cursor — `@open-pets/cursor`
 
