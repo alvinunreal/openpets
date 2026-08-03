@@ -1,9 +1,11 @@
+import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { URL } from "node:url";
 
-import { LanCoordinator, normalizeLanEdge, normalizeLanHost, normalizeLanPoint, type LanState } from "./lan-state.js";
+import { LanCoordinator, normalizeLanEdge, normalizeLanHost, normalizeLanPetId, normalizeLanPoint, type LanState } from "./lan-state.js";
 
 const maxLanRequestBodyBytes = 16 * 1024;
+const lanSessionHeader = "x-openpets-lan-session";
 
 class LanRequestBodyTooLargeError extends Error {
   constructor() {
@@ -19,8 +21,9 @@ export type LanRequestHandlerOptions = {
 
 export function createLanRequestHandler(lanCoordinator: LanCoordinator, token: string | null, options: LanRequestHandlerOptions = {}): (req: IncomingMessage, res: ServerResponse) => void {
   const now = options.now ?? Date.now;
+  const hostSessions = new Map<string, string>();
   return (req, res) => {
-    void routeLanRequest(req, res, lanCoordinator, token, now, options).catch((requestError) => {
+    void routeLanRequest(req, res, lanCoordinator, token, now, options, hostSessions).catch((requestError) => {
       if (requestError instanceof LanRequestBodyTooLargeError) {
         writeJson(res, 413, { error: "body_too_large" });
         return;
@@ -31,7 +34,15 @@ export function createLanRequestHandler(lanCoordinator: LanCoordinator, token: s
   };
 }
 
-async function routeLanRequest(req: IncomingMessage, res: ServerResponse, lanCoordinator: LanCoordinator, token: string | null, now: () => number, options: LanRequestHandlerOptions): Promise<void> {
+async function routeLanRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  lanCoordinator: LanCoordinator,
+  token: string | null,
+  now: () => number,
+  options: LanRequestHandlerOptions,
+  hostSessions: Map<string, string>,
+): Promise<void> {
   const url = new URL(req.url || "/", "http://127.0.0.1");
   if (!isAuthorized(req, token)) {
     writeJson(res, 401, { error: "unauthorized" });
@@ -50,9 +61,24 @@ async function routeLanRequest(req: IncomingMessage, res: ServerResponse, lanCoo
       writeJson(res, 400, { error: "missing_host" });
       return;
     }
+    const petId = normalizeLanPetId(body.petId);
+    if (body.petId !== undefined && !petId) {
+      writeJson(res, 400, { error: "invalid_pet_id" });
+      return;
+    }
+    const requestNow = now();
+    const existingSession = hostSessions.get(host);
+    if (existingSession && lanCoordinator.hasClient(host, requestNow) && req.headers[lanSessionHeader] !== existingSession) {
+      writeJson(res, 403, { error: "host_identity_conflict" });
+      return;
+    }
+    const session = existingSession && req.headers[lanSessionHeader] === existingSession
+      ? existingSession
+      : randomBytes(32).toString("base64url");
+    hostSessions.set(host, session);
     const previousHost = lanCoordinator.currentHost();
-    const state = lanCoordinator.register(host, normalizeLanPoint(body.position), now());
-    writeJson(res, 200, state);
+    const state = lanCoordinator.register(host, normalizeLanPoint(body.position), requestNow, petId ?? undefined);
+    writeJson(res, 200, state, { [lanSessionHeader]: session });
     notifyStateChangeIfOwnerChanged(previousHost, state, options);
     return;
   }
@@ -60,8 +86,16 @@ async function routeLanRequest(req: IncomingMessage, res: ServerResponse, lanCoo
   if (req.method === "POST" && url.pathname === "/claim") {
     const body = await readBody(req);
     const host = normalizeLanHost(body.host);
+    if (!host) {
+      writeJson(res, 400, { error: "unknown_host" });
+      return;
+    }
+    if (!isHostAuthorized(req, host, hostSessions)) {
+      writeJson(res, 403, { error: "host_identity_mismatch" });
+      return;
+    }
     const previousHost = lanCoordinator.currentHost();
-    const state = host ? lanCoordinator.claim(host, now()) : null;
+    const state = lanCoordinator.claim(host, now());
     if (!state) {
       writeJson(res, 400, { error: "unknown_host" });
       return;
@@ -78,10 +112,56 @@ async function routeLanRequest(req: IncomingMessage, res: ServerResponse, lanCoo
       writeJson(res, 400, { error: "missing_host" });
       return;
     }
+    if (!isHostAuthorized(req, host, hostSessions)) {
+      writeJson(res, 403, { error: "host_identity_mismatch" });
+      return;
+    }
     const previousHost = lanCoordinator.currentHost();
-    const state = lanCoordinator.updatePosition(host, normalizeLanPoint(body.position), normalizeLanEdge(body.edge), now());
+    const ownerHost = normalizeLanHost(body.ownerHost) ?? undefined;
+    const state = lanCoordinator.updatePosition(host, normalizeLanPoint(body.position), normalizeLanEdge(body.edge), now(), ownerHost);
     writeJson(res, 200, state);
     notifyStateChangeIfOwnerChanged(previousHost, state, options);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/activity") {
+    const body = await readBody(req);
+    const ownerHost = normalizeLanHost(body.ownerHost);
+    if (!ownerHost || body.kind !== "work" || Object.keys(body).some((key) => key !== "ownerHost" && key !== "kind")) {
+      writeJson(res, 400, { error: "invalid_activity" });
+      return;
+    }
+    if (!isHostAuthorized(req, ownerHost, hostSessions)) {
+      writeJson(res, 403, { error: "host_identity_mismatch" });
+      return;
+    }
+    const state = lanCoordinator.publishActivity(ownerHost, now());
+    if (!state) {
+      writeJson(res, 400, { error: "unknown_pet" });
+      return;
+    }
+    writeJson(res, 200, state);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/return") {
+    const body = await readBody(req);
+    const host = normalizeLanHost(body.host);
+    const ownerHost = normalizeLanHost(body.ownerHost);
+    if (!host || !ownerHost) {
+      writeJson(res, 400, { error: "invalid_return" });
+      return;
+    }
+    if (!isHostAuthorized(req, host, hostSessions)) {
+      writeJson(res, 403, { error: "host_identity_mismatch" });
+      return;
+    }
+    const state = lanCoordinator.returnPet(host, ownerHost, now());
+    if (!state) {
+      writeJson(res, 400, { error: "invalid_return" });
+      return;
+    }
+    writeJson(res, 200, state);
     return;
   }
 
@@ -110,11 +190,12 @@ function notifyStateChangeIfOwnerChanged(previousHost: string | null, state: Lan
   if (previousHost !== state.currentHost) options.onStateChange?.(state);
 }
 
-function writeJson(res: ServerResponse, status: number, body: unknown): void {
+function writeJson(res: ServerResponse, status: number, body: unknown, extraHeaders: Readonly<Record<string, string>> = {}): void {
   const payload = Buffer.from(JSON.stringify(body));
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "content-length": payload.length,
+    ...extraHeaders,
   });
   res.end(payload);
 }
@@ -122,4 +203,9 @@ function writeJson(res: ServerResponse, status: number, body: unknown): void {
 function isAuthorized(req: IncomingMessage, token: string | null): boolean {
   if (!token) return true;
   return req.headers["x-openpets-lan-token"] === token;
+}
+
+function isHostAuthorized(req: IncomingMessage, host: string, hostSessions: ReadonlyMap<string, string>): boolean {
+  const session = hostSessions.get(host);
+  return Boolean(session) && req.headers[lanSessionHeader] === session;
 }

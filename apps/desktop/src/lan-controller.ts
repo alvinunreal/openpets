@@ -4,13 +4,17 @@ import { hostname } from "node:os";
 import { URL } from "node:url";
 
 import { defaultPetWindowSize } from "./display.js";
+import { getAppStateSnapshot } from "./app-state.js";
 import { getDefaultPetLanPosition, hideDefaultPetForLan, showDefaultPetForLan } from "./default-pet-controller.js";
 import { resolveLanAuthConfig, type LanAuthSource } from "./lan-auth.js";
 import { defaultLanRetryOptions, getLanRetryDelayMs, shouldHideLanPetAfterMisses, shouldLogLanPollFailure } from "./lan-client-retry.js";
 import { createLanRequestHandler } from "./lan-http-controller.js";
 import { readPersistedLanState, writePersistedLanState } from "./lan-persistence.js";
+import { planLanWorkActivities, shouldPublishLanWorkSignal, shouldRetryLanWorkReturn } from "./lan-pet-activity.js";
+import { applyLanVisitingPetSay, getLanVisitingPetPosition, syncLanVisitingPets } from "./lan-pet-controller.js";
 import { LanCoordinator, countLanTopologyLinks, normalizeLanHost, normalizeLanTopology, validateLanTopology, type LanEdge, type LanPoint, type LanState, type LanTopology, type LanTopologyIssue } from "./lan-state.js";
 import { info, warn, error as logError } from "./logger.js";
+import type { OpenPetsReaction } from "./local-ipc-protocol.js";
 
 type LanMode = "off" | "server" | "client";
 
@@ -39,6 +43,9 @@ const pollMs = defaultLanRetryOptions.baseDelayMs;
 const requestTimeoutMs = 8_000;
 const maxLanResponseBodyBytes = 16 * 1024;
 const edgeThresholdPx = 18;
+const maxLanActivityAgeMs = 15_000;
+const lanWorkReturnDelayMs = 1_500;
+const lanWorkDepartureMessage = "Oh, I've got to get back to work!";
 
 let coordinator = new LanCoordinator({ staleClientMs });
 let pollTimer: NodeJS.Timeout | null = null;
@@ -46,6 +53,15 @@ let serverStarted = false;
 let serverStarting = false;
 let missedPolls = 0;
 let lastPollWarningAt = 0;
+let multiPetEnabled = false;
+let lastLanState: LanState | null = null;
+let activeMode: LanMode = "off";
+let activeServerUrl = "";
+let activeLocalHost = "";
+let activeToken: string | null = null;
+let activeSessionToken: string | null = null;
+const seenActivitySequences = new Map<string, number>();
+const pendingWorkReturns = new Map<string, NodeJS.Timeout>();
 
 export function startLanController(): void {
   const mode = normalizeMode(process.env.OPENPETS_LAN_MODE);
@@ -57,6 +73,11 @@ export function startLanController(): void {
   const auth = resolveLanAuthConfig(app.getPath("userData"), process.env, { serverMode: mode === "server" });
   const token = auth.token;
   const topology = parseLanTopology(process.env.OPENPETS_LAN_TOPOLOGY);
+  multiPetEnabled = process.env.OPENPETS_LAN_PETS === "multi";
+  activeMode = mode;
+  activeServerUrl = serverUrl;
+  activeLocalHost = localHost;
+  activeToken = token;
   const topologyIssues = validateLanTopology(topology);
   coordinator = new LanCoordinator({ staleClientMs, topology });
   for (const issue of topologyIssues) warn("app", "lan topology issue", issue);
@@ -126,13 +147,23 @@ function startLanClient(serverUrl: string, localHost: string, token: string | nu
 async function registerLanClient(serverUrl: string, localHost: string, token: string | null): Promise<void> {
   try {
     const position = getDefaultPetLanPosition();
-    const state = await postJson<LanState>(`${serverUrl}/register`, { host: localHost, position }, token);
+    const state = await postJson<LanState>(`${serverUrl}/register`, {
+      host: localHost,
+      position,
+      ...(multiPetEnabled ? { petId: getAppStateSnapshot().preferences.defaultPetId } : {}),
+    }, token, activeSessionToken, (headers) => {
+      const session = headers["x-openpets-lan-session"];
+      activeSessionToken = typeof session === "string" ? session : activeSessionToken;
+    });
     missedPolls = 0;
     applyLanState(state, localHost);
   } catch (registerError) {
     missedPolls += 1;
     warn("app", "lan register failed", { error: registerError instanceof Error ? registerError.message : String(registerError), missedPolls });
-    if (shouldHideLanPetAfterMisses(missedPolls)) hideDefaultPetForLan();
+    if (shouldHideLanPetAfterMisses(missedPolls)) {
+      hideDefaultPetForLan();
+      if (multiPetEnabled) syncLanVisitingPets(localHost, []);
+    }
   }
 }
 
@@ -146,10 +177,34 @@ function scheduleLanPoll(serverUrl: string, localHost: string, token: string | n
   pollTimer.unref?.();
 }
 async function pollLanServer(serverUrl: string, localHost: string, token: string | null): Promise<void> {
-  const position = getDefaultPetLanPosition();
-  const edge = position ? detectEdge(position) : null;
   try {
-    const state = await postJson<LanState>(`${serverUrl}/position`, { host: localHost, position, edge }, token);
+    if (!activeSessionToken) {
+      await registerLanClient(serverUrl, localHost, token);
+      return;
+    }
+    let state: LanState;
+    if (multiPetEnabled && lastLanState?.pets) {
+      state = await postJson<LanState>(`${serverUrl}/position`, {
+        host: localHost,
+        position: getDefaultPetLanPosition(),
+        edge: null,
+      }, token, activeSessionToken);
+      for (const pet of lastLanState.pets) {
+        if (pet.currentHost !== localHost) continue;
+        const position = pet.ownerHost === localHost ? getDefaultPetLanPosition() : getLanVisitingPetPosition(pet.ownerHost);
+        if (!position) continue;
+        state = await postJson<LanState>(`${serverUrl}/position`, {
+          host: localHost,
+          ownerHost: pet.ownerHost,
+          position,
+          edge: detectEdge(position),
+        }, token, activeSessionToken);
+      }
+    } else {
+      const position = getDefaultPetLanPosition();
+      const edge = position ? detectEdge(position) : null;
+      state = await postJson<LanState>(`${serverUrl}/position`, { host: localHost, position, edge }, token, activeSessionToken);
+    }
     missedPolls = 0;
     applyLanState(state, localHost);
   } catch (pollError) {
@@ -159,13 +214,88 @@ async function pollLanServer(serverUrl: string, localHost: string, token: string
       lastPollWarningAt = now;
       warn("app", "lan poll failed", { error: pollError instanceof Error ? pollError.message : String(pollError), missedPolls, nextPollMs: getLanRetryDelayMs(missedPolls) });
     }
-    if (shouldHideLanPetAfterMisses(missedPolls)) hideDefaultPetForLan();
+    if (shouldHideLanPetAfterMisses(missedPolls)) {
+      hideDefaultPetForLan();
+      if (multiPetEnabled) syncLanVisitingPets(localHost, []);
+    }
   }
 }
 
 function applyLanState(state: LanState, localHost: string): void {
+  lastLanState = state;
+  if (multiPetEnabled && state.pets) {
+    const localPet = state.pets.find((pet) => pet.ownerHost === localHost);
+    if (localPet?.currentHost === localHost) showDefaultPetForLan();
+    else hideDefaultPetForLan();
+    syncLanVisitingPets(localHost, state.pets);
+    applyLanWorkActivities(state, localHost);
+    return;
+  }
   if (state.currentHost === localHost) showDefaultPetForLan();
   else hideDefaultPetForLan();
+}
+
+export function broadcastLanPetActivity(reaction: OpenPetsReaction): void {
+  if (
+    activeMode === "off"
+    || !multiPetEnabled
+    || !activeServerUrl
+    || !activeLocalHost
+    || !shouldPublishLanWorkSignal(activeLocalHost, lastLanState, reaction)
+  ) return;
+  void postJson<LanState>(`${activeServerUrl}/activity`, {
+    ownerHost: activeLocalHost,
+    kind: "work",
+  }, activeToken, activeSessionToken)
+    .then((state) => applyLanState(state, activeLocalHost))
+    .catch((activityError) => warn("app", "lan work activity publish failed", {
+      error: activityError instanceof Error ? activityError.message : String(activityError),
+    }));
+}
+
+function applyLanWorkActivities(state: LanState, localHost: string): void {
+  const hostedOwners = new Set((state.pets ?? []).filter((pet) => pet.currentHost === localHost).map((pet) => pet.ownerHost));
+  for (const [ownerHost, timer] of pendingWorkReturns) {
+    if (hostedOwners.has(ownerHost)) continue;
+    clearTimeout(timer);
+    pendingWorkReturns.delete(ownerHost);
+  }
+
+  const plan = planLanWorkActivities(localHost, state.pets ?? [], seenActivitySequences, state.updatedAt, maxLanActivityAgeMs);
+  for (const observed of plan.observed) seenActivitySequences.set(observed.ownerHost, observed.sequence);
+  for (const departure of plan.departures) {
+    if (pendingWorkReturns.has(departure.ownerHost)) continue;
+    const shown = applyLanVisitingPetSay(departure.ownerHost, lanWorkDepartureMessage, "running", departure.sequence);
+    if (!shown) continue;
+    info("app", "lan visiting pet preparing work return", { ownerHost: departure.ownerHost, host: localHost, sequence: departure.sequence });
+    scheduleLanWorkReturn(localHost, departure.ownerHost, departure.sequence, lanWorkReturnDelayMs);
+  }
+}
+
+function scheduleLanWorkReturn(localHost: string, ownerHost: string, sequence: number, delayMs: number): void {
+  const timer = setTimeout(() => {
+    void postJson<LanState>(`${activeServerUrl}/return`, {
+      host: localHost,
+      ownerHost,
+    }, activeToken, activeSessionToken)
+      .then((nextState) => {
+        pendingWorkReturns.delete(ownerHost);
+        applyLanState(nextState, localHost);
+      })
+      .catch((returnError) => {
+        warn("app", "lan work return failed", {
+          ownerHost,
+          error: returnError instanceof Error ? returnError.message : String(returnError),
+        });
+        if (shouldRetryLanWorkReturn(localHost, ownerHost, sequence, lastLanState)) {
+          scheduleLanWorkReturn(localHost, ownerHost, sequence, pollMs);
+        } else {
+          pendingWorkReturns.delete(ownerHost);
+        }
+      });
+  }, delayMs);
+  timer.unref?.();
+  pendingWorkReturns.set(ownerHost, timer);
 }
 
 function detectEdge(position: LanPoint): LanEdge | null {
@@ -178,7 +308,13 @@ function detectEdge(position: LanPoint): LanEdge | null {
   return null;
 }
 
-function postJson<T>(target: string, body: Record<string, unknown>, token: string | null): Promise<T> {
+function postJson<T>(
+  target: string,
+  body: Record<string, unknown>,
+  token: string | null,
+  sessionToken: string | null = null,
+  onResponse?: (headers: Record<string, string | string[] | undefined>) => void,
+): Promise<T> {
   const url = new URL(target);
   const payload = Buffer.from(JSON.stringify(body));
   return new Promise((resolve, reject) => {
@@ -187,6 +323,7 @@ function postJson<T>(target: string, body: Record<string, unknown>, token: strin
       "content-length": payload.length,
     };
     if (token) headers["x-openpets-lan-token"] = token;
+    if (sessionToken) headers["x-openpets-lan-session"] = sessionToken;
 
     const req = request({
       method: "POST",
@@ -196,6 +333,7 @@ function postJson<T>(target: string, body: Record<string, unknown>, token: strin
       headers,
       timeout: requestTimeoutMs,
     }, (res) => {
+      onResponse?.(res.headers);
       const chunks: Buffer[] = [];
       let size = 0;
       res.on("data", (chunk) => {
@@ -209,6 +347,7 @@ function postJson<T>(target: string, body: Record<string, unknown>, token: strin
       });
       res.on("end", () => {
         if ((res.statusCode ?? 500) >= 400) {
+          if (res.statusCode === 403 && sessionToken) activeSessionToken = null;
           reject(new Error(`HTTP ${res.statusCode}`));
           return;
         }

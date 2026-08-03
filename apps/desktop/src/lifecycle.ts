@@ -4,6 +4,7 @@ import { closeAllAgentPets } from "./agent-pet-controller.js";
 import { destroyDefaultPet } from "./default-pet-controller.js";
 import { info } from "./logger.js";
 import { stopLocalIpcServer } from "./local-ipc.js";
+import { closeAllLanVisitingPets } from "./lan-pet-controller.js";
 import { stopPluginService } from "./plugin-service.js";
 import { focusOpenTaskWindows } from "./windows.js";
 
@@ -35,6 +36,7 @@ export function installAppLifecycle(): void {
     scheduleHardExitFallback("before-quit");
     stopPluginService();
     stopLocalIpcServer();
+    closeAllLanVisitingPets();
     closeAllAgentPets();
     destroyDefaultPet();
   });

@@ -15,11 +15,58 @@ its coordinator record. Every edge-crossing attempt consumes its arm; returning
 a pet to its owner after host loss also requires a fresh move away from the edge
 before another handoff.
 
-Rendering two pets, meeting interactions, privacy-preserving MCP work signals,
-and Control Center setup are intentionally deferred to later phases of
+Meeting interactions, privacy-preserving MCP work signals, and Control Center
+setup are intentionally deferred to later phases of
 [issue #93](https://github.com/alvinunreal/openpets/issues/93). Multi-machine GUI
 validation is pending while the second test system is unavailable, so this work
 remains experimental.
+
+### Experimental visiting-pet rendering
+
+Set `OPENPETS_LAN_PETS=multi` on every participating host to exercise the next
+experimental phase. Each host registers its selected default pet. When that pet
+migrates away, its default window hides; the destination opens a dedicated
+visiting-pet window keyed by owner host. Owner identity—not pet package ID—is
+the window key, so two people may select the same pet without colliding.
+
+The destination must have the selected pet installed and healthy. The bundled
+built-in pet works without extra setup. Missing or broken catalog assets are
+skipped with a scoped diagnostic;
+the local pet and LAN polling continue normally. Visiting windows close when
+their pet leaves, their owner disconnects, or LAN polling exceeds its failure
+threshold. This phase contains no meeting dialogue, MCP relay, or social
+animation.
+
+This rendering phase has been exercised with two isolated Electron profiles on
+one computer. The test covered both handoff directions, two independently
+draggable built-in pets on one host, return cleanup, and stale-client pruning
+after one instance disconnected. Validation across two physical machines is
+still pending.
+
+### Experimental privacy-preserving work returns
+
+Phase 3 adds an intentionally narrow MCP-to-LAN signal. When a host's default
+pet is visiting another pet and receives a `working`, `editing`, `running`, or
+`testing` reaction, its client may publish only `{ ownerHost, kind: "work" }`.
+Actual MCP messages, prompts, speech, media, tool names, and explicit-lease pet
+activity never cross the LAN boundary. Message-bearing activity requests are
+rejected by the coordinator.
+
+The shared LAN token grants access to the coordinator but does not establish a
+host identity. Registration therefore issues a random per-host session
+credential. Position, claim, activity, and return mutations must present the
+session belonging to the host they act for. An active identity cannot be
+replaced by another shared-token peer; after its client becomes stale, a
+restarted client can register again and receives a rotated session.
+
+The meeting host consumes each fresh work sequence once. The visiting pet says
+the built-in line “Oh, I've got to get back to work!”, plays its configured
+`running` animation as a dash, and then returns to its owner. No signal is sent
+when the pet is already home, is not meeting another pet, or receives a
+non-work reaction. The coordinator independently enforces the active-meeting
+condition. Stale signals are consumed without replaying dialogue, activity
+ordering remains monotonic across later visits, and a transient return failure
+is retried without repeating the dialogue.
 
 ## Server PC
 

@@ -26,6 +26,13 @@ export type LanPetRecord = {
   readonly petId: string;
   readonly currentHost: string;
   readonly position?: LanPoint;
+  readonly activity?: LanPetActivity;
+};
+
+export type LanPetActivity = {
+  readonly kind: "work";
+  readonly sequence: number;
+  readonly createdAt: number;
 };
 
 export type LanState = {
@@ -46,6 +53,7 @@ export class LanCoordinator {
   readonly #staleClientMs: number;
   readonly #clients = new Map<string, LanClientRecord>();
   readonly #pets = new Map<string, LanPetRecord>();
+  readonly #activitySequences = new Map<string, number>();
   readonly #petEdgeArmed = new Set<string>();
   readonly #topology: LanTopology;
   #currentHost: string | null = null;
@@ -76,6 +84,7 @@ export class LanCoordinator {
         petId: normalizedPetId,
         currentHost: existingPet?.currentHost && this.#clients.has(existingPet.currentHost) ? existingPet.currentHost : host,
         position: existingPet?.position ?? position,
+        activity: existingPet?.activity,
       });
     } else {
       this.#pets.delete(host);
@@ -122,6 +131,43 @@ export class LanCoordinator {
 
   currentHost(): string | null {
     return this.#currentHost;
+  }
+
+  hasClient(host: string, now: number): boolean {
+    this.prune(now);
+    return this.#clients.has(host);
+  }
+
+  publishActivity(ownerHost: string, now: number): LanState | null {
+    const pet = this.#pets.get(ownerHost);
+    const meetingSize = pet
+      ? [...this.#pets.values()].filter((candidate) => candidate.currentHost === pet.currentHost).length
+      : 0;
+    if (!pet || pet.currentHost === ownerHost || meetingSize < 2) return null;
+    const sequence = Math.max((this.#activitySequences.get(ownerHost) ?? 0) + 1, now);
+    this.#activitySequences.set(ownerHost, sequence);
+    this.#pets.set(ownerHost, {
+      ...pet,
+      activity: {
+        kind: "work",
+        sequence,
+        createdAt: now,
+      },
+    });
+    return this.snapshot(now);
+  }
+
+  returnPet(host: string, ownerHost: string, now: number): LanState | null {
+    const pet = this.#pets.get(ownerHost);
+    if (!pet || pet.currentHost !== host || pet.ownerHost === host || !this.#clients.has(pet.ownerHost)) return null;
+    const { activity: _activity, ...rest } = pet;
+    this.#pets.set(ownerHost, {
+      ...rest,
+      currentHost: pet.ownerHost,
+      position: this.#clients.get(pet.ownerHost)?.position,
+    });
+    this.#petEdgeArmed.delete(ownerHost);
+    return this.snapshot(now);
   }
 
   snapshot(now: number): LanState {
