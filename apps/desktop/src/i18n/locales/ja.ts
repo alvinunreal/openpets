@@ -314,6 +314,7 @@ export const ja: Partial<Messages> = {
   "settings.plugins.aiProvider.anthropic": "Anthropic",
   "settings.plugins.aiProvider.openai": "OpenAI",
   "settings.plugins.aiProvider.ollama": "Ollama（ローカル）",
+  "settings.plugins.aiProvider.minimax": "MiniMax",
   "settings.plugins.model.title": "モデル",
   "settings.plugins.model.description": "プロバイダーのデフォルトを使う場合は空のままにします。",
   "settings.plugins.model.placeholder": "プロバイダーのデフォルト",

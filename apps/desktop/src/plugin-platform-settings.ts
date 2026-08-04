@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
  * (AI-generated speech, microphone) default OFF.
  */
 
-export type PluginAiProviderKind = "none" | "anthropic" | "openai" | "ollama";
+export type PluginAiProviderKind = "none" | "anthropic" | "openai" | "ollama" | "minimax";
 
 export type PluginPlatformSettings = {
   readonly allowPluginAudio: boolean;
@@ -72,7 +72,7 @@ function normalizeSettings(value: unknown): PluginPlatformSettings {
   const quiet = typeof raw.quietHours === "object" && raw.quietHours !== null ? raw.quietHours as Record<string, unknown> : {};
   const ai = typeof raw.ai === "object" && raw.ai !== null ? raw.ai as Record<string, unknown> : {};
   const isTime = (entry: unknown): entry is string => typeof entry === "string" && /^\d{2}:\d{2}$/.test(entry);
-  const provider = ["none", "anthropic", "openai", "ollama"].includes(String(ai.provider)) ? String(ai.provider) as PluginAiProviderKind : "none";
+  const provider = ["none", "anthropic", "openai", "ollama", "minimax"].includes(String(ai.provider)) ? String(ai.provider) as PluginAiProviderKind : "none";
   return {
     allowPluginAudio: raw.allowPluginAudio !== false,
     allowDynamicSpeech: raw.allowDynamicSpeech === true,

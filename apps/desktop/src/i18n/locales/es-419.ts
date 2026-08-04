@@ -314,6 +314,7 @@ export const es419: Partial<Messages> = {
   "settings.plugins.aiProvider.anthropic": "Anthropic",
   "settings.plugins.aiProvider.openai": "OpenAI",
   "settings.plugins.aiProvider.ollama": "Ollama (local)",
+  "settings.plugins.aiProvider.minimax": "MiniMax",
   "settings.plugins.model.title": "Modelo",
   "settings.plugins.model.description": "Déjalo vacío para usar el predeterminado del proveedor.",
   "settings.plugins.model.placeholder": "predeterminado del proveedor",

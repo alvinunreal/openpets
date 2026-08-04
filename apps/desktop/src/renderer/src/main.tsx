@@ -44,7 +44,7 @@ type PluginPlatformSettings = {
   allowPluginVoice: boolean;
   allowMicrophone: boolean;
   quietHours: { enabled: boolean; start: string; end: string };
-  ai: { provider: "none" | "anthropic" | "openai" | "ollama"; model: string; baseUrl?: string };
+  ai: { provider: "none" | "anthropic" | "openai" | "ollama" | "minimax"; model: string; baseUrl?: string };
 };
 type PluginInspectorState = { schedules: Array<{ id: string; type: string; nextRunMs: number }>; commands: PluginCommand[]; menuItems: Array<{ id: string; title: string }>; status?: PluginStatus; activeBubbles: number; activePanels: number; eventSubscriptions: number; lastError?: string; quotaCounters: Record<string, number> };
 type PluginIconName = "plugin" | "bell" | "timer" | "github" | "heart" | "sparkles" | "coffee" | "focus" | "droplet";
@@ -1407,6 +1407,7 @@ function SettingsView() {
                   <option value="anthropic">{t("settings.plugins.aiProvider.anthropic")}</option>
                   <option value="openai">{t("settings.plugins.aiProvider.openai")}</option>
                   <option value="ollama">{t("settings.plugins.aiProvider.ollama")}</option>
+                  <option value="minimax">{t("settings.plugins.aiProvider.minimax")}</option>
                 </select>
               </div>
               <div className="settings-row">

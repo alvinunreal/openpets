@@ -348,6 +348,7 @@ export const en = {
   "settings.plugins.aiProvider.anthropic": "Anthropic",
   "settings.plugins.aiProvider.openai": "OpenAI",
   "settings.plugins.aiProvider.ollama": "Ollama (local)",
+  "settings.plugins.aiProvider.minimax": "MiniMax",
   "settings.plugins.model.title": "Model",
   "settings.plugins.model.description": "Leave empty for the provider default.",
   "settings.plugins.model.placeholder": "provider default",

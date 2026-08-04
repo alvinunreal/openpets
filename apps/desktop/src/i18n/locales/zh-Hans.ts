@@ -314,6 +314,7 @@ export const zhHans: Partial<Messages> = {
   "settings.plugins.aiProvider.anthropic": "Anthropic",
   "settings.plugins.aiProvider.openai": "OpenAI",
   "settings.plugins.aiProvider.ollama": "Ollama（本地）",
+  "settings.plugins.aiProvider.minimax": "MiniMax",
   "settings.plugins.model.title": "模型",
   "settings.plugins.model.description": "留空则使用提供商默认值。",
   "settings.plugins.model.placeholder": "提供商默认值",
