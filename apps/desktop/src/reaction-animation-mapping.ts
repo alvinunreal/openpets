@@ -45,7 +45,7 @@ export const defaultPetSprite = {
     waving: { row: 3, frames: 4, durationMs: 700, iterations: 2 },
     jumping: { row: 4, frames: 5, durationMs: 840, iterations: 2 },
     failed: { row: 5, frames: 8, durationMs: 1220, iterations: 2 },
-    waiting: { row: 6, frames: 6, durationMs: 1010 },
+    waiting: { row: 6, frames: 6, durationMs: 2200 },
     running: { row: 7, frames: 6, durationMs: 820 },
     review: { row: 8, frames: 6, durationMs: 1030 },
   } satisfies Record<UniversalSpriteState, SpriteStateDefinition>,
