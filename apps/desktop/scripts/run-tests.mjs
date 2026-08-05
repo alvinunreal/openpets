@@ -38,6 +38,7 @@ const behaviorTests = [
   ".test-dist/tests/plugin-catalog-validation.test.js",
   ".test-dist/tests/plugin-package.test.js",
   ".test-dist/tests/plugin-service.test.js",
+  ".test-dist/tests/plugin-ai-gateway.test.js",
   ".test-dist/tests/plugin-bridge-fuzz.test.js",
   ".test-dist/tests/pet-fallback-notify.test.js",
   ".test-dist/tests/pet-pool-order.test.js",

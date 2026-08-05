@@ -132,6 +132,20 @@ capability the current manifest no longer declares.
 - Legacy `ctx.http.fetch` remains GET-only, public HTTPS only — it never gains
   local or mutating access.
 
+### Host AI providers
+
+The host AI gateway uses one provider configured in OpenPets settings for plugin
+chat requests. Supported providers are Anthropic, OpenAI, Ollama, and MiniMax.
+Anthropic uses its native chat API; OpenAI, Ollama, and MiniMax use
+OpenAI-compatible chat-completions APIs. All four support token streaming.
+
+Voice input through `voice.listen` is a separate capability and uses the host's
+OpenAI-compatible transcription path. OpenAI and Ollama support that path, while
+MiniMax's configured OpenAI-compatible API does not accept audio input/transcription,
+so it cannot be used for `voice.listen`. Anthropic is not transcription-capable
+through this path. MiniMax supports OpenAI-compatible chat completions and
+streaming; choose OpenAI or Ollama when a plugin needs `voice.listen`.
+
 ### Display deliveries
 
 `ui:delivery` is a dedicated permission for the generic, host-owned delivery

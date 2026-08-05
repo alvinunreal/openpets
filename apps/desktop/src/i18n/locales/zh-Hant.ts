@@ -314,6 +314,7 @@ export const zhHant: Partial<Messages> = {
   "settings.plugins.aiProvider.anthropic": "Anthropic",
   "settings.plugins.aiProvider.openai": "OpenAI",
   "settings.plugins.aiProvider.ollama": "Ollama（本機）",
+  "settings.plugins.aiProvider.minimax": "MiniMax",
   "settings.plugins.model.title": "模型",
   "settings.plugins.model.description": "留空則使用供應商預設值。",
   "settings.plugins.model.placeholder": "供應商預設值",

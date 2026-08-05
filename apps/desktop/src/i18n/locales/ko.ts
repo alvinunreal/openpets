@@ -314,6 +314,7 @@ export const ko: Partial<Messages> = {
   "settings.plugins.aiProvider.anthropic": "Anthropic",
   "settings.plugins.aiProvider.openai": "OpenAI",
   "settings.plugins.aiProvider.ollama": "Ollama (로컬)",
+  "settings.plugins.aiProvider.minimax": "MiniMax",
   "settings.plugins.model.title": "모델",
   "settings.plugins.model.description": "제공자 기본값을 사용하려면 비워 두세요.",
   "settings.plugins.model.placeholder": "제공자 기본값",
