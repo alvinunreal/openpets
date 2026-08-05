@@ -16,7 +16,7 @@ Implements an MCP server exposing OpenPets functionality to AI agents via the Mo
 
 **Tool Implementations** (`tools.ts`):
 - Zod schemas for input validation (`saySchema`, `reactSchema`)
-- Lease-aware operations (acquires lease on startup, heartbeat every 5s)
+- Lease-aware operations (acquires lease on startup, heartbeat every 5s, and single-flight stale-lease recovery shared with lifecycle timers)
 - Throttling integration for speech/reactions
 - Error sanitization (hides IPC paths, tokens, sockets, and local paths)
 - Structured MCP results: tools return `structuredContent` with status, routing, lease, and operation result metadata when available.
@@ -24,7 +24,7 @@ Implements an MCP server exposing OpenPets functionality to AI agents via the Mo
 **Lifecycle Management** (`index.ts`):
 - Startup lease acquisition (async, non-blocking)
 - Heartbeat timer (5s interval, unref'd)
-- Graceful shutdown on SIGINT/SIGTERM (release lease, close server)
+- Graceful shutdown on SIGINT/SIGTERM (stop recovery sources, join startup/recovery, release retained lease IDs once, close server)
 - Stdio transport via `StdioServerTransport`
 
 **Argument Parsing** (`args.ts`):
@@ -52,7 +52,7 @@ server.connect(StdioServerTransport)
     ↓
 [Heartbeat] Every 5s: client.heartbeatLease()
     ↓
-[Shutdown] SIGINT/SIGTERM → releaseLease() → server.close()
+[Shutdown] SIGINT/SIGTERM or transport close → mark shared lease context closing → stop timers → join startup/tool/timer recovery → release retained active/stale/recovered lease IDs once → server.close() → exit once
 ```
 
 ## Integration Points

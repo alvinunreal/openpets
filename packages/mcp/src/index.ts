@@ -8,7 +8,7 @@ import type { OpenPetsClient, OpenPetsLeaseResult } from "@open-pets/client";
 
 import { createHelpText, parseMcpArgs } from "./args.js";
 import { createOpenPetsMcpServer } from "./server.js";
-import { createToolContext, type LeaseContext } from "./tools.js";
+import { createToolContext, recoverLease, type LeaseContext } from "./tools.js";
 
 /** Minimal transport interface required by wireTransportLifecycle (subset of StdioServerTransport). */
 export interface McpTransportHook {
@@ -27,6 +27,9 @@ export interface TransportLifecycleOptions {
   readonly lease: LeaseContext;
   readonly leaseReady: Promise<void>;
   readonly requestedPetId?: string;
+  /** Test/runtime timing overrides; production defaults remain five seconds. */
+  readonly heartbeatIntervalMs?: number;
+  readonly retryDelayMs?: number;
   /**
    * Called after teardown when the transport closes. Defaults to `() => process.exit(0)`.
    * Override in tests to prevent the process from actually exiting.
@@ -48,80 +51,93 @@ export function wireTransportLifecycle(opts: TransportLifecycleOptions): { close
 
   let heartbeatTimer: NodeJS.Timeout | null = null;
   let retryTimer: NodeJS.Timeout | null = null;
-  let retryDelayMs = 5_000;
+  const heartbeatIntervalMs = opts.heartbeatIntervalMs ?? 5_000;
+  const initialRetryDelayMs = opts.retryDelayMs ?? 5_000;
+  let retryDelayMs = initialRetryDelayMs;
   const MAX_RETRY_DELAY_MS = 60_000;
-  let closing = false;
+  let closePromise: Promise<void> | null = null;
+  const retainedLeaseIds = new Set<string>();
+
+  const retainLeaseId = (leaseId: string | undefined): void => {
+    if (leaseId) retainedLeaseIds.add(leaseId);
+  };
+
+  const releaseRetainedLeases = async (): Promise<void> => {
+    retainLeaseId(lease.lease?.leaseId);
+    retainLeaseId(lease.staleLeaseId);
+    retainLeaseId(lease.staleLease?.leaseId);
+    for (const leaseId of retainedLeaseIds) {
+      try { await client.releaseLease(leaseId); } catch { /* best effort */ }
+    }
+  };
 
   function scheduleRetry(): void {
-    if (retryTimer || closing) return;
+    if (retryTimer || lease.closing) return;
     retryTimer = setTimeout(() => {
       retryTimer = null;
-      if (closing || lease.lease) return;
-      // Fix 2: attempt heartbeat-first recovery when a stale lease is saved
-      void (async () => {
-        const staleLeaseId = lease.staleLeaseId;
-        const staleLease = lease.staleLease;
-        if (staleLeaseId && staleLease) {
-          try {
-            const hb = await client.heartbeatLease(staleLeaseId);
-            // Heartbeat succeeded — desktop still holds the original lease
-            lease.lease = { ...staleLease, leaseId: hb.leaseId, expiresAt: hb.expiresAt, leaseActive: true };
-            lease.staleLeaseId = undefined;
-            lease.staleLease = undefined;
-            lease.degradedReason = undefined;
-            retryDelayMs = 5_000;
-            return;
-          } catch {
-            // Heartbeat failed — fall through to acquireLease
-          }
-        }
-        try {
-          const result = await client.acquireLease({ requestedPetId });
-          lease.lease = result;
-          lease.staleLeaseId = undefined;
-          lease.staleLease = undefined;
-          lease.degradedReason = undefined;
-          retryDelayMs = 5_000;
-        } catch (error: unknown) {
+      if (lease.closing || lease.lease) return;
+      void recoverLease(client, lease, requestedPetId).then(
+        () => {
+          if (lease.closing) return;
+          retryDelayMs = initialRetryDelayMs;
+        },
+        (error: unknown) => {
+          if (lease.closing) return;
           lease.degradedReason = sanitizeMcpRuntimeError(error);
           retryDelayMs = Math.min(retryDelayMs * 2, MAX_RETRY_DELAY_MS);
           scheduleRetry();
-        }
-      })();
+        },
+      );
     }, retryDelayMs);
     retryTimer.unref?.();
   }
 
   leaseReady.then(() => {
-    if (!lease.lease) return;
+    if (lease.closing || !lease.lease) return;
     heartbeatTimer = setInterval(() => {
-      if (closing || !lease.lease) return;
+      if (lease.closing || !lease.lease) return;
       void client.heartbeatLease(lease.lease.leaseId).catch((error: unknown) => {
+        // A heartbeat may have started before close() published its closing state.
+        // Once closing is set, preserve the lease for teardown instead of letting
+        // this late rejection erase the ID that must be released.
+        if (lease.closing || !lease.lease) return;
         // Save full stale lease for heartbeat-first recovery in scheduleRetry / ensureLease
         lease.staleLease = lease.lease;
         lease.staleLeaseId = lease.lease?.leaseId;
         lease.degradedReason = sanitizeMcpRuntimeError(error);
         lease.lease = undefined;
-        retryDelayMs = 5_000;
+        retryDelayMs = initialRetryDelayMs;
         scheduleRetry();
       });
-    }, 5_000);
+    }, heartbeatIntervalMs);
     heartbeatTimer.unref?.();
   }).catch(() => {});
 
-  const close = async (): Promise<void> => {
-    if (closing) return;
-    closing = true;
-    if (heartbeatTimer) clearInterval(heartbeatTimer);
-    heartbeatTimer = null;
-    if (retryTimer) clearTimeout(retryTimer);
-    retryTimer = null;
-    const leaseId = lease.lease?.leaseId;
-    lease.lease = undefined;
-    if (leaseId) {
-      try { await client.releaseLease(leaseId); } catch { /* best effort */ }
-    }
-    try { await server.close(); } catch { /* ignore shutdown errors */ }
+  const close = (): Promise<void> => {
+    if (closePromise) return closePromise;
+    // Publish teardown state before any await so tools and timers cannot start recovery afterward.
+    lease.closing = true;
+    retainLeaseId(lease.lease?.leaseId);
+    retainLeaseId(lease.staleLeaseId);
+    retainLeaseId(lease.staleLease?.leaseId);
+    closePromise = (async () => {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+      if (retryTimer) clearTimeout(retryTimer);
+      retryTimer = null;
+      try { await leaseReady; } catch { /* startup already records its degraded state */ }
+      if (lease.recoveryPromise) {
+        try { await lease.recoveryPromise; } catch { /* recovery failure is already reflected in degradedReason */ }
+      }
+      await releaseRetainedLeases();
+      lease.lease = undefined;
+      lease.staleLeaseId = undefined;
+      lease.staleLease = undefined;
+      lease.recoveryPromise = undefined;
+      lease.degradedReason = undefined;
+      try { await server.close(); } catch { /* ignore shutdown errors */ }
+    })();
+    return closePromise;
   };
 
   // Fix 3: exit after teardown so the process doesn't linger as an orphan

@@ -7,9 +7,9 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 
 import { parseMcpArgs } from "./args.js";
-import { wireTransportLifecycle } from "./index.js";
+import { wireTransportLifecycle, type OpenPetsLeaseResult } from "./index.js";
 import { createOpenPetsMcpServer } from "./server.js";
-import { createMcpStatus, sanitizeUnavailableReason, type LeaseContext, type OpenPetsMcpStatus } from "./tools.js";
+import { createMcpStatus, handleReact, sanitizeUnavailableReason, type LeaseContext, type OpenPetsMcpStatus } from "./tools.js";
 
 parseMcpArgs(["--pet", "snoopy"]);
 parseMcpArgs(["--pet=snoopy"]);
@@ -34,6 +34,10 @@ await checkStdioServerContract();
 await checkT6TransportOnclose();
 await checkT7EnsureLeaseHeartbeatFirst();
 await checkT8ExitOnce();
+await checkT9CloseDuringStartupAcquire();
+await checkT10CloseDuringRecoveryAcquire();
+await checkT11CloseDuringToolRecovery();
+await checkT12CloseDuringHeartbeatFailure();
 const builtEntrypoint = readFileSync(join("dist", "index.js"), "utf8");
 if (!builtEntrypoint.startsWith("#!/usr/bin/env node")) {
   throw new Error("Built MCP entrypoint is missing a Node shebang.");
@@ -388,5 +392,452 @@ async function checkT8ExitOnce(): Promise<void> {
   }
   if (releaseIdx >= exitIdx) {
     throw new Error("T8: release did not precede exit. Order: " + releaseOrder.join(","));
+  }
+}
+
+/**
+ * T9 — Closing while startup acquisition is unresolved must wait for that
+ * acquisition, release its eventual lease, and only then exit. Cursor can
+ * replace an MCP process during startup; leaking that process's lease briefly
+ * displays a second pool pet until the lease TTL expires.
+ */
+async function checkT9CloseDuringStartupAcquire(): Promise<void> {
+  const order: string[] = [];
+  const startupLeaseId = "t9-startup-lease";
+  let finishStartup: (() => void) | undefined;
+  const leaseReady = new Promise<void>((resolve) => {
+    finishStartup = resolve;
+  });
+  const lease: LeaseContext = {};
+  const fakeTransport: { onclose?: (() => void) | undefined } = {};
+  const fakeClient = {
+    status: async () => ({ ok: true, appRunning: true }),
+    listPets: async () => ({ ok: true as const, pets: [], defaultPetId: "builtin" }),
+    installPet: async () => { throw new Error("unused"); },
+    installLocalPet: async () => { throw new Error("unused"); },
+    acquireLease: async () => { throw new Error("unused"); },
+    heartbeatLease: async (leaseId: string) => ({ leaseId, expiresAt: Date.now() + 15_000 }),
+    releaseLease: async (leaseId: string) => { order.push(`release:${leaseId}`); return { released: true }; },
+    react: async () => ({ ok: true }),
+    say: async () => ({ ok: true }),
+    showMedia: async () => ({ ok: true, shown: true }),
+    hello: async () => ({ ok: true }),
+  };
+  const fakeServer = { close: async () => { order.push("server.close"); } };
+
+  wireTransportLifecycle({
+    transport: fakeTransport,
+    server: fakeServer,
+    client: fakeClient,
+    lease,
+    leaseReady,
+    exit: () => { order.push("exit"); },
+  });
+
+  fakeTransport.onclose?.();
+  fakeTransport.onclose?.();
+  await Promise.resolve();
+  if (order.includes("exit")) {
+    throw new Error(`T9: process exited before startup acquisition settled. Order: ${order.join(",")}`);
+  }
+
+  lease.lease = {
+    leaseId: startupLeaseId,
+    requestedPetId: undefined,
+    targetKind: "explicit",
+    actualTargetPetId: "snoopy",
+    actualTargetPetName: "Snoopy",
+    usingDefaultPet: false,
+    expiresAt: Date.now() + 15_000,
+    leaseActive: true,
+  };
+  finishStartup?.();
+  await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+  const releaseIndex = order.indexOf(`release:${startupLeaseId}`);
+  const exitIndex = order.indexOf("exit");
+  if (releaseIndex === -1 || exitIndex === -1 || releaseIndex >= exitIndex) {
+    throw new Error(`T9: startup lease was not released before exit. Order: ${order.join(",")}`);
+  }
+  if (order.filter((event) => event === "exit").length !== 1) {
+    throw new Error(`T9: repeated close exited more than once. Order: ${order.join(",")}`);
+  }
+}
+
+/**
+ * T10 — If shutdown begins while retry recovery is acquiring a replacement
+ * lease, teardown must join that recovery and release its eventual result.
+ */
+async function checkT10CloseDuringRecoveryAcquire(): Promise<void> {
+  const order: string[] = [];
+  const recoveredLeaseId = "t10-recovered-lease";
+  let finishAcquire: ((lease: OpenPetsLeaseResult) => void) | undefined;
+  const acquireResult = new Promise<OpenPetsLeaseResult>((resolve) => {
+    finishAcquire = resolve;
+  });
+  const lease: LeaseContext = {
+    lease: {
+      leaseId: "t10-stale-lease",
+      requestedPetId: undefined,
+      targetKind: "explicit",
+      actualTargetPetId: "snoopy",
+      actualTargetPetName: "Snoopy",
+      usingDefaultPet: false,
+      expiresAt: Date.now() + 15_000,
+      leaseActive: true,
+    },
+  };
+  const fakeTransport: { onclose?: (() => void) | undefined } = {};
+  const fakeClient = {
+    status: async () => ({ ok: true, appRunning: true }),
+    listPets: async () => ({ ok: true as const, pets: [], defaultPetId: "builtin" }),
+    installPet: async () => { throw new Error("unused"); },
+    installLocalPet: async () => { throw new Error("unused"); },
+    acquireLease: async () => { order.push("acquire:start"); return acquireResult; },
+    heartbeatLease: async () => { throw new Error("simulated heartbeat failure"); },
+    releaseLease: async (leaseId: string) => { order.push(`release:${leaseId}`); return { released: true }; },
+    react: async () => ({ ok: true }),
+    say: async () => ({ ok: true }),
+    showMedia: async () => ({ ok: true, shown: true }),
+    hello: async () => ({ ok: true }),
+  };
+
+  wireTransportLifecycle({
+    transport: fakeTransport,
+    server: { close: async () => { order.push("server.close"); } },
+    client: fakeClient,
+    lease,
+    leaseReady: Promise.resolve(),
+    heartbeatIntervalMs: 1,
+    retryDelayMs: 1,
+    exit: () => { order.push("exit"); },
+  });
+
+  for (let attempts = 0; attempts < 20 && !order.includes("acquire:start"); attempts += 1) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 2));
+  }
+  if (!order.includes("acquire:start")) {
+    throw new Error(`T10: recovery acquisition did not start. Order: ${order.join(",")}`);
+  }
+
+  fakeTransport.onclose?.();
+  await Promise.resolve();
+  if (order.includes("exit")) {
+    throw new Error(`T10: process exited while recovery acquisition was unresolved. Order: ${order.join(",")}`);
+  }
+
+  finishAcquire?.({
+    leaseId: recoveredLeaseId,
+    requestedPetId: undefined,
+    targetKind: "explicit",
+    actualTargetPetId: "snoopy",
+    actualTargetPetName: "Snoopy",
+    usingDefaultPet: false,
+    expiresAt: Date.now() + 15_000,
+    leaseActive: true,
+  });
+  await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+  const releaseIndex = order.indexOf(`release:${recoveredLeaseId}`);
+  const exitIndex = order.indexOf("exit");
+  if (releaseIndex === -1 || exitIndex === -1 || releaseIndex >= exitIndex) {
+    throw new Error(`T10: recovered lease was not released before exit. Order: ${order.join(",")}`);
+  }
+}
+
+/**
+ * T11 — A public reaction tool can start recovery before transport teardown.
+ * Shutdown must join that single-flight recovery and release its eventual lease
+ * before closing the server and invoking the exit seam.
+ */
+async function checkT11CloseDuringToolRecovery(): Promise<void> {
+  const order: string[] = [];
+  const recoveredLeaseId = "t11-tool-recovered-lease";
+  let finishAcquire: ((lease: OpenPetsLeaseResult) => void) | undefined;
+  const acquireResult = new Promise<OpenPetsLeaseResult>((resolve) => {
+    finishAcquire = resolve;
+  });
+  let markAcquireStarted: (() => void) | undefined;
+  const acquireStarted = new Promise<void>((resolve) => {
+    markAcquireStarted = resolve;
+  });
+  let finishExit: (() => void) | undefined;
+  const exitFinished = new Promise<void>((resolve) => {
+    finishExit = resolve;
+  });
+  const staleLease: OpenPetsLeaseResult = {
+    leaseId: "t11-stale-lease",
+    requestedPetId: "snoopy",
+    targetKind: "explicit",
+    actualTargetPetId: "snoopy",
+    actualTargetPetName: "Snoopy",
+    usingDefaultPet: false,
+    expiresAt: Date.now() - 1_000,
+    leaseActive: true,
+  };
+  const lease: LeaseContext = { staleLeaseId: staleLease.leaseId, staleLease };
+  const fakeClient = {
+    status: async () => ({ ok: true, appRunning: true }),
+    listPets: async () => ({ ok: true as const, pets: [], defaultPetId: "builtin" }),
+    installPet: async () => { throw new Error("unused"); },
+    installLocalPet: async () => { throw new Error("unused"); },
+    acquireLease: async () => {
+      order.push("acquire:start");
+      markAcquireStarted?.();
+      return acquireResult;
+    },
+    heartbeatLease: async () => { throw new Error("simulated heartbeat failure"); },
+    releaseLease: async (leaseId: string) => { order.push(`release:${leaseId}`); return { released: true }; },
+    react: async () => { order.push("react"); return { ok: true }; },
+    say: async () => ({ ok: true }),
+    showMedia: async () => ({ ok: true, shown: true }),
+    hello: async () => ({ ok: true }),
+  };
+  const fakeTransport: { onclose?: (() => void) | undefined } = {};
+  const fakeServer = { close: async () => { order.push("server.close"); } };
+
+  wireTransportLifecycle({
+    transport: fakeTransport,
+    server: fakeServer,
+    client: fakeClient,
+    lease,
+    leaseReady: Promise.resolve(),
+    exit: () => { order.push("exit"); finishExit?.(); },
+  });
+
+  const toolResult = handleReact({ reaction: "waving" }, {
+    configuredPetId: "snoopy",
+    client: fakeClient,
+    lease,
+    leaseReady: Promise.resolve(),
+  });
+  await acquireStarted;
+
+  fakeTransport.onclose?.();
+  await Promise.resolve();
+  if (order.includes("server.close") || order.includes("exit")) {
+    throw new Error(`T11: teardown completed before tool recovery settled. Order: ${order.join(",")}`);
+  }
+
+  finishAcquire?.({
+    leaseId: recoveredLeaseId,
+    requestedPetId: "snoopy",
+    targetKind: "explicit",
+    actualTargetPetId: "snoopy",
+    actualTargetPetName: "Snoopy",
+    usingDefaultPet: false,
+    expiresAt: Date.now() + 15_000,
+    leaseActive: true,
+  });
+  await exitFinished;
+  await toolResult;
+
+  if (order.filter((event) => event === `release:${recoveredLeaseId}`).length !== 1) {
+    throw new Error(`T11: recovered tool lease was not released exactly once. Order: ${order.join(",")}`);
+  }
+  const releaseIndex = order.indexOf(`release:${recoveredLeaseId}`);
+  const serverCloseIndex = order.indexOf("server.close");
+  const exitIndex = order.indexOf("exit");
+  if (releaseIndex === -1 || serverCloseIndex === -1 || exitIndex === -1 || releaseIndex >= serverCloseIndex || serverCloseIndex >= exitIndex) {
+    throw new Error(`T11: tool lease teardown order was incorrect. Order: ${order.join(",")}`);
+  }
+  if (order.includes("react")) {
+    throw new Error(`T11: reaction ran after teardown began. Order: ${order.join(",")}`);
+  }
+}
+
+/**
+ * T12 — A heartbeat may reject after close publishes its closing state, or just
+ * before it does. Teardown must release the original lease exactly once in both
+ * cases, and must also release a replacement lease that was already in flight.
+ */
+async function checkT12CloseDuringHeartbeatFailure(): Promise<void> {
+  // The heartbeat rejects after close starts while an existing recovery barrier
+  // keeps teardown from reaching release yet.
+  {
+    const order: string[] = [];
+    const activeLeaseId = "t12-active-lease";
+    let rejectHeartbeat!: (reason?: unknown) => void;
+    const heartbeatResult = new Promise<{ readonly leaseId: string; readonly expiresAt: number }>((_, reject) => {
+      rejectHeartbeat = reject;
+    });
+    let markHeartbeatStarted!: () => void;
+    const heartbeatStarted = new Promise<void>((resolve) => { markHeartbeatStarted = resolve; });
+    let finishRecovery!: () => void;
+    const recoveryBarrier = new Promise<void>((resolve) => { finishRecovery = resolve; });
+    let finishExit!: () => void;
+    const exitFinished = new Promise<void>((resolve) => { finishExit = resolve; });
+    const lease: LeaseContext = {
+      lease: {
+        leaseId: activeLeaseId,
+        requestedPetId: undefined,
+        targetKind: "default",
+        actualTargetPetId: "default",
+        actualTargetPetName: "Default",
+        usingDefaultPet: true,
+        expiresAt: Date.now() + 15_000,
+        leaseActive: true,
+      },
+      recoveryPromise: recoveryBarrier,
+    };
+    const fakeTransport: { onclose?: (() => void) | undefined } = {};
+    const fakeClient = {
+      status: async () => ({ ok: true, appRunning: true }),
+      listPets: async () => ({ ok: true as const, pets: [], defaultPetId: "builtin" }),
+      installPet: async () => { throw new Error("unused"); },
+      installLocalPet: async () => { throw new Error("unused"); },
+      acquireLease: async () => { throw new Error("unused"); },
+      heartbeatLease: async (_leaseId: string) => {
+        markHeartbeatStarted();
+        return heartbeatResult;
+      },
+      releaseLease: async (leaseId: string) => { order.push(`release:${leaseId}`); return { released: true }; },
+      react: async () => ({ ok: true }),
+      say: async () => ({ ok: true }),
+      showMedia: async () => ({ ok: true, shown: true }),
+      hello: async () => ({ ok: true }),
+    };
+    wireTransportLifecycle({
+      transport: fakeTransport,
+      server: { close: async () => { order.push("server.close"); } },
+      client: fakeClient,
+      lease,
+      leaseReady: Promise.resolve(),
+      heartbeatIntervalMs: 10,
+      exit: () => { order.push("exit"); finishExit(); },
+    });
+    // Production heartbeat/retry timers are unref'd; keep this deferred test alive
+    // without using the clock as a synchronization mechanism.
+    const keepAlive = setInterval(() => {}, 1_000);
+
+    try {
+      await heartbeatStarted;
+      fakeTransport.onclose?.();
+      rejectHeartbeat(new Error("heartbeat failed during close"));
+      await Promise.resolve();
+      if (order.length !== 0) {
+        throw new Error(`T12a: teardown released or closed before its barrier settled. Order: ${order.join(",")}`);
+      }
+      finishRecovery();
+      await exitFinished;
+
+      if (order.filter((event) => event === `release:${activeLeaseId}`).length !== 1) {
+        throw new Error(`T12a: original heartbeat lease was not released exactly once. Order: ${order.join(",")}`);
+      }
+      const releaseIndex = order.indexOf(`release:${activeLeaseId}`);
+      const serverCloseIndex = order.indexOf("server.close");
+      const exitIndex = order.indexOf("exit");
+      if (releaseIndex === -1 || serverCloseIndex === -1 || exitIndex === -1 || releaseIndex >= serverCloseIndex || serverCloseIndex >= exitIndex) {
+        throw new Error(`T12a: shutdown order was incorrect. Order: ${order.join(",")}`);
+      }
+    } finally {
+      clearInterval(keepAlive);
+    }
+  }
+
+  // If the heartbeat failure wins the race with close, retain its stale ID while
+  // the already-started recovery acquires a replacement lease.
+  {
+    const order: string[] = [];
+    const staleLeaseId = "t12-stale-lease";
+    const recoveredLeaseId = "t12-recovered-lease";
+    let rejectHeartbeat!: (reason?: unknown) => void;
+    const heartbeatResult = new Promise<{ readonly leaseId: string; readonly expiresAt: number }>((_, reject) => {
+      rejectHeartbeat = reject;
+    });
+    let markHeartbeatStarted!: () => void;
+    const heartbeatStarted = new Promise<void>((resolve) => { markHeartbeatStarted = resolve; });
+    let markAcquireStarted!: () => void;
+    const acquireStarted = new Promise<void>((resolve) => { markAcquireStarted = resolve; });
+    let finishAcquire!: (lease: OpenPetsLeaseResult) => void;
+    const acquireResult = new Promise<OpenPetsLeaseResult>((resolve) => { finishAcquire = resolve; });
+    let finishExit!: () => void;
+    const exitFinished = new Promise<void>((resolve) => { finishExit = resolve; });
+    const lease: LeaseContext = {
+      lease: {
+        leaseId: staleLeaseId,
+        requestedPetId: undefined,
+        targetKind: "default",
+        actualTargetPetId: "default",
+        actualTargetPetName: "Default",
+        usingDefaultPet: true,
+        expiresAt: Date.now() + 15_000,
+        leaseActive: true,
+      },
+    };
+    const fakeTransport: { onclose?: (() => void) | undefined } = {};
+    let heartbeatCalls = 0;
+    const fakeClient = {
+      status: async () => ({ ok: true, appRunning: true }),
+      listPets: async () => ({ ok: true as const, pets: [], defaultPetId: "builtin" }),
+      installPet: async () => { throw new Error("unused"); },
+      installLocalPet: async () => { throw new Error("unused"); },
+      acquireLease: async () => {
+        markAcquireStarted();
+        return acquireResult;
+      },
+      heartbeatLease: async (_leaseId: string) => {
+        heartbeatCalls += 1;
+        if (heartbeatCalls === 1) {
+          markHeartbeatStarted();
+          return heartbeatResult;
+        }
+        throw new Error("stale lease");
+      },
+      releaseLease: async (leaseId: string) => { order.push(`release:${leaseId}`); return { released: true }; },
+      react: async () => ({ ok: true }),
+      say: async () => ({ ok: true }),
+      showMedia: async () => ({ ok: true, shown: true }),
+      hello: async () => ({ ok: true }),
+    };
+    wireTransportLifecycle({
+      transport: fakeTransport,
+      server: { close: async () => { order.push("server.close"); } },
+      client: fakeClient,
+      lease,
+      leaseReady: Promise.resolve(),
+      heartbeatIntervalMs: 10,
+      retryDelayMs: 0,
+      exit: () => { order.push("exit"); finishExit(); },
+    });
+    const keepAlive = setInterval(() => {}, 1_000);
+
+    try {
+      await heartbeatStarted;
+      rejectHeartbeat(new Error("heartbeat failed before close"));
+      await acquireStarted;
+      fakeTransport.onclose?.();
+      await Promise.resolve();
+      if (order.length !== 0) {
+        throw new Error(`T12b: teardown completed before replacement acquisition settled. Order: ${order.join(",")}`);
+      }
+      finishAcquire({
+        leaseId: recoveredLeaseId,
+        requestedPetId: undefined,
+        targetKind: "default",
+        actualTargetPetId: "default",
+        actualTargetPetName: "Default",
+        usingDefaultPet: true,
+        expiresAt: Date.now() + 15_000,
+        leaseActive: true,
+      });
+      await exitFinished;
+
+      for (const leaseId of [staleLeaseId, recoveredLeaseId]) {
+        if (order.filter((event) => event === `release:${leaseId}`).length !== 1) {
+          throw new Error(`T12b: lease ${leaseId} was not released exactly once. Order: ${order.join(",")}`);
+        }
+      }
+      const staleReleaseIndex = order.indexOf(`release:${staleLeaseId}`);
+      const recoveredReleaseIndex = order.indexOf(`release:${recoveredLeaseId}`);
+      const serverCloseIndex = order.indexOf("server.close");
+      const exitIndex = order.indexOf("exit");
+      if (staleReleaseIndex === -1 || recoveredReleaseIndex === -1 || serverCloseIndex === -1 || exitIndex === -1
+        || staleReleaseIndex >= recoveredReleaseIndex || recoveredReleaseIndex >= serverCloseIndex || serverCloseIndex >= exitIndex) {
+        throw new Error(`T12b: stale/recovered lease shutdown order was incorrect. Order: ${order.join(",")}`);
+      }
+    } finally {
+      clearInterval(keepAlive);
+    }
   }
 }

@@ -34,6 +34,8 @@ export interface LeaseContext {
   /** Full lease object saved when the lease became stale; used for heartbeat-first recovery. */
   staleLease?: OpenPetsLeaseResult;
   degradedReason?: string;
+  closing?: boolean;
+  recoveryPromise?: Promise<void>;
 }
 
 export interface ToolContext {
@@ -73,39 +75,70 @@ export async function handleStatus(context: ToolContext): Promise<CallToolResult
   };
 }
 
-async function ensureLease(context: ToolContext): Promise<boolean> {
-  if (context.lease?.lease) return true;
-  try {
-    const client = context.client ?? createOpenPetsClient();
-    // Fix 2: attempt heartbeat-first recovery when a stale lease is saved
-    const staleLeaseId = context.lease?.staleLeaseId;
-    const staleLease = context.lease?.staleLease;
+export function recoverLease(client: OpenPetsClient, lease: LeaseContext, requestedPetId?: string): Promise<void> {
+  if (lease.recoveryPromise) return lease.recoveryPromise;
+  if (lease.closing || lease.lease) return Promise.resolve();
+
+  let resolveRecovery!: () => void;
+  let rejectRecovery!: (reason?: unknown) => void;
+  const recoveryPromise = new Promise<void>((resolve, reject) => {
+    resolveRecovery = resolve;
+    rejectRecovery = reject;
+  });
+
+  // Publish the shared promise before starting the async operation so tool and timer recovery cannot race into two acquisitions.
+  lease.recoveryPromise = recoveryPromise;
+  recoveryPromise.then(
+    () => {
+      if (lease.recoveryPromise === recoveryPromise) lease.recoveryPromise = undefined;
+    },
+    () => {
+      if (lease.recoveryPromise === recoveryPromise) lease.recoveryPromise = undefined;
+    },
+  );
+
+  void (async () => {
+    const staleLeaseId = lease.staleLeaseId;
+    const staleLease = lease.staleLease;
     if (staleLeaseId && staleLease) {
       try {
         const hb = await client.heartbeatLease(staleLeaseId);
-        // Heartbeat succeeded — desktop still holds the original lease
-        if (context.lease) {
-          context.lease.lease = { ...staleLease, leaseId: hb.leaseId, expiresAt: hb.expiresAt, leaseActive: true };
-          context.lease.staleLeaseId = undefined;
-          context.lease.staleLease = undefined;
-          context.lease.degradedReason = undefined;
-        }
-        return true;
+        // Heartbeat succeeded — desktop still holds the original lease.
+        lease.lease = { ...staleLease, leaseId: hb.leaseId, expiresAt: hb.expiresAt, leaseActive: true };
+        lease.staleLeaseId = undefined;
+        lease.staleLease = undefined;
+        lease.degradedReason = undefined;
+        return;
       } catch {
-        // Heartbeat failed — fall through to acquireLease
+        // Heartbeat failed — fall through to acquireLease.
       }
     }
-    const newLease = await client.acquireLease({ requestedPetId: context.configuredPetId });
-    if (context.lease) {
-      context.lease.lease = newLease;
-      context.lease.staleLeaseId = undefined;
-      context.lease.staleLease = undefined;
-      context.lease.degradedReason = undefined;
-    }
-    return !!newLease;
+
+    // Closing can begin while heartbeat recovery is in flight. Never start a new acquisition after that point.
+    if (lease.closing) return;
+
+    const newLease = await client.acquireLease({ requestedPetId });
+    // Keep the eventual lease visible to teardown even when closing began while acquireLease was in flight.
+    lease.lease = newLease;
+    lease.staleLeaseId = undefined;
+    lease.staleLease = undefined;
+    lease.degradedReason = undefined;
+  })().then(resolveRecovery, rejectRecovery);
+
+  return recoveryPromise;
+}
+
+async function ensureLease(context: ToolContext): Promise<boolean> {
+  const lease = context.lease;
+  if (!lease || lease.closing) return false;
+  if (lease.lease) return true;
+  try {
+    await recoverLease(context.client ?? createOpenPetsClient(), lease, context.configuredPetId);
   } catch {
     return false;
   }
+  // A tool may have joined recovery just before teardown began; it must not use the lease afterward.
+  return !lease.closing && !!lease.lease;
 }
 
 export async function handleReact(input: unknown, context: ToolContext): Promise<CallToolResult> {
