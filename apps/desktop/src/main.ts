@@ -7,6 +7,7 @@ import { createAppIcon } from "./assets.js";
 import { setLocaleFromPreference } from "./i18n/index.js";
 import { installDefaultPetDisplayHandlers, shouldOpenDefaultPetOnLaunch, showDefaultPet } from "./default-pet-controller.js";
 import { installAppLifecycle } from "./lifecycle.js";
+import { getLinuxX11RelaunchArgs } from "./linux-ozone-startup.js";
 import { startLanController } from "./lan-controller.js";
 import { debug, error as logError, getLogFilePath, info, initializeLogger, warn } from "./logger.js";
 import { startLocalIpcServer } from "./local-ipc.js";
@@ -52,19 +53,23 @@ const allowWayland = process.env.OPENPETS_ALLOW_WAYLAND === "1";
 const hasExplicitOzonePlatformArg = process.argv.some(
   (arg) => arg === "--ozone-platform" || arg.startsWith("--ozone-platform="),
 );
-// When OPENPETS_ALLOW_WAYLAND=1 we deliberately do NOT append an ozone-platform
-// switch: Electron honours the system default (typically wayland on a Wayland
-// session, or any explicit --ozone-platform the user passed) and we warn at
-// startup that positioning/gravity/walkabout/drag are unsupported there.
-if (isLinux && !allowWayland) {
-  // Force x11 even if the user passed --ozone-platform=wayland or auto;
-  // we overwrite any pre-existing switch so nothing silently slips through.
+// app.commandLine updates child launches but can be too late for the already
+// running browser process's Ozone initialization. Relaunch once with x11 in
+// the real argv so browser, GPU, and renderer processes select one backend.
+const linuxX11RelaunchArgs = getLinuxX11RelaunchArgs(process.platform, allowWayland, process.argv);
+if (linuxX11RelaunchArgs) {
+  app.relaunch({ args: linuxX11RelaunchArgs });
+  app.exit(0);
+} else if (isLinux && !allowWayland) {
+  // Keep the command-line registry aligned for child processes and diagnostics.
   app.commandLine.appendSwitch("ozone-platform", "x11");
 }
 
-const gotSingleInstanceLock = app.requestSingleInstanceLock();
+const gotSingleInstanceLock = linuxX11RelaunchArgs ? false : app.requestSingleInstanceLock();
 
-if (!gotSingleInstanceLock) {
+if (linuxX11RelaunchArgs) {
+  // The replacement browser process owns startup.
+} else if (!gotSingleInstanceLock) {
   app.quit();
 } else {
   installAppLifecycle();

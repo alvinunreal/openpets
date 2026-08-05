@@ -64,6 +64,7 @@ const behaviorTests = [
   ".test-dist/tests/display.test.js",
   ".test-dist/tests/preference-patch.test.js",
   ".test-dist/tests/plugin-agent-activity.test.js",
+  ".test-dist/tests/linux-ozone-startup.test.js",
   ".test-dist/tests/pet-window-wayland-predicate.test.js",
   ".test-dist/tests/pet-window-mouse-forwarding-predicate.test.js",
 ];

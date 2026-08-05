@@ -90,6 +90,7 @@ const localeSources = new Map([
 const agentSetupSource = readFileSync(join(appDir, "src", "agent-setup.ts"), "utf8");
 const loggerSource = readFileSync(join(appDir, "src", "logger.ts"), "utf8");
 const mainSource = readFileSync(join(appDir, "src", "main.ts"), "utf8");
+const linuxOzoneStartupSource = readFileSync(join(appDir, "src", "linux-ozone-startup.ts"), "utf8");
 const appStateSource = readFileSync(join(appDir, "src", "app-state.ts"), "utf8");
 const lifecycleSource = readFileSync(join(appDir, "src", "lifecycle.ts"), "utf8");
 const localIpcSourceForLogging = readFileSync(join(appDir, "src", "local-ipc.ts"), "utf8");
@@ -112,6 +113,8 @@ assert.match(mainSource, /isLinux && !allowWayland[\s\S]*?appendSwitch\("ozone-p
 assert.match(mainSource, /if \(process\.platform === "linux"\) \{\n\s*app\.commandLine\.appendSwitch\("password-store", "gnome-libsecret"\);\n\s*\} else \{\n\s*app\.commandLine\.appendSwitch\("password-store", "basic"\);\n\s*\}/, "Linux desktop must gate password-store as gnome-libsecret on Linux with basic only in the non-Linux else branch; an unconditional switch would disable Electron safeStorage and break plugin secret saves with 'Secret storage encryption is unavailable on this system'.");
 const passwordStoreValues = [...mainSource.matchAll(/appendSwitch\("password-store",\s*"([^"]+)"\)/g)].map((match) => match[1]);
 assert.deepStrictEqual(passwordStoreValues, ["gnome-libsecret", "basic"], "desktop must set password-store exactly twice (gnome-libsecret on Linux, basic otherwise); any extra or unconditional switch would override the backend and re-break plugin secret saves.");
+assert.match(mainSource, /getLinuxX11RelaunchArgs[\s\S]*?app\.relaunch\(\{ args: linuxX11RelaunchArgs \}\)[\s\S]*?app\.exit\(0\)/, "Linux must relaunch the browser process itself with the X11 Ozone argument before creating windows.");
+assert.match(linuxOzoneStartupSource, /removeOzonePlatformArgs\(argv\.slice\(1\)\)[\s\S]*?"--ozone-platform=x11"/, "Linux relaunch must replace conflicting Ozone arguments while preserving application arguments.");
 assert.match(mainSource, /OPENPETS_ALLOW_WAYLAND/, "Linux X11 override must support the OPENPETS_ALLOW_WAYLAND opt-out escape hatch.");
 assert.match(traySource, /t\("tray\.openLogsFolder"\)/, "desktop tray must expose user-sendable logs for bug reports.");
 assert.match(enCatalogSource, /Open Logs Folder/, "English catalog must keep the user-sendable logs label.");
