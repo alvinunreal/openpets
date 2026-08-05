@@ -8,7 +8,7 @@ import type { OpenPetsClient, OpenPetsLeaseResult } from "@open-pets/client";
 
 import { createHelpText, parseMcpArgs } from "./args.js";
 import { createOpenPetsMcpServer } from "./server.js";
-import { createToolContext, type LeaseContext } from "./tools.js";
+import { createToolContext, recoverLease, type LeaseContext } from "./tools.js";
 
 /** Minimal transport interface required by wireTransportLifecycle (subset of StdioServerTransport). */
 export interface McpTransportHook {
@@ -55,56 +55,33 @@ export function wireTransportLifecycle(opts: TransportLifecycleOptions): { close
   const initialRetryDelayMs = opts.retryDelayMs ?? 5_000;
   let retryDelayMs = initialRetryDelayMs;
   const MAX_RETRY_DELAY_MS = 60_000;
-  let closing = false;
   let closePromise: Promise<void> | null = null;
-  let recoveryPromise: Promise<void> | null = null;
 
   function scheduleRetry(): void {
-    if (retryTimer || closing) return;
+    if (retryTimer || lease.closing) return;
     retryTimer = setTimeout(() => {
       retryTimer = null;
-      if (closing || lease.lease) return;
-      // Fix 2: attempt heartbeat-first recovery when a stale lease is saved
-      recoveryPromise = (async () => {
-        const staleLeaseId = lease.staleLeaseId;
-        const staleLease = lease.staleLease;
-        if (staleLeaseId && staleLease) {
-          try {
-            const hb = await client.heartbeatLease(staleLeaseId);
-            // Heartbeat succeeded — desktop still holds the original lease
-            lease.lease = { ...staleLease, leaseId: hb.leaseId, expiresAt: hb.expiresAt, leaseActive: true };
-            lease.staleLeaseId = undefined;
-            lease.staleLease = undefined;
-            lease.degradedReason = undefined;
-            retryDelayMs = initialRetryDelayMs;
-            return;
-          } catch {
-            // Heartbeat failed — fall through to acquireLease
-          }
-        }
-        try {
-          const result = await client.acquireLease({ requestedPetId });
-          lease.lease = result;
-          lease.staleLeaseId = undefined;
-          lease.staleLease = undefined;
-          lease.degradedReason = undefined;
+      if (lease.closing || lease.lease) return;
+      void recoverLease(client, lease, requestedPetId).then(
+        () => {
+          if (lease.closing) return;
           retryDelayMs = initialRetryDelayMs;
-        } catch (error: unknown) {
+        },
+        (error: unknown) => {
+          if (lease.closing) return;
           lease.degradedReason = sanitizeMcpRuntimeError(error);
           retryDelayMs = Math.min(retryDelayMs * 2, MAX_RETRY_DELAY_MS);
           scheduleRetry();
-        }
-      })().finally(() => {
-        recoveryPromise = null;
-      });
+        },
+      );
     }, retryDelayMs);
     retryTimer.unref?.();
   }
 
   leaseReady.then(() => {
-    if (closing || !lease.lease) return;
+    if (lease.closing || !lease.lease) return;
     heartbeatTimer = setInterval(() => {
-      if (closing || !lease.lease) return;
+      if (lease.closing || !lease.lease) return;
       void client.heartbeatLease(lease.lease.leaseId).catch((error: unknown) => {
         // Save full stale lease for heartbeat-first recovery in scheduleRetry / ensureLease
         lease.staleLease = lease.lease;
@@ -120,14 +97,17 @@ export function wireTransportLifecycle(opts: TransportLifecycleOptions): { close
 
   const close = (): Promise<void> => {
     if (closePromise) return closePromise;
-    closing = true;
+    // Publish teardown state before any await so tools and timers cannot start recovery afterward.
+    lease.closing = true;
     closePromise = (async () => {
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       heartbeatTimer = null;
       if (retryTimer) clearTimeout(retryTimer);
       retryTimer = null;
       try { await leaseReady; } catch { /* startup already records its degraded state */ }
-      if (recoveryPromise) await recoveryPromise;
+      if (lease.recoveryPromise) {
+        try { await lease.recoveryPromise; } catch { /* recovery failure is already reflected in degradedReason */ }
+      }
       const leaseId = lease.lease?.leaseId;
       lease.lease = undefined;
       if (leaseId) {
