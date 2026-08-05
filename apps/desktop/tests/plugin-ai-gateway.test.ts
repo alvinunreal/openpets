@@ -38,7 +38,7 @@ try {
     () => gateway.transcribe(new Uint8Array([1, 2, 3]), "audio/webm"),
     (error: unknown) => {
       assert.ok(error instanceof Error);
-      assert.match(error.message, /MiniMax does not support voice transcription/);
+      assert.match(error.message, /MiniMax OpenAI-compatible provider\/path does not support voice transcription in OpenPets/);
       assert.match(error.message, /OpenAI or Ollama/);
       return true;
     },

@@ -49,7 +49,7 @@ export class PluginAiGateway {
   async transcribe(audio: Uint8Array, mimeType: string): Promise<string> {
     const { provider, baseUrl, apiKey } = await this.#resolveProvider();
     if (provider === "anthropic") throw new Error("Speech-to-text needs an OpenAI-compatible AI provider.");
-    if (provider === "minimax") throw new Error("MiniMax does not support voice transcription. Choose a transcription-capable provider (OpenAI or Ollama) in OpenPets settings.");
+    if (provider === "minimax") throw new Error("The configured MiniMax OpenAI-compatible provider/path does not support voice transcription in OpenPets. Choose a transcription-capable provider (OpenAI or Ollama) in OpenPets settings.");
     const url = `${openAiBase(baseUrl, provider)}/audio/transcriptions`;
     const form = new FormData();
     form.append("file", new Blob([Buffer.from(audio)], { type: mimeType }), "speech.webm");

@@ -139,10 +139,12 @@ chat requests. Supported providers are Anthropic, OpenAI, Ollama, and MiniMax.
 Anthropic uses its native chat API; OpenAI, Ollama, and MiniMax use
 OpenAI-compatible chat-completions APIs. All four support token streaming.
 
-Voice input through `voice.listen` is a separate capability: OpenAI and Ollama
-are transcription-capable, while Anthropic and MiniMax are not. MiniMax supports
-OpenAI-compatible chat completions and streaming, but does not provide audio
-transcription; choose OpenAI or Ollama when a plugin needs `voice.listen`.
+Voice input through `voice.listen` is a separate capability and uses the host's
+OpenAI-compatible transcription path. OpenAI and Ollama support that path, while
+MiniMax's configured OpenAI-compatible API does not accept audio input/transcription,
+so it cannot be used for `voice.listen`. Anthropic is not transcription-capable
+through this path. MiniMax supports OpenAI-compatible chat completions and
+streaming; choose OpenAI or Ollama when a plugin needs `voice.listen`.
 
 ### Display deliveries
 
