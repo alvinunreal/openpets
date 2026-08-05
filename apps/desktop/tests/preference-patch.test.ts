@@ -2,6 +2,7 @@
  * Unit tests for validatePreferencePatch (preference-patch.ts).
  *
  * Covers:
+ *   - The waitingAnimationDurationMs preference accepts only 1010 and 2200.
  *   - All four boolean preference keys: petPoolEnabled, petConfinementEnabled,
  *     petGravityEnabled, petCrossDisplayEnabled (the key added in FIX H1).
  *   - Each accepts true and false and lands in the returned patch.
@@ -115,6 +116,26 @@ for (const { key, errMsg } of booleanKeys) {
   assert.equal("petConfinementEnabled" in patch, false, "petConfinementEnabled must be absent");
   assert.equal("petCrossDisplayEnabled" in patch, false, "petCrossDisplayEnabled must be absent");
   console.log("validatePreferencePatch: multi-key patch — PASS");
+}
+
+// ---------------------------------------------------------------------------
+// waitingAnimationDurationMs — only the supported durations are accepted
+// ---------------------------------------------------------------------------
+{
+  assert.equal(validatePreferencePatch({ waitingAnimationDurationMs: 1010 }).waitingAnimationDurationMs, 1010);
+  assert.equal(validatePreferencePatch({ waitingAnimationDurationMs: 2200 }).waitingAnimationDurationMs, 2200);
+
+  for (const value of [undefined, null, "2200", true, 0, 1011, Number.NaN]) {
+    assert.throws(
+      () => validatePreferencePatch({ waitingAnimationDurationMs: value }),
+      /Invalid waiting animation duration value\./,
+      `waitingAnimationDurationMs must reject ${String(value)}`,
+    );
+  }
+
+  const patch = validatePreferencePatch({ waitingAnimationDurationMs: 2200, petGravityEnabled: true });
+  assert.deepEqual(patch, { waitingAnimationDurationMs: 2200, petGravityEnabled: true }, "duration patches must not alter unrelated values");
+  console.log("validatePreferencePatch: waitingAnimationDurationMs validation — PASS");
 }
 
 console.log("\nAll preference-patch tests passed.");

@@ -5,7 +5,7 @@
  * without an Electron process context.
  */
 
-import { normalizePetScale } from "./app-state-core.js";
+import { normalizePetScale, normalizeWaitingAnimationDurationMs, type WaitingAnimationDurationMs } from "./app-state-core.js";
 import { isSupportedLocale, type LocalePreference } from "./i18n/index.js";
 import { validateReactionAnimationOverrides } from "./reaction-animation-mapping.js";
 
@@ -13,6 +13,7 @@ export type PreferencePatch = {
   openDefaultPetOnLaunch?: boolean;
   locale?: LocalePreference;
   petScale?: number;
+  waitingAnimationDurationMs?: WaitingAnimationDurationMs;
   reactionAnimationOverrides?: ReturnType<typeof validateReactionAnimationOverrides>;
   petPoolEnabled?: boolean;
   petConfinementEnabled?: boolean;
@@ -70,6 +71,12 @@ export function validatePreferencePatch(value: unknown): PreferencePatch {
     const scale = normalizePetScale(value.petScale);
     if (scale !== value.petScale) throw new Error("Invalid pet scale value.");
     patch.petScale = scale;
+  }
+
+  if ("waitingAnimationDurationMs" in value) {
+    const durationMs = normalizeWaitingAnimationDurationMs(value.waitingAnimationDurationMs);
+    if (durationMs !== value.waitingAnimationDurationMs) throw new Error("Invalid waiting animation duration value.");
+    patch.waitingAnimationDurationMs = durationMs;
   }
 
   if ("reactionAnimationOverrides" in value) {

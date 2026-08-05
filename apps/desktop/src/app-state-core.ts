@@ -12,6 +12,17 @@ export const petScaleOptions = [
 export type PetScaleValue = typeof petScaleOptions[number]["value"];
 export const defaultPetScale: PetScaleValue = 1;
 
+export const waitingAnimationDurationOptions = [
+  { value: 1010, label: "Normal" },
+  { value: 2200, label: "Relaxed" },
+] as const;
+export type WaitingAnimationDurationMs = typeof waitingAnimationDurationOptions[number]["value"];
+export const defaultWaitingAnimationDurationMs: WaitingAnimationDurationMs = waitingAnimationDurationOptions[0].value;
+
+export function normalizeWaitingAnimationDurationMs(value: unknown): WaitingAnimationDurationMs {
+  return waitingAnimationDurationOptions.find((option) => option.value === value)?.value ?? defaultWaitingAnimationDurationMs;
+}
+
 export function normalizePetScale(value: unknown): PetScaleValue {
   return petScaleOptions.find((option) => option.value === value)?.value ?? defaultPetScale;
 }

@@ -21,7 +21,7 @@ import { installPet, installPetFromFolder, installPetFromZipFile, removePet, set
 import { assertSafePetId, getInstalledPetDir } from "./pet-paths.js";
 import { debug, error as logError, warn } from "./logger.js";
 import { getPluginService, type PluginConfigSoundPickResult, type PluginServiceResult } from "./plugin-service.js";
-import { defaultPetSprite, reactionAnimationMetadata, selectableAnimationMetadata } from "./reaction-animation-mapping.js";
+import { defaultPetSprite, getConfiguredSpriteStates, reactionAnimationMetadata, selectableAnimationMetadata, waitingAnimationDurationOptions } from "./reaction-animation-mapping.js";
 import { readSafePluginManifest } from "./plugin-manifest-reader.js";
 import { registerPluginAssetProtocol } from "./plugin-asset-protocol.js";
 import { checkForGitHubReleaseUpdate, getUpdateStatus, openUpdateReleasePage } from "./update-checker.js";
@@ -72,7 +72,7 @@ function getPetsStateSnapshot(): { preferences: { defaultPetId: string }; pets: 
 }
 
 function getSettingsStateSnapshot(): {
-  preferences: Pick<ReturnType<typeof getAppStateSnapshot>["preferences"], "openDefaultPetOnLaunch" | "petScale" | "reactionAnimationOverrides" | "petPoolOrder" | "petPoolEnabled" | "petConfinementEnabled" | "petCrossDisplayEnabled" | "petGravityEnabled">;
+  preferences: Pick<ReturnType<typeof getAppStateSnapshot>["preferences"], "openDefaultPetOnLaunch" | "petScale" | "waitingAnimationDurationMs" | "reactionAnimationOverrides" | "petPoolOrder" | "petPoolEnabled" | "petConfinementEnabled" | "petCrossDisplayEnabled" | "petGravityEnabled">;
   petScaleOptions: typeof petScaleOptions;
   /** Non-broken, non-built-in installed pets available for pool selection. */
   petPoolCandidates: ReadonlyArray<{ readonly id: string; readonly displayName: string }>;
@@ -82,6 +82,7 @@ function getSettingsStateSnapshot(): {
     preferences: {
       openDefaultPetOnLaunch: state.preferences.openDefaultPetOnLaunch,
       petScale: state.preferences.petScale,
+      waitingAnimationDurationMs: state.preferences.waitingAnimationDurationMs,
       reactionAnimationOverrides: state.preferences.reactionAnimationOverrides,
       petPoolOrder: state.preferences.petPoolOrder,
       petPoolEnabled: state.preferences.petPoolEnabled,
@@ -350,12 +351,13 @@ export function installInternalUiHandlers(): void {
   ipcMain.handle("openpets:update-preferences", (event, patch: unknown) => {
     assertAllowedSender(event, ["control-center"]);
     const previousScale = getAppStateSnapshot().preferences.petScale;
+    const previousWaitingAnimationDurationMs = getAppStateSnapshot().preferences.waitingAnimationDurationMs;
     const previousOverrides = JSON.stringify(getAppStateSnapshot().preferences.reactionAnimationOverrides ?? {});
     const previousLocale = getActiveLocale();
     const previousPoolEnabled = getAppStateSnapshot().preferences.petPoolEnabled;
     const state = updatePreferences(validatePreferencePatch(patch));
     const nextOverrides = JSON.stringify(state.preferences.reactionAnimationOverrides ?? {});
-    if (state.preferences.petScale !== previousScale || nextOverrides !== previousOverrides) {
+    if (state.preferences.petScale !== previousScale || state.preferences.waitingAnimationDurationMs !== previousWaitingAnimationDurationMs || nextOverrides !== previousOverrides) {
       refreshDefaultPetContent();
       refreshAgentPetContent();
     }
@@ -771,7 +773,14 @@ async function getReactionAnimationSettingsSnapshot(): Promise<unknown> {
       label: t(`settings.animation.${animation.id}.label`),
       description: t(`settings.animation.${animation.id}.description`),
     })),
-    sprite: defaultPetSprite,
+    sprite: { ...defaultPetSprite, states: getConfiguredSpriteStates(state.preferences.waitingAnimationDurationMs) },
+    waitingAnimationDurationMs: state.preferences.waitingAnimationDurationMs,
+    waitingAnimationDurationOptions: waitingAnimationDurationOptions.map((option) => ({
+      value: option.value,
+      label: option.value === 1010
+        ? t("settings.waitingAnimationDuration.normal")
+        : t("settings.waitingAnimationDuration.relaxed"),
+    })),
     overrides: state.preferences.reactionAnimationOverrides ?? {},
     previewSpriteUrl: `openpets-pet-preview://spritesheet/default?v=${encodeURIComponent(preview.version)}`,
   };

@@ -3,13 +3,17 @@ import {
   allowedReactions,
   type OpenPetsReaction,
 } from "../src/local-ipc-protocol.js";
+import { defaultWaitingAnimationDurationMs, normalizeWaitingAnimationDurationMs } from "../src/app-state-core.js";
 import {
   defaultPetSprite,
   defaultReactionToSpriteState,
+  getConfiguredSpriteCacheKey,
+  getConfiguredSpriteStates,
   normalizeReactionAnimationOverrides,
   reactionAnimationMetadata,
   resolveReactionSpriteState,
   selectableAnimationMetadata,
+  waitingAnimationDurationOptions,
   validateReactionAnimationOverrides,
   type SpriteStateDefinition,
   type UniversalSpriteState,
@@ -57,6 +61,34 @@ assert.equal(defaultPetSprite.frameHeight, 208, "sprite frame height must be 208
 assert.equal(defaultPetSprite.columns, 8, "sprite columns must be 8");
 assert.equal(defaultPetSprite.rows, 9, "sprite rows must be 9");
 
+// Waiting duration preference normalization and supported values.
+assert.equal(defaultWaitingAnimationDurationMs, 1010, "waiting animation default must remain 1010 ms");
+assert.deepEqual(waitingAnimationDurationOptions.map((option) => option.value), [1010, 2200], "only normal and relaxed waiting durations are supported");
+assert.equal(normalizeWaitingAnimationDurationMs(1010), 1010);
+assert.equal(normalizeWaitingAnimationDurationMs(2200), 2200);
+for (const invalid of [undefined, null, "1010", 0, 1011, Number.NaN, Number.POSITIVE_INFINITY]) {
+  assert.equal(normalizeWaitingAnimationDurationMs(invalid), 1010, `invalid saved waiting duration ${String(invalid)} must use the default`);
+}
+
+// Configured state tables must be derived without changing canonical metadata.
+const canonicalStates = defaultPetSprite.states;
+const canonicalWaiting = defaultPetSprite.states.waiting;
+const normalStates = getConfiguredSpriteStates(1010);
+const relaxedStates = getConfiguredSpriteStates(2200);
+assert.notEqual(normalStates, canonicalStates, "configured states must be a fresh object");
+assert.notEqual(relaxedStates.waiting, canonicalWaiting, "configured waiting state must be a fresh object");
+assert.equal(normalStates.waiting.durationMs, 1010);
+assert.equal(relaxedStates.waiting.durationMs, 2200);
+for (const state of EXPECTED_SPRITE_STATE_IDS) {
+  if (state === "waiting") continue;
+  assert.deepEqual(normalStates[state], canonicalStates[state], `${state}: normal configuration must preserve canonical metadata`);
+  assert.deepEqual(relaxedStates[state], canonicalStates[state], `${state}: relaxed configuration must preserve canonical metadata`);
+}
+assert.strictEqual(defaultPetSprite.states, canonicalStates, "canonical state object identity must remain unchanged");
+assert.strictEqual(defaultPetSprite.states.waiting, canonicalWaiting, "canonical waiting state identity must remain unchanged");
+assert.equal(getConfiguredSpriteCacheKey(1010), "waiting-animation-duration:1010");
+assert.notEqual(getConfiguredSpriteCacheKey(1010), getConfiguredSpriteCacheKey(2200), "render/cache identity must change with waiting duration");
+
 // Exact sprite state ids
 const actualStateIds = Object.keys(defaultPetSprite.states) as UniversalSpriteState[];
 assertSameMembers(actualStateIds, EXPECTED_SPRITE_STATE_IDS, "sprite state ids must match expected states");
@@ -73,6 +105,19 @@ for (const [stateId, def] of Object.entries(defaultPetSprite.states) as [Univers
 // Reaction mapping keys match allowedReactions
 const reactionMappingKeys = Object.keys(defaultReactionToSpriteState) as OpenPetsReaction[];
 assertSameMembers(reactionMappingKeys, [...allowedReactions] as OpenPetsReaction[], "reaction mapping keys must match allowedReactions");
+assert.deepEqual(defaultReactionToSpriteState, {
+  idle: "idle",
+  thinking: "review",
+  working: "running",
+  editing: "running",
+  running: "running",
+  testing: "waiting",
+  waiting: "waiting",
+  waving: "waving",
+  success: "jumping",
+  error: "failed",
+  celebrating: "jumping",
+}, "existing reaction mappings must remain unchanged");
 
 // Every mapped value is selectable and exists in sprite states
 const selectableSet = new Set(EXPECTED_SELECTABLE_ANIMATION_IDS);

@@ -186,14 +186,14 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `main.ts`: Entry, single-instance lock, bootstrap sequence, JavaScript plugin host construction
 - `lifecycle.ts`: App event handlers (quit, window-all-closed, second-instance) with logging; stops plugin service, IPC, and pet windows on quit
 - `state.ts`: Simple shell pause state
-- `app-state.ts`: Persistent JSON state with V1 schema, atomic writes, reaction animation overrides
-- `app-state-core.ts`: Pet scale options, onboarding normalization
+- `app-state.ts`: Persistent JSON state with V1 schema, atomic writes, reaction animation overrides, and the validated waiting animation duration preference
+- `app-state-core.ts`: Pet scale options, waiting-duration options/normalization, onboarding normalization
 - `logger.ts`: Structured logging with scopes (app, ipc, lease, pet.default, pet.agent, pet.window, state, tray, ui), log rotation, redaction
 
 **UI**:
 - `tray.ts`: Tray icon (nativeImage), context menu builder, update status integration, route-targeted Control Center entries, logs folder
 - `windows.ts`: Control Center BrowserWindow factory, Dashboard snapshot, IPC handler registration, route targeting, reaction animation settings, plugin/integration/pet/settings UI IPC endpoints, and scoped internal protocols
-- `preference-patch.ts`: Pure validation of Control Center preference patches (`validatePreferencePatch`/`PreferencePatch`) for the `update-preferences` IPC path, including the `petCrossDisplayEnabled` toggle; consumed by `windows.ts`
+- `preference-patch.ts`: Pure validation of Control Center preference patches (`validatePreferencePatch`/`PreferencePatch`) for the `update-preferences` IPC path, including the waiting animation duration and `petCrossDisplayEnabled` toggle; consumed by `windows.ts`
 - `assets.ts`: Tray icon loading with generated fallback
 - `display.ts`: Screen geometry helpers, pet window positioning
 - `window-tracker-latch.ts`: Re-entrancy latch helper (`createLatchedTick`) that prevents overlapping async ticks from stacking; used by the window-tracking poller
@@ -206,7 +206,7 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `pet-motion-engine.ts`: Interpolated movement vector/tick engine for plugin-driven pet motion and target-following behavior
 - `built-in-pet.ts`: Built-in pet constant
 - `reaction-messages.ts`: Message pools for each reaction type
-- `reaction-animation-mapping.ts`: Reaction-to-animation state mapping, user-configurable overrides, sprite state definitions
+- `reaction-animation-mapping.ts`: Reaction-to-animation state mapping, user-configurable overrides, canonical sprite state definitions, and derived waiting-duration state tables
 - `i18n/`: Host message catalogs and localized reaction pools; see [i18n/codemap.md](i18n/codemap.md)
 
 **IPC**:

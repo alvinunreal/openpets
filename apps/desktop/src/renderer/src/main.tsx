@@ -24,14 +24,14 @@ type PetScaleOption = { label: string; value: number };
 type UserSelectableAnimationState = "idle" | "review" | "running" | "waiting" | "waving" | "jumping" | "failed";
 type ReactionAnimationOverrides = Record<string, UserSelectableAnimationState>;
 type PetPoolCandidate = { id: string; displayName: string };
-type SettingsState = { preferences: { openDefaultPetOnLaunch: boolean; locale?: "system" | string; petScale: number; reactionAnimationOverrides?: ReactionAnimationOverrides; petPoolEnabled: boolean; petPoolOrder?: readonly string[]; petConfinementEnabled: boolean; petCrossDisplayEnabled: boolean; petGravityEnabled: boolean }; petScaleOptions: PetScaleOption[]; petPoolCandidates: ReadonlyArray<PetPoolCandidate> };
+type SettingsState = { preferences: { openDefaultPetOnLaunch: boolean; locale?: "system" | string; petScale: number; waitingAnimationDurationMs: number; reactionAnimationOverrides?: ReactionAnimationOverrides; petPoolEnabled: boolean; petPoolOrder?: readonly string[]; petConfinementEnabled: boolean; petCrossDisplayEnabled: boolean; petGravityEnabled: boolean }; petScaleOptions: PetScaleOption[]; petPoolCandidates: ReadonlyArray<PetPoolCandidate> };
 type LaunchAtLoginState = { supported: boolean; enabled: boolean };
 type LanTopologyIssue = { code: "self_reference" | "missing_reverse"; host: string; edge: "left" | "right" | "up" | "down"; neighbor: string };
 type LanStatusSnapshot = { mode: "off" | "server" | "client"; localHost: string; serverUrl: string; port: number; auth: "token" | "none"; authSource: "env" | "stored" | "generated" | "none"; authInsecure: boolean; tokenHint: string | null; topologyHosts: number; topologyLinks: number; topologyIssues: LanTopologyIssue[]; currentHost: string | null; clients: Array<{ host: string; lastSeen: number; position?: { x: number; y: number } }>; updatedAt: number; persistedCurrentHost: string | null; persistedUpdatedAt: number | null };
 type UpdateStatus = { state: "idle" | "checking" | "available" | "current" | "error"; currentVersion: string; latestVersion?: string; releaseUrl?: string; checkedAt?: number; error?: string };
 type DashboardActivity = { messagesSent: number; reactionsSent: number; reactionCounts: Record<string, number>; perPetActivityCounts: Record<string, number>; lastActivityAt?: number };
 type DashboardSnapshot = { defaultPet: { id: string; displayName: string; previewSpriteUrl: string }; installedPetCount: number; catalog: { source: string; total?: number; page?: number; pageCount?: number; error?: string }; plugins: { installed: number; enabled: number; broken: number }; updateStatus: UpdateStatus; activity: DashboardActivity };
-type ReactionAnimationSettings = { reactions: { id: string; label: string; description: string; defaultAnimation: UserSelectableAnimationState }[]; animations: { id: UserSelectableAnimationState; label: string; description: string }[]; sprite: { frameWidth: number; frameHeight: number; columns: number; rows: number; states: Record<UserSelectableAnimationState, { row: number; frames: number; durationMs: number; iterations?: number | "infinite" }> }; overrides: ReactionAnimationOverrides; previewSpriteUrl: string };
+type ReactionAnimationSettings = { reactions: { id: string; label: string; description: string; defaultAnimation: UserSelectableAnimationState }[]; animations: { id: UserSelectableAnimationState; label: string; description: string }[]; sprite: { frameWidth: number; frameHeight: number; columns: number; rows: number; states: Record<UserSelectableAnimationState, { row: number; frames: number; durationMs: number; iterations?: number | "infinite" }> }; overrides: ReactionAnimationOverrides; previewSpriteUrl: string; waitingAnimationDurationMs: number; waitingAnimationDurationOptions: { value: number; label: string }[] };
 type PluginFilter = "all" | "installed" | "catalog" | "local" | "broken";
 type PluginPermission =
   | "pet:speak" | "pet:reaction" | "pet:move" | "timer" | "schedule" | "storage" | "status" | "commands" | "network"
@@ -1098,6 +1098,9 @@ function SettingsView() {
       if ("reactionAnimationOverrides" in patch) {
         setReactionSettings((current) => current ? { ...current, overrides: next.preferences.reactionAnimationOverrides ?? {} } : current);
       }
+      if ("waitingAnimationDurationMs" in patch) {
+        setReactionSettings(await api.getReactionAnimationSettings());
+      }
       setMessage(success);
     });
   }
@@ -1298,6 +1301,23 @@ function SettingsView() {
             <p className="text-sm text-slatecopy -mt-2 mb-2">{t("settings.reactions.description")}</p>
 
             <div className="settings-group">
+              <div className="settings-row">
+                <div className="settings-row-info">
+                  <strong>{t("settings.waitingAnimationDuration.title")}</strong>
+                  <small>{t("settings.waitingAnimationDuration.description")}</small>
+                </div>
+                <select
+                  className="settings-select"
+                  value={settings?.preferences.waitingAnimationDurationMs ?? ""}
+                  disabled={!reactionSettings || !settings || !!busy}
+                  data-testid="setting-waiting-animation-duration"
+                  onChange={(event) => patchPreferences({ waitingAnimationDurationMs: Number(event.target.value) }, t("settings.toast.waitingAnimationSaved"))}
+                >
+                  {(reactionSettings?.waitingAnimationDurationOptions ?? []).map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
               <div className="reaction-grid">
                 {(reactionSettings?.reactions ?? []).map((reaction) => {
                   const currentAnimation = overrides[reaction.id] ?? reaction.defaultAnimation;

@@ -142,8 +142,11 @@ installed.
 installed pets, the default-pet config, reaction→animation overrides, onboarding
 state, locale preference, the pet pool preference (ordered pet list +
 `petPoolEnabled` toggle), and display-roaming preferences (`petConfinementEnabled`,
-`petCrossDisplayEnabled`). `app-state-core.ts` holds pure helpers (scale
-options, onboarding normalization) that are testable without Electron.
+`petCrossDisplayEnabled`), plus the global `waitingAnimationDurationMs`
+preference. That duration is normalized to `1010` ms (Normal) or `2200` ms
+(Relaxed), with `1010` ms as the default. `app-state-core.ts` holds pure helpers
+(scale options, waiting-duration options, onboarding normalization) that are
+testable without Electron.
 
 #### Pet pool preference
 
