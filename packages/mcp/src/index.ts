@@ -56,6 +56,20 @@ export function wireTransportLifecycle(opts: TransportLifecycleOptions): { close
   let retryDelayMs = initialRetryDelayMs;
   const MAX_RETRY_DELAY_MS = 60_000;
   let closePromise: Promise<void> | null = null;
+  const retainedLeaseIds = new Set<string>();
+
+  const retainLeaseId = (leaseId: string | undefined): void => {
+    if (leaseId) retainedLeaseIds.add(leaseId);
+  };
+
+  const releaseRetainedLeases = async (): Promise<void> => {
+    retainLeaseId(lease.lease?.leaseId);
+    retainLeaseId(lease.staleLeaseId);
+    retainLeaseId(lease.staleLease?.leaseId);
+    for (const leaseId of retainedLeaseIds) {
+      try { await client.releaseLease(leaseId); } catch { /* best effort */ }
+    }
+  };
 
   function scheduleRetry(): void {
     if (retryTimer || lease.closing) return;
@@ -83,6 +97,10 @@ export function wireTransportLifecycle(opts: TransportLifecycleOptions): { close
     heartbeatTimer = setInterval(() => {
       if (lease.closing || !lease.lease) return;
       void client.heartbeatLease(lease.lease.leaseId).catch((error: unknown) => {
+        // A heartbeat may have started before close() published its closing state.
+        // Once closing is set, preserve the lease for teardown instead of letting
+        // this late rejection erase the ID that must be released.
+        if (lease.closing || !lease.lease) return;
         // Save full stale lease for heartbeat-first recovery in scheduleRetry / ensureLease
         lease.staleLease = lease.lease;
         lease.staleLeaseId = lease.lease?.leaseId;
@@ -99,6 +117,9 @@ export function wireTransportLifecycle(opts: TransportLifecycleOptions): { close
     if (closePromise) return closePromise;
     // Publish teardown state before any await so tools and timers cannot start recovery afterward.
     lease.closing = true;
+    retainLeaseId(lease.lease?.leaseId);
+    retainLeaseId(lease.staleLeaseId);
+    retainLeaseId(lease.staleLease?.leaseId);
     closePromise = (async () => {
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       heartbeatTimer = null;
@@ -108,11 +129,12 @@ export function wireTransportLifecycle(opts: TransportLifecycleOptions): { close
       if (lease.recoveryPromise) {
         try { await lease.recoveryPromise; } catch { /* recovery failure is already reflected in degradedReason */ }
       }
-      const leaseId = lease.lease?.leaseId;
+      await releaseRetainedLeases();
       lease.lease = undefined;
-      if (leaseId) {
-        try { await client.releaseLease(leaseId); } catch { /* best effort */ }
-      }
+      lease.staleLeaseId = undefined;
+      lease.staleLease = undefined;
+      lease.recoveryPromise = undefined;
+      lease.degradedReason = undefined;
       try { await server.close(); } catch { /* ignore shutdown errors */ }
     })();
     return closePromise;

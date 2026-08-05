@@ -104,12 +104,15 @@ registers exactly three tools — `openpets_status`, `openpets_react`,
 On startup it acquires a lease, heartbeats every ~5s, and releases on transport
 close or SIGINT/SIGTERM. Shutdown marks the shared lease context as closing,
 stops timers, waits for in-flight startup and single-flight recovery from either
-the heartbeat timer or a reaction/say tool, then releases the current lease
-before closing the server and exiting. No new recovery acquisition starts after
-teardown begins, so an agent that replaces an MCP process cannot leave a
-temporary second pool pet behind. Errors are sanitized so IPC paths/tokens/
-sockets never leak into tool output. It is spawned by the CLI (`runMcp()`) which
-forwards stdio and signals. `--pet <id>` targets a specific pet.
+the heartbeat timer or a reaction/say tool, then best-effort releases every
+retained lease ID exactly once before closing the server and exiting. A heartbeat
+failure that arrives after closing begins cannot erase the active lease needed
+for teardown; a failure just before closing retains its stale ID alongside any
+eventual recovery lease. No new recovery acquisition starts after teardown
+begins, so an agent that replaces an MCP process cannot leave a temporary second
+pool pet behind. Errors are sanitized so IPC paths/tokens/sockets never leak
+into tool output. It is spawned by the CLI (`runMcp()`) which forwards stdio and
+signals. `--pet <id>` targets a specific pet.
 
 > **Window confinement requires an installed pet.** Passing `--pet <id>` only
 > activates window confinement when the requested pet is actually installed. If

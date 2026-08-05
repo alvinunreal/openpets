@@ -24,7 +24,7 @@ Implements an MCP server exposing OpenPets functionality to AI agents via the Mo
 **Lifecycle Management** (`index.ts`):
 - Startup lease acquisition (async, non-blocking)
 - Heartbeat timer (5s interval, unref'd)
-- Graceful shutdown on SIGINT/SIGTERM (stop recovery sources, join startup/recovery, release lease, close server)
+- Graceful shutdown on SIGINT/SIGTERM (stop recovery sources, join startup/recovery, release retained lease IDs once, close server)
 - Stdio transport via `StdioServerTransport`
 
 **Argument Parsing** (`args.ts`):
@@ -52,7 +52,7 @@ server.connect(StdioServerTransport)
     ↓
 [Heartbeat] Every 5s: client.heartbeatLease()
     ↓
-[Shutdown] SIGINT/SIGTERM or transport close → mark shared lease context closing → stop timers → join startup/tool/timer recovery → releaseLease() → server.close() → exit once
+[Shutdown] SIGINT/SIGTERM or transport close → mark shared lease context closing → stop timers → join startup/tool/timer recovery → release retained active/stale/recovered lease IDs once → server.close() → exit once
 ```
 
 ## Integration Points
