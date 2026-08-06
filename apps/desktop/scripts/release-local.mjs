@@ -63,17 +63,17 @@ const desktopPackageJson = readJson(join(desktopDir, "package.json"));
 const version = desktopPackageJson.version;
 const tag = `v${version}`;
 const expectedWindowsInstaller = `OpenPets-${version}-win-x64-setup.exe`;
-const requiredDefaultArtifactNames = new Set([
+const requiredPreSigningArtifactNames = new Set([
   `OpenPets-${version}-mac-x64.dmg`,
   `OpenPets-${version}-mac-arm64.dmg`,
   `OpenPets-${version}-mac-x64.zip`,
   `OpenPets-${version}-mac-arm64.zip`,
-  expectedWindowsInstaller,
   `OpenPets-${version}-linux-x86_64.AppImage`,
   `OpenPets-${version}-linux-amd64.deb`,
   `OpenPets-${version}-linux-x86_64.rpm`,
   `OpenPets-${version}-linux-x64.tar.gz`,
 ]);
+const requiredFinalArtifactNames = new Set([...requiredPreSigningArtifactNames, expectedWindowsInstaller]);
 const optionalExperimentalArtifactNames = new Set([`OpenPets-${version}-linux-arm64.AppImage`]);
 
 main();
@@ -99,17 +99,16 @@ function main() {
   if (postBuildStatus) throw new Error(`Build/checks changed tracked or source files. Commit or revert them before releasing.\n${postBuildStatus}`);
 
   const localArtifacts = collectArtifacts(outputDir);
-  validateArtifactSet(localArtifacts, "local build");
-  requireFile(join(outputDir, expectedWindowsInstaller), "local Windows NSIS installer");
+  validateArtifactSet(localArtifacts, "local pre-signing build", requiredPreSigningArtifactNames);
 
-  console.log("\nLocal build artifacts (the Windows installer will be replaced by the signed workflow artifact):");
+  console.log("\nLocal pre-signing artifacts (the Windows installer is deliberately supplied only by SignPath):");
   for (const artifact of localArtifacts) console.log(`- ${relative(repoRoot, artifact)}`);
 
   if (dryRun) {
-    const checksumsPath = writeChecksums(localArtifacts);
+    const checksumsPath = writeChecksums(localArtifacts, "SHA256SUMS.local-preview");
     console.log(`- ${relative(repoRoot, checksumsPath)}`);
     console.log(`\nDry run complete. No tag, SignPath signing, GitHub release, or publication was performed for ${tag}.`);
-    console.log("The dry-run Windows installer is unsigned and was not exposed publicly.");
+    console.log("SignPath's Windows installer is deliberately absent from this local preview and was not exposed publicly.");
     return;
   }
   if (!yes) {
@@ -129,13 +128,13 @@ function main() {
   const signedArtifactDir = mkdtempSync(join(tmpdir(), `openpets-signpath-${version}-`));
   try {
     downloadSignedWindowsArtifact(signingRun.databaseId, signedArtifactDir);
-    replaceUnsignedWindowsInstaller(signedArtifactDir);
+    installSignedWindowsInstaller(signedArtifactDir);
   } finally {
     rmSync(signedArtifactDir, { recursive: true, force: true });
   }
 
   const finalArtifacts = collectArtifacts(outputDir);
-  validateArtifactSet(finalArtifacts, "signed release");
+  validateArtifactSet(finalArtifacts, "signed release", requiredFinalArtifactNames);
   requireFile(join(outputDir, expectedWindowsInstaller), "signed Windows NSIS installer");
   const checksumsPath = writeChecksums(finalArtifacts);
   const uploadArtifacts = [...finalArtifacts, checksumsPath];
@@ -347,7 +346,7 @@ function downloadSignedWindowsArtifact(runId, destination) {
   run("gh", ["run", "download", String(runId), "--repo", repository, "--name", signedWindowsArtifact, "--dir", destination], { cwd: repoRoot });
 }
 
-function replaceUnsignedWindowsInstaller(signedArtifactDir) {
+function installSignedWindowsInstaller(signedArtifactDir) {
   const files = listFilesRecursively(signedArtifactDir);
   const expectedNames = new Set([expectedWindowsInstaller, signedWindowsChecksum]);
   const unexpected = files.filter((filePath) => !expectedNames.has(basename(filePath)));
@@ -429,7 +428,6 @@ function createBuildPlan() {
   const plan = [
     { name: "mac dmg x64+arm64", args: ["--mac", "dmg", "--x64", "--arm64"] },
     { name: "mac zip x64+arm64", args: ["--mac", "zip", "--x64", "--arm64"] },
-    { name: "windows nsis x64", args: ["--win", "nsis", "--x64"] },
     { name: "linux AppImage x64", args: ["--linux", "AppImage", "--x64"] },
   ];
   if (!linuxPackageDir) {
@@ -501,11 +499,11 @@ function requireFile(filePath, description) {
   if (!stat.isFile()) throw new Error(`Expected ${description} to be a file: ${filePath}`);
 }
 
-function validateArtifactSet(artifacts, stage) {
+function validateArtifactSet(artifacts, stage, requiredArtifactNames) {
   const actualNames = new Set(artifacts.map((artifact) => basename(artifact)));
-  const missing = [...requiredDefaultArtifactNames].filter((name) => !actualNames.has(name));
+  const missing = [...requiredArtifactNames].filter((name) => !actualNames.has(name));
   const unexpected = [...actualNames].filter(
-    (name) => !requiredDefaultArtifactNames.has(name) && !(includeExperimentalArm && optionalExperimentalArtifactNames.has(name)),
+    (name) => !requiredArtifactNames.has(name) && !(includeExperimentalArm && optionalExperimentalArtifactNames.has(name)),
   );
   if (missing.length > 0 || unexpected.length > 0) {
     throw new Error(
@@ -514,9 +512,9 @@ function validateArtifactSet(artifacts, stage) {
   }
 }
 
-function writeChecksums(artifacts) {
+function writeChecksums(artifacts, fileName = "SHA256SUMS") {
   const lines = artifacts.map((artifact) => `${sha256(artifact)}  ${basename(artifact)}`);
-  const checksumsPath = join(outputDir, "SHA256SUMS");
+  const checksumsPath = join(outputDir, fileName);
   writeFileSync(checksumsPath, `${lines.join("\n")}\n`);
   return checksumsPath;
 }
@@ -584,5 +582,5 @@ function defaultReleaseNotes(previousTag) {
 }
 
 function printHelp() {
-  console.log(`Usage: pnpm release:desktop -- --yes\n\nBuilds local desktop artifacts, obtains the SignPath-signed Windows installer, then creates and publishes a verified GitHub release.\n\nDefault targets:\n  - macOS dmg x64+arm64\n  - macOS zip x64+arm64\n  - Windows nsis x64 (local build is replaced by the signed workflow artifact)\n  - Linux AppImage x64\n  - Linux deb x64\n  - Linux rpm x64\n  - Linux tar.gz x64\n\nOptions:\n  --yes                       tag, sign, create a draft release, verify assets, and publish\n  --resume                    with --yes, rebuild/re-sign a tagged HEAD and clobber draft assets\n  --dry-run                   build/check locally without tagging, signing, or changing GitHub\n  --linux-package-dir <dir>  use validated Ubuntu-built DEB/RPM files from an absolute staging directory\n  --skip-checks               skip pnpm build and desktop check (incompatible with --yes)\n  --include-experimental-arm  also build Windows/Linux ARM64 targets; the unsigned Windows ARM installer is not published\n`);
+  console.log(`Usage: pnpm release:desktop -- --yes\n\nBuilds local pre-signing artifacts, obtains the only public Windows installer from SignPath, then creates and publishes a verified GitHub release.\n\nDefault local targets:\n  - macOS dmg x64+arm64\n  - macOS zip x64+arm64\n  - Linux AppImage x64\n  - Linux deb x64\n  - Linux rpm x64\n  - Linux tar.gz x64\n\nThe Windows x64 installer is never built locally; it is produced by the SignPath workflow.\n\nOptions:\n  --yes                       tag, sign, create a draft release, verify assets, and publish\n  --resume                    with --yes, rebuild/re-sign a tagged HEAD and clobber draft assets\n  --dry-run                   build/check locally without tagging, signing, or changing GitHub\n  --linux-package-dir <dir>  use validated Ubuntu-built DEB/RPM files from an absolute staging directory\n  --skip-checks               skip pnpm build and desktop check (incompatible with --yes)\n  --include-experimental-arm  also build optional Windows/Linux ARM64 targets; Windows ARM is never published\n`);
 }

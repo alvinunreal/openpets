@@ -1,6 +1,6 @@
 # OpenPets Desktop Release Guide
 
-This guide is for an AI agent creating a new OpenPets desktop release. The release flow builds the desktop artifact set locally from macOS, then hands Windows signing to GitHub Actions/SignPath before creating and publishing a verified GitHub Release. The local Windows installer is disposable and is never uploaded.
+This guide is for an AI agent creating a new OpenPets desktop release. The release flow builds the macOS and Linux artifact set locally from macOS, then has GitHub Actions build and SignPath-sign the Windows x64 installer before downloading it into the final verified GitHub Release artifacts. The local flow does not build a disposable Windows x64 NSIS installer.
 
 ## Repository and app
 
@@ -172,11 +172,11 @@ Before running `pnpm release:npm`, align every publishable package in `scripts/r
 8. Requires desktop version to be stable semver and not `0.0.0`.
 9. Requires tag/release `v<version>` to not already exist.
 10. Captures the previous release tag before creating the new tag.
-11. Runs build/checks and builds the complete local artifact plan while `v<version>` does not exist.
+11. Runs build/checks and builds the complete local pre-signing artifact plan while `v<version>` does not exist; this local plan has no Windows x64 installer.
 12. Creates and pushes an annotated `v<version>` tag at `HEAD`.
 13. Dispatches `.github/workflows/signpath-windows.yml` against that tag with the production signing inputs.
 14. Finds and waits for the matching workflow run, including any required manual SignPath approval.
-15. Downloads `signed-openpets-windows-x64` outside the repository, requires the exact signed installer and handoff checksum, and replaces the disposable local Windows installer.
+15. Downloads `signed-openpets-windows-x64` outside the repository, requires the exact signed installer and handoff checksum, and adds the signed Windows x64 installer to the final artifact directory.
 16. Generates the release-wide `SHA256SUMS` only after the signed installer is in place.
 17. Creates a **draft** GitHub Release, uploads only the final artifacts and `SHA256SUMS`, verifies the exact remote asset set, and publishes it.
 
@@ -192,12 +192,13 @@ Default command for every desktop release:
 pnpm release:desktop -- --yes
 ```
 
-Default build matrix for the local release script always includes the full x64
-artifact set:
+The final release artifact set always includes the full x64 artifact set. The
+local release script builds the macOS and Linux artifacts; GitHub Actions builds
+and SignPath-signs the Windows x64 installer:
 
 - macOS DMG: x64 + arm64
 - macOS ZIP: x64 + arm64
-- Windows NSIS installer: x64, replaced by the SignPath-signed workflow artifact
+- Windows NSIS installer: x64, built and SignPath-signed by the workflow, then downloaded into the final artifacts
 - Linux AppImage: x64
 - Linux DEB: x64
 - Linux RPM: x64
@@ -235,11 +236,11 @@ then skips the failing local DEB/RPM targets, copies and validates the staged
 files into `dist-electron`, and continues only with the complete final artifact
 set. See [Linux DEB/RPM fallback via VMware](#linux-debrpm-fallback-via-vmware).
 
-`--include-experimental-arm` builds Windows ARM64 and Linux ARM64 locally. The SignPath handoff currently signs only the x64 installer, so the unsigned Windows ARM64 installer remains disposable and is not uploaded. Only use this flag if the additional Linux artifact can be tested.
+`--include-experimental-arm` builds Windows ARM64 and Linux ARM64 locally. Only the Windows x64 installer is handed off to SignPath; the locally built unsigned Windows ARM64 installer remains disposable and is not uploaded. Only use this flag if the additional Linux artifact can be tested.
 
 ## Windows code signing with SignPath
 
-OpenPets has a production certificate through the SignPath Foundation program. Use SignPath for Windows Authenticode signing before publishing Windows release artifacts. SignPath's GitHub trusted-build integration requires signing inputs to be uploaded from a GitHub Actions workflow artifact, so do not expect the local macOS release script to produce trusted SignPath-signed Windows files by itself.
+OpenPets has a production certificate through the SignPath Foundation program. Use SignPath for Windows Authenticode signing before publishing Windows release artifacts. SignPath's GitHub trusted-build integration requires signing inputs to be uploaded from a GitHub Actions workflow artifact, so the local macOS release script does not build the Windows x64 NSIS installer; it dispatches the workflow, which builds and signs it.
 
 ### Public code-signing policy
 
@@ -325,7 +326,7 @@ gh workflow run signpath-windows.yml --repo alvinunreal/openpets --ref v<version
 
 The release script locates the newly dispatched run by workflow, tag ref, `HEAD` SHA, event, and dispatch time. It visibly waits for completion; if the run pauses during a SignPath approval step, a signer/approver must approve the request in the SignPath dashboard before the workflow can continue. The script does not assume that approval succeeds automatically.
 
-After the workflow succeeds, the script downloads its `signed-openpets-windows-x64` artifact to a temporary directory outside the repository. It requires exactly `OpenPets-<version>-win-x64-setup.exe` and `SHA256SUMS.windows.txt`, validates the handoff checksum, replaces the disposable local Windows installer, and then generates the release-wide `SHA256SUMS`. `SHA256SUMS.windows.txt` is not uploaded to the GitHub Release.
+After the workflow succeeds, the script downloads its `signed-openpets-windows-x64` artifact to a temporary directory outside the repository. It requires exactly `OpenPets-<version>-win-x64-setup.exe` and `SHA256SUMS.windows.txt`, validates the handoff checksum, copies the signed installer into the final artifact directory, and then generates the release-wide `SHA256SUMS`. `SHA256SUMS.windows.txt` is not uploaded to the GitHub Release.
 
 ### Recovery when the automated handoff is interrupted
 
@@ -337,7 +338,7 @@ pnpm release:desktop -- --yes --resume
 
 `--resume` requires both local and origin `v<version>` tags to point to `HEAD`, accepts no release or a draft release, refuses a published release, and replaces draft assets with `--clobber` only after a fresh successful signing handoff. If the tag push itself failed, push that existing local tag to origin first. The script never deletes tags automatically.
 
-For a narrowly scoped manual recovery when the script cannot dispatch the workflow, use the production dispatch shown above, download the named final artifact with `gh run download`, and use only its signed installer when repairing a draft release. Never upload the workflow's `SHA256SUMS.windows.txt` as a release asset, never upload the local unsigned installer, and regenerate the release-wide `SHA256SUMS` after any replacement.
+For a narrowly scoped manual recovery when the script cannot dispatch the workflow, use the production dispatch shown above, download the named final artifact with `gh run download`, and use only its signed installer when repairing a draft release. Never upload the workflow's `SHA256SUMS.windows.txt` as a release asset, never upload a locally built unsigned Windows installer (including the optional ARM64 installer), and regenerate the release-wide `SHA256SUMS` after any replacement.
 
 ## Full release procedure
 
@@ -449,11 +450,13 @@ Run:
 pnpm release:desktop -- --dry-run
 ```
 
-This should pass preflight, build artifacts, generate a local preview checksum,
-and stop before creating a tag, dispatching SignPath, or changing GitHub. The
-dry-run Windows installer is unsigned and is not a release asset. A dry run is
-recommended for risky releases, but it can be skipped when the current release
-has already been validated and the user explicitly approves publishing directly.
+This should pass preflight, build the local macOS/Linux pre-signing artifacts,
+generate `SHA256SUMS.local-preview` for them, and stop before creating a tag,
+dispatching SignPath, or changing GitHub. The Windows x64 installer is not built
+during a dry run; it is produced only by the GitHub Actions/SignPath workflow
+and is therefore absent from the local preview. A dry run is recommended for
+risky releases, but it can be skipped when the current release has already been
+validated and the user explicitly approves publishing directly.
 
 If it fails because the tree is dirty, inspect:
 
@@ -473,10 +476,10 @@ pnpm release:desktop -- --yes
 
 The script builds locally while the tag does not exist, creates and pushes an
 annotated tag, automatically dispatches the production SignPath workflow, and
-waits for its final artifact. It then replaces the local unsigned Windows
-installer, calculates `SHA256SUMS`, creates a **draft** release, uploads only
-the final artifacts and `SHA256SUMS`, verifies the exact remote asset names,
-and publishes the release named/tagged:
+waits for its final signed artifact. It then downloads and adds the signed
+Windows x64 installer to the final artifacts, calculates `SHA256SUMS`, creates a
+**draft** release, uploads only the final artifacts and `SHA256SUMS`, verifies
+the exact remote asset names, and publishes the release named/tagged:
 
 ```txt
 v<version>
@@ -597,14 +600,16 @@ pnpm release:desktop -- --yes --resume
 
 ## Manual packaging smoke commands
 
-These do not create a GitHub Release:
+These do not create a GitHub Release and cover the locally built macOS/Linux
+package smoke targets. The Windows x64 NSIS installer is built and signed by the
+GitHub Actions workflow; test the signed workflow or release artifact instead
+of building a disposable local x64 installer.
 
 ```bash
 pnpm --filter @open-pets/desktop build
 node apps/desktop/scripts/clean-package-output.cjs
 pnpm --dir apps/desktop exec electron-builder --mac dmg --x64 --publish never
 pnpm --dir apps/desktop exec electron-builder --mac dmg --arm64 --publish never
-pnpm --dir apps/desktop exec electron-builder --win nsis --x64 --publish never
 pnpm --dir apps/desktop exec electron-builder --linux AppImage --x64 --publish never
 pnpm --dir apps/desktop exec electron-builder --linux rpm --x64 --publish never
 ```
@@ -878,7 +883,7 @@ npx -y @open-pets/cli@<version> --help
 - `--dry-run` is local only; it does not create tags, dispatch SignPath, or change GitHub.
 - Use `--resume` only with `--yes` after a failed tagged attempt; it refuses published releases.
 - Do not upload the entire `dist-electron` directory manually. Upload only final top-level artifacts and `SHA256SUMS`.
-- Do not upload `SHA256SUMS.windows.txt` or a locally built unsigned Windows installer.
+- Do not upload `SHA256SUMS.windows.txt` or a locally built unsigned Windows installer, including the optional ARM64 installer.
 - Keep the tag format as `v<version>`.
 - Keep `publish: null` in `electron-builder.yml`; GitHub release upload is handled by the local script.
 - Windows icon is `apps/desktop/assets/app-icon.ico`.
