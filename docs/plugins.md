@@ -146,6 +146,16 @@ so it cannot be used for `voice.listen`. Anthropic is not transcription-capable
 through this path. MiniMax supports OpenAI-compatible chat completions and
 streaming; choose OpenAI or Ollama when a plugin needs `voice.listen`.
 
+`voice.listen` is one-shot push-to-talk, never ambient. The host captures in a
+temporary per-request session and displays **OpenPets is listening** only after
+microphone acquisition succeeds. It accepts only one active capture, clamps the
+recording duration to 1-30 seconds, times microphone acquisition out after 15
+seconds, and bounds transcription separately at 30 seconds. The host can cancel
+during acquisition, recording, or transcription; cancellation stops media tracks,
+aborts transcription, closes the capture window, clears temporary session data,
+and prevents late renderer events from reviving the request. Whitespace-only
+transcripts fail with `Voice transcription returned no text.`
+
 ### Display deliveries
 
 `ui:delivery` is a dedicated permission for the generic, host-owned delivery
@@ -204,6 +214,11 @@ mirror of all this is the SDK in [sdk.md](sdk.md).
   the inspector and health UI.
 - `plugin-platform-settings.ts` — global gates for audio, voice, speech,
   microphone, quiet hours, and AI provider choices.
+- `plugin-voice.ts` + `voice-listening-service.ts` — the plugin-facing one-shot
+  facade and host-owned transcription/cancellation lifecycle.
+- `voice-capture.ts` + `voice-capture-electron.ts` — bounded capture state and
+  the temporary Electron microphone session.
+- `voice-privacy-indicator-electron.ts` — the host-owned listening indicator.
 - `plugin-user-sound-store.ts` — stores imported user sounds as opaque refs, not
   raw filesystem paths.
 - `plugin-i18n.ts` — resolves plugin locales, manifest `$t:`, and `ctx.t()`.

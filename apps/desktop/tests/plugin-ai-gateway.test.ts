@@ -20,6 +20,9 @@ try {
   const gateway = new PluginAiGateway(secrets);
   globalThis.fetch = async (input, init) => {
     fetchCalls.push({ input, init });
+    if (String(input).includes("/audio/transcriptions")) {
+      return new Response(JSON.stringify({ text: "transcribed" }), { status: 200 });
+    }
     return new Response(JSON.stringify({ choices: [{ message: { content: "MiniMax says hello" } }] }), { status: 200 });
   };
 
@@ -44,6 +47,13 @@ try {
     },
   );
   assert.equal(fetchCalls.length, 0);
+
+  updatePluginPlatformSettings({ ai: { provider: "openai", model: "" } });
+  fetchCalls.length = 0;
+  const controller = new AbortController();
+  assert.equal(await gateway.transcribe(new Uint8Array([1, 2, 3]), "audio/webm", controller.signal), "transcribed");
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(fetchCalls[0]?.init?.signal, controller.signal);
 } finally {
   globalThis.fetch = previousFetch;
   updatePluginPlatformSettings(previousSettings);

@@ -53,6 +53,7 @@ export class PluginRuntime {
   readonly #logger: (level: PluginLogLevel, message: string, fields?: Record<string, unknown>) => void;
   readonly #onPluginRuntimeError?: PluginRuntimeOptions["onPluginRuntimeError"];
   readonly #slots = new Map<string, PluginRuntimeSlot>();
+  readonly #reloads = new Map<string, Promise<void>>();
   #active = false;
 
   constructor(options: PluginRuntimeOptions) {
@@ -75,10 +76,12 @@ export class PluginRuntime {
     logPluginDiagnostic(this.#logger, "debug", "plugin runtime start", { phase: "success" });
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     logPluginDiagnostic(this.#logger, "debug", "plugin runtime stop", { phase: "begin" });
     this.#active = false;
-    for (const id of this.#slots.keys()) this.#cancelPlugin(id);
+    const pendingReloads = [...this.#reloads.values()];
+    await Promise.all([...this.#slots.keys()].map((id) => this.#cancelPlugin(id)));
+    await Promise.all(pendingReloads);
     logPluginDiagnostic(this.#logger, "debug", "plugin runtime stop", { phase: "end" });
   }
 
@@ -90,7 +93,7 @@ export class PluginRuntime {
   resyncSchedules(): void { this.#sdkBridge.resyncSchedules(); }
 
   async reloadAll(): Promise<void> {
-    for (const id of this.#slots.keys()) this.#cancelPlugin(id);
+    await Promise.all([...this.#slots.keys()].map((id) => this.#cancelPlugin(id)));
     const records = this.#stateStore.listRecords();
     const jsIds: string[] = [];
     for (const record of records) {
@@ -101,9 +104,20 @@ export class PluginRuntime {
   }
 
   async reloadPlugin(id: string): Promise<void> {
+    const previous = this.#reloads.get(id) ?? Promise.resolve();
+    const current = previous.catch(() => undefined).then(() => this.#reloadPlugin(id));
+    this.#reloads.set(id, current);
+    try {
+      await current;
+    } finally {
+      if (this.#reloads.get(id) === current) this.#reloads.delete(id);
+    }
+  }
+
+  async #reloadPlugin(id: string): Promise<void> {
     const started = Date.now();
     logPluginDiagnostic(this.#logger, "debug", "plugin reload", { pluginId: id, phase: "begin" });
-    this.#cancelPlugin(id);
+    await this.#cancelPlugin(id);
     if (!this.#active) { logPluginDiagnostic(this.#logger, "debug", "plugin reload", { pluginId: id, phase: "skip", reason: "runtime-inactive" }); return; }
     const record = this.#stateStore.getRecord(id);
     if (!record || !record.enabled || record.catalogDisabled) { logPluginDiagnostic(this.#logger, "debug", "plugin reload", { pluginId: id, phase: "skip", reason: !record ? "not-installed" : !record.enabled ? "disabled" : "catalog-disabled" }); return; }
@@ -164,6 +178,8 @@ export class PluginRuntime {
     } });
     if (!this.#canCommitReload(record, generation)) {
       host.stop();
+      unregisterPluginLocales(record.id);
+      await this.#clearPlugin(record.id);
       return;
     }
     slot.jsHost = host;
@@ -201,11 +217,11 @@ export class PluginRuntime {
     logPluginDiagnostic(this.#logger, "error", "plugin marked broken", { pluginId: id, reason });
     const record = this.#stateStore.getRecord(id);
     this.#onPluginRuntimeError?.({ plugin_source: record?.bundled ? "bundled" : record?.source, plugin_runtime: record?.runtime, permission_count: record?.approvedPermissions.length, error_code: classifyPluginError(reason) });
-    this.#cancelPlugin(id);
+    void this.#cancelPlugin(id);
     this.#stateStore.setBrokenReason(id, reason);
   }
 
-  #cancelPlugin(id: string): void {
+  async #cancelPlugin(id: string): Promise<void> {
     const slot = this.#slotFor(id);
     if (slot.active || slot.timers.length > 0 || slot.jsHost) logPluginDiagnostic(this.#logger, "debug", "plugin cancel", { pluginId: id, phase: "begin", count: slot.timers.length });
     slot.active = false;
@@ -215,10 +231,16 @@ export class PluginRuntime {
     slot.jsHost?.stop();
     slot.jsHost = undefined;
     unregisterPluginLocales(id);
-    this.#sdkBridge.clearPlugin(id);
-    const teardown = (this.#capabilities as { clearPlugin?: (pluginId: string) => void } | undefined)?.clearPlugin;
-    if (teardown) { try { teardown(id); } catch { /* host teardown is best effort */ } }
+    await this.#clearPlugin(id);
     logPluginDiagnostic(this.#logger, "debug", "plugin cancel", { pluginId: id, phase: "end" });
+  }
+
+  async #clearPlugin(id: string): Promise<void> {
+    this.#sdkBridge.clearPlugin(id);
+    const teardown = (this.#capabilities as { clearPlugin?: (pluginId: string) => void | Promise<void> } | undefined)?.clearPlugin;
+    if (teardown) {
+      try { await teardown(id); } catch { /* host teardown is best effort */ }
+    }
   }
 
   #slotFor(id: string): PluginRuntimeSlot {

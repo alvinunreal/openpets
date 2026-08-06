@@ -125,7 +125,10 @@ main.ts → initializePluginService(userData, defaultPluginPetApi, appVersion, E
 │   ├── declarative runtime schedules timer triggers
 │   ├── plugin-js-host.ts starts hidden sandboxed BrowserWindow hosts for JavaScript plugins
 │   └── plugin-sdk-bridge.ts dispatches namespaced SDK routes
-│       ├── plugin-sdk-audio.ts/plugin-voice.ts → renderer/OS playback and speech surfaces
+│       ├── plugin-sdk-audio.ts/plugin-voice.ts → renderer/OS playback and one-shot voice surfaces
+│       │   ├── voice-capture.ts/voice-capture-electron.ts → bounded microphone ownership and cleanup
+│       │   ├── voice-listening-service.ts → transcription timeout, cancellation, and empty-text guard
+│       │   └── voice-privacy-indicator-electron.ts → host-owned live-track indicator
 │       ├── plugin-sdk-bus.ts/plugin-sdk-events.ts → curated pub/sub and host event streams
 │       ├── plugin-sdk-config.ts/plugin-sdk-storage.ts/plugin-sdk-state.ts → config, persistent plugin data, and subscriptions
 │       ├── plugin-sdk-ui.ts/plugin-panels.ts/plugin-toast.ts → bubbles, alerts, commands, panels, and toasts
@@ -261,7 +264,10 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `plugin-secrets.ts`: Plugin-scoped encrypted secret storage backed by Electron safe storage primitives.
 - `plugin-toast.ts`: Host toast/notification routing for plugin UI events.
 - `plugin-user-sound-store.ts`: Plugin-scoped imported user sound registry that stores opaque sound refs instead of raw filesystem paths.
-- `plugin-voice.ts`: Voice/TTS and one-shot listen facade gated by settings and permissions.
+- `plugin-voice.ts`: Voice/TTS and one-shot listen facade gated by settings and permissions; owns host cancellation hooks.
+- `voice-capture.ts` / `voice-capture-electron.ts`: One-active-at-a-time microphone capture with separate acquisition timeout, media-track cleanup, and temporary-session teardown.
+- `voice-listening-service.ts`: Transcription timeout, abort handling, whitespace-only rejection, and late-event suppression.
+- `voice-privacy-indicator.ts` / `voice-privacy-indicator-electron.ts`: Track-driven host privacy indicator, hidden until acquisition succeeds.
 
 **Agent Integration**:
 - `agent-setup.ts`: Claude/OpenCode/Cursor detection, MCP configuration, hooks management, action journaling

@@ -46,15 +46,15 @@ export class PluginAiGateway {
   }
 
   /** One-shot audio transcription backing voice.listen (OpenAI-compatible only). */
-  async transcribe(audio: Uint8Array, mimeType: string): Promise<string> {
+  async transcribe(audio: Uint8Array, mimeType: string, signal?: AbortSignal): Promise<string> {
     const { provider, baseUrl, apiKey } = await this.#resolveProvider();
     if (provider === "anthropic") throw new Error("Speech-to-text needs an OpenAI-compatible AI provider.");
     if (provider === "minimax") throw new Error("The configured MiniMax OpenAI-compatible provider/path does not support voice transcription in OpenPets. Choose a transcription-capable provider (OpenAI or Ollama) in OpenPets settings.");
     const url = `${openAiBase(baseUrl, provider)}/audio/transcriptions`;
     const form = new FormData();
-    form.append("file", new Blob([Buffer.from(audio)], { type: mimeType }), "speech.webm");
+    form.append("file", new Blob([Buffer.from(audio)], { type: mimeType }), `speech.${audioFileExtension(mimeType)}`);
     form.append("model", "whisper-1");
-    const response = await fetch(url, { method: "POST", headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {}, body: form });
+    const response = await fetch(url, { method: "POST", headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {}, body: form, ...(signal ? { signal } : {}) });
     if (!response.ok) throw new Error(`Transcription failed with HTTP ${response.status}.`);
     const parsed = await response.json() as { text?: string };
     return typeof parsed.text === "string" ? parsed.text : "";
@@ -169,6 +169,14 @@ export class PluginAiGateway {
     });
     return { text };
   }
+}
+
+function audioFileExtension(mimeType: string): string {
+  const baseType = mimeType.toLowerCase().split(";", 1)[0] ?? "";
+  if (baseType.includes("ogg")) return "ogg";
+  if (baseType.includes("wav")) return "wav";
+  if (baseType.includes("mp4")) return "mp4";
+  return "webm";
 }
 
 function openAiBase(baseUrl: string | undefined, provider: "openai" | "ollama" | "minimax"): string {

@@ -78,6 +78,10 @@ These are the flows worth holding in memory. Each links to the doc that details 
   or local), the runtime starts a sandboxed JS host, and the SDK bridge applies
   permission-checked calls to pet/schedule/storage/UI/etc. See [plugins.md](plugins.md)
   and [sdk.md](sdk.md).
+- **Listening through a plugin.** `voice.listen()` performs one bounded capture in
+  a host-owned temporary session, shows the privacy indicator only after microphone
+  acquisition succeeds, transcribes through the configured provider, and cleans up
+  on success, cancellation, timeout, teardown, or shutdown. It is never ambient.
 - **Configuring an agent.** The CLI or Control Center detects the agent, writes
   MCP config + hooks/rules atomically, and installs a memory/instructions file.
   See [agent-integrations.md](agent-integrations.md).
@@ -102,6 +106,9 @@ These hold everywhere; the rest of the docs assume them.
 - **Least privilege.** Renderers are sandboxed with narrow preload bridges and a
   strict CSP; plugins run in a permission-gated sandbox; IPC over TCP is
   restricted to private/loopback addresses.
+- **Voice is bounded and visible.** Listening is one-shot, one-at-a-time,
+  explicitly cancellable, visibly indicated while a media track is live, and
+  bounded by separate microphone-acquisition and transcription timeouts.
 
 ## Glossary
 
