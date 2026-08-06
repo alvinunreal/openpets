@@ -25,6 +25,7 @@ Preflight checks (git clean, remote sync, version validity)
 → Build and test (unless --skip-checks)
 → Clean output directory
 → Execute electron-builder for each target in build plan
+→ (with --linux-package-dir) skip local DEB/RPM and copy validated Ubuntu packages into output
 → (dry-run) Generate local preview SHA256SUMS and stop
 → Create/push annotated release tag
 → Dispatch SignPath workflow and wait for the matching signed run
@@ -41,7 +42,7 @@ Check preload syntax → Compile tests to .test-dist → Run behavior tests → 
 
 ## Integration Points
 
-- **File System**: `apps/desktop/dist-electron/` (build output), `apps/desktop/dist/` (compiled JS)
+- **File System**: `apps/desktop/dist-electron/` (build output), `apps/desktop/dist/` (compiled JS), optional external Linux package staging directory
 - **Git**: Working tree status, remote sync verification, tag existence checks
 - **GitHub**: `gh workflow run`, `gh run list/download`, and draft-to-published release operations for `alvinunreal/openpets`
 - **Build Tools**: `pnpm`, `electron-builder`, `node --check`
@@ -67,5 +68,6 @@ Options:
 - `--yes`: tag, obtain the SignPath-signed Windows x64 installer, verify a draft release, and publish
 - `--resume`: with `--yes`, retry a tagged `HEAD` and clobber draft assets; refuses published releases
 - `--dry-run`: local build/check and checksum preview only; no tag, signing, or GitHub mutation
+- `--linux-package-dir <absolute-dir>`: use validated Ubuntu-built DEB/RPM files from external staging, skipping local DEB/RPM builds
 - `--skip-checks`: skip build/check commands; incompatible with `--yes`
 - `--include-experimental-arm`: build Windows/Linux ARM64 targets; unsigned Windows ARM64 is disposable and not published

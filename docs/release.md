@@ -219,7 +219,8 @@ SHA256SUMS
 ```
 
 The old per-target optional flags were removed to avoid partial releases. The
-only extra artifact flag is for experimental ARM builds:
+experimental ARM flag remains optional, and `--linux-package-dir` is available
+only for the validated Ubuntu DEB/RPM fallback described below:
 
 ```bash
 pnpm release:desktop -- --yes --include-experimental-arm
@@ -228,8 +229,11 @@ pnpm release:desktop -- --yes --include-experimental-arm
 On Apple Silicon macOS, Linux RPM packaging can fail in `fpm`/`rpmbuild`, and
 Electron Builder can produce an invalid tiny DEB archive. If that happens, do
 not publish a partial release. Build valid DEB/RPM replacements inside the
-Ubuntu VMware guest, then restart the release flow with the complete final
-artifact set. See [Linux DEB/RPM fallback via VMware](#linux-debrpm-fallback-via-vmware).
+Ubuntu VMware guest, place them in an external staging directory, and use
+`--linux-package-dir` for both the dry run and production command. The script
+then skips the failing local DEB/RPM targets, copies and validates the staged
+files into `dist-electron`, and continues only with the complete final artifact
+set. See [Linux DEB/RPM fallback via VMware](#linux-debrpm-fallback-via-vmware).
 
 `--include-experimental-arm` builds Windows ARM64 and Linux ARM64 locally. The SignPath handoff currently signs only the x64 installer, so the unsigned Windows ARM64 installer remains disposable and is not uploaded. Only use this flag if the additional Linux artifact can be tested.
 
@@ -642,20 +646,33 @@ Build only the Linux package targets in the guest:
 vagrant ssh -c 'set -e; cd /home/vagrant/src/openpets; pnpm install --frozen-lockfile; pnpm --filter @open-pets/desktop build; cd apps/desktop; node scripts/clean-package-output.cjs; pnpm exec electron-builder --linux deb --x64 --publish never; pnpm exec electron-builder --linux rpm --x64 --publish never; ls -lh dist-electron/OpenPets-<version>-linux-amd64.deb dist-electron/OpenPets-<version>-linux-x86_64.rpm; file dist-electron/OpenPets-<version>-linux-amd64.deb dist-electron/OpenPets-<version>-linux-x86_64.rpm'
 ```
 
-Copy the valid artifacts back through the VM's `/vagrant` share for validation:
+Copy the valid artifacts back through the VM's `/vagrant` share, then place
+them in an absolute host staging directory. Do not put them in
+`apps/desktop/dist-electron/`; the release script cleans that directory and
+copies the validated files into it itself:
 
 ```bash
 vagrant ssh -c 'set -e; cp /home/vagrant/src/openpets/apps/desktop/dist-electron/OpenPets-<version>-linux-amd64.deb /vagrant/; cp /home/vagrant/src/openpets/apps/desktop/dist-electron/OpenPets-<version>-linux-x86_64.rpm /vagrant/'
-cp /Volumes/external/vmware/ubuntu24/OpenPets-<version>-linux-amd64.deb apps/desktop/dist-electron/
-cp /Volumes/external/vmware/ubuntu24/OpenPets-<version>-linux-x86_64.rpm apps/desktop/dist-electron/
+STAGING_DIR="/absolute/path/openpets-linux-packages/<version>"
+mkdir -p "$STAGING_DIR"
+cp /Volumes/external/vmware/ubuntu24/OpenPets-<version>-linux-amd64.deb "$STAGING_DIR/"
+cp /Volumes/external/vmware/ubuntu24/OpenPets-<version>-linux-x86_64.rpm "$STAGING_DIR/"
 ```
 
-The local release script cleans and rebuilds `dist-electron`, so do not copy
-these files in and then run `--yes` expecting them to be preserved. Instead,
-use the VM result to diagnose the macOS packaging failure and restart the
-release from a host that can produce the complete valid artifact set. Do not
-publish a partial release or repair a published release by uploading only a
-replacement DEB/RPM.
+Run the complete release flow with the same staging directory for the dry run
+and production command:
+
+```bash
+pnpm release:desktop -- --dry-run --linux-package-dir "$STAGING_DIR"
+pnpm release:desktop -- --yes --linux-package-dir "$STAGING_DIR"
+```
+
+The option requires exactly these two files, rejects symlinks and packages
+smaller than 1 MiB, skips only the local DEB/RPM builds, and copies the files under
+`dist-electron` before strict artifact validation. This remains a full release:
+do not publish a partial set or upload the staged files directly. If using
+`--include-experimental-arm`, add it to both commands; the unsigned Windows
+ARM installer remains disposable and is not published.
 
 ## Microsoft Store package quick actions
 

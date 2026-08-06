@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, extname, join, relative, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
@@ -16,6 +16,7 @@ const signedWindowsArtifact = "signed-openpets-windows-x64";
 const signedWindowsChecksum = "SHA256SUMS.windows.txt";
 const signPathPollIntervalMs = 10_000;
 const signPathTimeoutMs = 2 * 60 * 60 * 1_000;
+const minimumLinuxPackageBytes = 1 * 1024 * 1024;
 
 const allowedArgs = new Set([
   "--dry-run",
@@ -25,10 +26,24 @@ const allowedArgs = new Set([
   "--skip-checks",
   "--help",
 ]);
-const rawArgs = process.argv.slice(2).filter((arg) => arg !== "--");
-const unknownArgs = rawArgs.filter((arg) => !allowedArgs.has(arg));
-if (unknownArgs.length > 0) throw new Error(`Unknown release option(s): ${unknownArgs.join(", ")}`);
-const args = new Set(rawArgs);
+const rawArgs = process.argv.slice(2);
+const args = new Set();
+let linuxPackageDir = null;
+for (let index = 0; index < rawArgs.length; index += 1) {
+  const arg = rawArgs[index];
+  if (arg === "--") continue;
+  if (arg === "--linux-package-dir" || arg.startsWith("--linux-package-dir=")) {
+    if (linuxPackageDir !== null) throw new Error("Duplicate --linux-package-dir option.");
+    const value = arg === "--linux-package-dir" ? rawArgs[index + 1] : arg.slice("--linux-package-dir=".length);
+    if (!value || value === "--" || value.startsWith("--")) throw new Error("--linux-package-dir requires a non-empty absolute directory path.");
+    if (!isAbsolute(value)) throw new Error(`--linux-package-dir must be an absolute path. Received: ${value}`);
+    linuxPackageDir = value;
+    if (arg === "--linux-package-dir") index += 1;
+    continue;
+  }
+  if (!allowedArgs.has(arg)) throw new Error(`Unknown release option or positional value: ${arg}`);
+  args.add(arg);
+}
 const dryRun = args.has("--dry-run");
 const yes = args.has("--yes");
 const resume = args.has("--resume");
@@ -78,6 +93,7 @@ function main() {
   for (const build of createBuildPlan()) {
     run("pnpm", ["exec", "electron-builder", ...build.args, "--publish", "never"], { cwd: desktopDir });
   }
+  copyLinuxPackageArtifacts();
 
   const postBuildStatus = getGitStatusIgnoringPackageOutput();
   if (postBuildStatus) throw new Error(`Build/checks changed tracked or source files. Commit or revert them before releasing.\n${postBuildStatus}`);
@@ -415,10 +431,12 @@ function createBuildPlan() {
     { name: "mac zip x64+arm64", args: ["--mac", "zip", "--x64", "--arm64"] },
     { name: "windows nsis x64", args: ["--win", "nsis", "--x64"] },
     { name: "linux AppImage x64", args: ["--linux", "AppImage", "--x64"] },
-    { name: "linux deb x64", args: ["--linux", "deb", "--x64"] },
-    { name: "linux rpm x64", args: ["--linux", "rpm", "--x64"] },
-    { name: "linux tar.gz x64", args: ["--linux", "tar.gz", "--x64"] },
   ];
+  if (!linuxPackageDir) {
+    plan.push({ name: "linux deb x64", args: ["--linux", "deb", "--x64"] });
+    plan.push({ name: "linux rpm x64", args: ["--linux", "rpm", "--x64"] });
+  }
+  plan.push({ name: "linux tar.gz x64", args: ["--linux", "tar.gz", "--x64"] });
   if (includeExperimentalArm) {
     plan.push({ name: "windows nsis arm64", args: ["--win", "nsis", "--arm64"] });
     plan.push({ name: "linux AppImage arm64", args: ["--linux", "AppImage", "--arm64"] });
@@ -426,6 +444,37 @@ function createBuildPlan() {
   console.log("Build plan:");
   for (const build of plan) console.log(`- ${build.name}`);
   return plan;
+}
+
+function copyLinuxPackageArtifacts() {
+  if (!linuxPackageDir) return;
+
+  let directoryStat;
+  try {
+    directoryStat = lstatSync(linuxPackageDir);
+  } catch {
+    throw new Error(`Linux package staging directory does not exist: ${linuxPackageDir}`);
+  }
+  if (directoryStat.isSymbolicLink() || !directoryStat.isDirectory()) {
+    throw new Error(`Linux package staging path must be a real directory: ${linuxPackageDir}`);
+  }
+
+  for (const name of [`OpenPets-${version}-linux-amd64.deb`, `OpenPets-${version}-linux-x86_64.rpm`]) {
+    const sourcePath = join(linuxPackageDir, name);
+    let sourceStat;
+    try {
+      sourceStat = lstatSync(sourcePath);
+    } catch {
+      throw new Error(`Missing Linux package artifact in staging directory: ${sourcePath}`);
+    }
+    if (sourceStat.isSymbolicLink() || !sourceStat.isFile()) {
+      throw new Error(`Linux package artifact must be an ordinary file, not a symlink or directory: ${sourcePath}`);
+    }
+    if (sourceStat.size < minimumLinuxPackageBytes) {
+      throw new Error(`Linux package artifact is too small to be valid (${sourceStat.size} bytes; minimum ${minimumLinuxPackageBytes}): ${sourcePath}`);
+    }
+    copyFileSync(sourcePath, join(outputDir, name));
+  }
 }
 
 function collectArtifacts(dir) {
@@ -535,5 +584,5 @@ function defaultReleaseNotes(previousTag) {
 }
 
 function printHelp() {
-  console.log(`Usage: pnpm release:desktop -- --yes\n\nBuilds local desktop artifacts, obtains the SignPath-signed Windows installer, then creates and publishes a verified GitHub release.\n\nDefault targets:\n  - macOS dmg x64+arm64\n  - macOS zip x64+arm64\n  - Windows nsis x64 (local build is replaced by the signed workflow artifact)\n  - Linux AppImage x64\n  - Linux deb x64\n  - Linux rpm x64\n  - Linux tar.gz x64\n\nOptions:\n  --yes                       tag, sign, create a draft release, verify assets, and publish\n  --resume                    with --yes, rebuild/re-sign a tagged HEAD and clobber draft assets\n  --dry-run                   build/check locally without tagging, signing, or changing GitHub\n  --skip-checks               skip pnpm build and desktop check (incompatible with --yes)\n  --include-experimental-arm  also build Windows/Linux ARM64 targets; the unsigned Windows ARM installer is not published\n`);
+  console.log(`Usage: pnpm release:desktop -- --yes\n\nBuilds local desktop artifacts, obtains the SignPath-signed Windows installer, then creates and publishes a verified GitHub release.\n\nDefault targets:\n  - macOS dmg x64+arm64\n  - macOS zip x64+arm64\n  - Windows nsis x64 (local build is replaced by the signed workflow artifact)\n  - Linux AppImage x64\n  - Linux deb x64\n  - Linux rpm x64\n  - Linux tar.gz x64\n\nOptions:\n  --yes                       tag, sign, create a draft release, verify assets, and publish\n  --resume                    with --yes, rebuild/re-sign a tagged HEAD and clobber draft assets\n  --dry-run                   build/check locally without tagging, signing, or changing GitHub\n  --linux-package-dir <dir>  use validated Ubuntu-built DEB/RPM files from an absolute staging directory\n  --skip-checks               skip pnpm build and desktop check (incompatible with --yes)\n  --include-experimental-arm  also build Windows/Linux ARM64 targets; the unsigned Windows ARM installer is not published\n`);
 }
