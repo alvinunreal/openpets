@@ -276,6 +276,19 @@ Explore detailed architectural and platform documentation inside the `docs/` fol
 
 ---
 
+## Ownership & Promise
+
+OpenPets is developed and maintained by [Boring Dystopia Development](https://boringdystopia.ai/). No foundation, no investors, no hidden agenda — an open project with a named owner. The deal, stated plainly:
+
+- **The code is MIT, and stays MIT.** Fork it, ship it, remix it, hatch your own pets.
+- **Local-first, forever.** No accounts, no sign-ups, no central AI server. AI features run through connections *you* configure, with *your* keys, on *your* machine.
+- **The catalog is a convenience, not a leash.** Pets and plugins are fetched from `openpets.dev`, but the app is fully functional without it.
+- **Users are not the business.** OpenPets will never paywall core features, the plugin SDK, or agent integrations — and it will never sell you content you could make yourself for free.
+
+If you want to support the project: star the repo, hatch a pet, share it with a friend.
+
+---
+
 ## Safety and Privacy
 
 - **Local-Only**: OpenPets IPC works using a local socket/named pipe, secured with a per-run random security token.
