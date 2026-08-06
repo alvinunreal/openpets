@@ -132,42 +132,6 @@ hostLossState = hostLossCoordinator.register("beta", { x: 200, y: 100 }, 11_600,
 hostLossState = hostLossCoordinator.updatePosition("alpha", { x: 999, y: 100 }, "right", 11_700, "alpha");
 assert.equal(hostLossState.pets?.find((pet) => pet.ownerHost === "alpha")?.currentHost, "alpha", "host-loss recovery should require a fresh interior position before another handoff");
 
-// Registration is the coordinator trust boundary: unsafe IDs must never enter
-// snapshots, and a host that no longer selects a pet must remove its old record.
-const registrationCoordinator = new LanCoordinator({ staleClientMs: 10_000 });
-let registrationState = registrationCoordinator.register("alpha", { x: 100, y: 100 }, 8_000, "../cat");
-assert.equal(registrationState.clients[0]?.petId, undefined, "invalid pet IDs should be discarded at registration");
-assert.deepEqual(registrationState.pets, [], "invalid pet IDs should not create coordinator pet records");
-registrationState = registrationCoordinator.register("alpha", { x: 100, y: 100 }, 8_100, "cat");
-assert.equal(registrationState.pets?.[0]?.petId, "cat", "a valid selection should create the owner's pet record");
-registrationState = registrationCoordinator.register("alpha", { x: 100, y: 100 }, 8_200);
-assert.equal(registrationState.clients[0]?.petId, undefined, "deselection should clear the client selection");
-assert.deepEqual(registrationState.pets, [], "deselection should remove the owner's previous pet record");
-
-// An interrupted crossing consumes the arm. Reconnecting another host while
-// the pet remains at the edge must not cause a delayed, surprise handoff.
-const interruptedHandoffCoordinator = new LanCoordinator({ staleClientMs: 10_000 });
-let interruptedState = interruptedHandoffCoordinator.register("alpha", { x: 100, y: 100 }, 9_000, "cat");
-interruptedState = interruptedHandoffCoordinator.updatePosition("alpha", { x: 120, y: 100 }, null, 9_100, "alpha");
-interruptedState = interruptedHandoffCoordinator.updatePosition("alpha", undefined, "right", 9_200, "alpha");
-interruptedState = interruptedHandoffCoordinator.register("beta", { x: 200, y: 100 }, 9_300, "dog");
-interruptedState = interruptedHandoffCoordinator.updatePosition("alpha", { x: 999, y: 100 }, "right", 9_400, "alpha");
-assert.equal(interruptedState.pets?.find((pet) => pet.ownerHost === "alpha")?.currentHost, "alpha", "an interrupted handoff should require moving away from the edge before retrying");
-
-// If a destination disappears, recovery returns the pet to its owner and
-// clears the old host's arm so a reconnect cannot immediately bounce it away.
-const hostLossCoordinator = new LanCoordinator({ staleClientMs: 1_000 });
-let hostLossState = hostLossCoordinator.register("alpha", { x: 100, y: 100 }, 10_000, "cat");
-hostLossState = hostLossCoordinator.register("beta", { x: 200, y: 100 }, 10_100, "dog");
-hostLossState = hostLossCoordinator.updatePosition("alpha", { x: 120, y: 100 }, null, 10_200, "alpha");
-hostLossState = hostLossCoordinator.updatePosition("alpha", { x: 999, y: 100 }, "right", 10_300, "alpha");
-hostLossState = hostLossCoordinator.updatePosition("beta", { x: 220, y: 100 }, null, 10_400, "alpha");
-hostLossState = hostLossCoordinator.updatePosition("alpha", { x: 100, y: 100 }, null, 11_500);
-assert.equal(hostLossState.pets?.find((pet) => pet.ownerHost === "alpha")?.currentHost, "alpha", "host loss should return a visiting pet to its connected owner");
-hostLossState = hostLossCoordinator.register("beta", { x: 200, y: 100 }, 11_600, "dog");
-hostLossState = hostLossCoordinator.updatePosition("alpha", { x: 999, y: 100 }, "right", 11_700, "alpha");
-assert.equal(hostLossState.pets?.find((pet) => pet.ownerHost === "alpha")?.currentHost, "alpha", "host-loss recovery should require a fresh interior position before another handoff");
-
 
 const topologyDiagnostics = normalizeLanTopology({
   alpha: { right: "beta", left: "alpha" },
