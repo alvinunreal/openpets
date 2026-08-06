@@ -1,9 +1,12 @@
 import { allowedReactions, type OpenPetsReaction } from "./local-ipc-protocol.js";
+import { defaultWaitingAnimationDurationMs, type WaitingAnimationDurationMs } from "./app-state-core.js";
 
 export type PetMotionState = "idle" | "run-left" | "run-right";
 export type UniversalSpriteState = "idle" | "running-right" | "running-left" | "waving" | "jumping" | "failed" | "waiting" | "running" | "review";
 export type UserSelectableAnimationState = Exclude<UniversalSpriteState, "running-left" | "running-right">;
 export type ReactionAnimationOverrides = Partial<Record<OpenPetsReaction, UserSelectableAnimationState>>;
+
+export { defaultWaitingAnimationDurationMs, normalizeWaitingAnimationDurationMs, waitingAnimationDurationOptions, type WaitingAnimationDurationMs } from "./app-state-core.js";
 
 export interface SpriteStateDefinition {
   readonly row: number;
@@ -45,7 +48,7 @@ export const defaultPetSprite = {
     waving: { row: 3, frames: 4, durationMs: 700, iterations: 2 },
     jumping: { row: 4, frames: 5, durationMs: 840, iterations: 2 },
     failed: { row: 5, frames: 8, durationMs: 1220, iterations: 2 },
-    waiting: { row: 6, frames: 6, durationMs: 1010 },
+    waiting: { row: 6, frames: 6, durationMs: defaultWaitingAnimationDurationMs },
     running: { row: 7, frames: 6, durationMs: 820 },
     review: { row: 8, frames: 6, durationMs: 1030 },
   } satisfies Record<UniversalSpriteState, SpriteStateDefinition>,
@@ -77,6 +80,20 @@ export const reactionAnimationMetadata = [
 
 const allowedReactionSet = new Set<OpenPetsReaction>(allowedReactions);
 const selectableAnimationSet = new Set<UserSelectableAnimationState>(selectableAnimationMetadata.map((animation) => animation.id));
+
+export function getConfiguredSpriteStates(waitingAnimationDurationMs: WaitingAnimationDurationMs = defaultWaitingAnimationDurationMs): Record<UniversalSpriteState, SpriteStateDefinition> {
+  return {
+    ...defaultPetSprite.states,
+    waiting: {
+      ...defaultPetSprite.states.waiting,
+      durationMs: waitingAnimationDurationMs,
+    },
+  };
+}
+
+export function getConfiguredSpriteCacheKey(waitingAnimationDurationMs: WaitingAnimationDurationMs): string {
+  return `waiting-animation-duration:${waitingAnimationDurationMs}`;
+}
 
 export function isUserSelectableAnimationState(value: unknown): value is UserSelectableAnimationState {
   return typeof value === "string" && selectableAnimationSet.has(value as UserSelectableAnimationState);

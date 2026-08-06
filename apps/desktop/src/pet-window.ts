@@ -15,7 +15,7 @@ import { debug, error as logError, info, warn } from "./logger.js";
 import { executeDefaultPetPluginCommand, executeDefaultPetPluginMenuSelect, getDefaultPetPluginCommands, getDefaultPetPluginMenuItems } from "./plugin-service.js";
 import type { ActiveBubble } from "./plugin-bubble-arbiter.js";
 import type { PluginBubbleIndicator, PluginCommandForm, PluginBubbleHud, PluginBubbleHudItem } from "./plugin-sdk-bridge.js";
-import { defaultPetSprite, motionToSpriteState, resolveReactionSpriteState, type PetMotionState, type UniversalSpriteState } from "./reaction-animation-mapping.js";
+import { defaultPetSprite, getConfiguredSpriteCacheKey, getConfiguredSpriteStates, motionToSpriteState, resolveReactionSpriteState, type PetMotionState, type SpriteStateDefinition, type UniversalSpriteState } from "./reaction-animation-mapping.js";
 import { isFocusActionAvailable } from "./capabilities.js";
 import { canForwardMouseEvents as platformCanForwardMouseEvents, shouldWatchForwardedMouseEvents } from "./mouse-forwarding.js";
 import { computeEffectiveWaylandBackend, shouldPetWindowBeFocusable } from "./wayland-backend.js";
@@ -811,7 +811,7 @@ export function mergePetTransientDisplay(current: PetTransientDisplay | null, ne
 export function getTransientReactionAnimationMs(display: PetTransientDisplay): number | null {
   if (!display.reaction) return null;
   const state = getReactionSpriteState(display.reaction);
-  const row = defaultPetSprite.states[state];
+  const row = getConfiguredSpriteStates(getAppStateSnapshot().preferences.waitingAnimationDurationMs)[state];
   const iterations = "iterations" in row ? row.iterations : "infinite";
   return typeof iterations === "number" ? row.durationMs * iterations : null;
 }
@@ -944,10 +944,11 @@ function createBuiltInPetRender(paused: boolean, display: PetTransientDisplay | 
   const hasPinned = Boolean(pluginBubbles?.pinned);
   const bodyHtml = createPetBodyMarkup("OpenPets default pet", createBubbleMarkup(display, paused, badge, dismissToken, pluginBubbles), `<div class="sprite" role="img" aria-label="Claude animated default pet"></div>`, createPinnedBubbleMarkup(pluginBubbles), hasPinned);
   const reactionState = getReactionSpriteState(display?.reaction);
-  const stateRows = defaultPetSprite.states;
+  const waitingAnimationDurationMs = getAppStateSnapshot().preferences.waitingAnimationDurationMs;
+  const stateRows = getConfiguredSpriteStates(waitingAnimationDurationMs);
 
   return {
-    cacheKey: `${cachePrefix}:${paused}:${scale}:${getActiveLocale()}`,
+    cacheKey: `${cachePrefix}:${paused}:${scale}:${getConfiguredSpriteCacheKey(waitingAnimationDurationMs)}:${getActiveLocale()}`,
     bodyHtml,
     reactionState,
     html: `<!doctype html>
@@ -975,7 +976,7 @@ function createBuiltInPetRender(paused: boolean, display: PetTransientDisplay | 
             transform: scale(${scale});
             transform-origin: top left;
           }
-          ${createSpriteStateCss(".sprite")}
+          ${createSpriteStateCss(".sprite", stateRows)}
           @keyframes pet-frames {
             from { background-position: 0 var(--sprite-row-y); }
             to { background-position: calc(-${defaultPetSprite.frameWidth}px * var(--sprite-frames)) var(--sprite-row-y); }
@@ -1021,10 +1022,11 @@ async function createInstalledPetRender(petId: string, displayName: string, paus
   const hasPinned = Boolean(pluginBubbles?.pinned);
   const bodyHtml = createPetBodyMarkup(escapeHtml(displayName), createBubbleMarkup(display, paused, badge, dismissToken, pluginBubbles), `<div class="installed-card" role="img" aria-label="${escapeHtml(displayName)}"><div class="installed-sprite"></div></div>`, createPinnedBubbleMarkup(pluginBubbles), hasPinned);
   const reactionState = getReactionSpriteState(display?.reaction);
-  const stateRows = defaultPetSprite.states;
+  const waitingAnimationDurationMs = getAppStateSnapshot().preferences.waitingAnimationDurationMs;
+  const stateRows = getConfiguredSpriteStates(waitingAnimationDurationMs);
 
   return {
-    cacheKey: `${cachePrefix}:${paused}:${scale}:${spritesheet.mtimeMs}:${spritesheet.size}:${getActiveLocale()}`,
+    cacheKey: `${cachePrefix}:${paused}:${scale}:${spritesheet.mtimeMs}:${spritesheet.size}:${getConfiguredSpriteCacheKey(waitingAnimationDurationMs)}:${getActiveLocale()}`,
     bodyHtml,
     reactionState,
     html: `<!doctype html>
@@ -1056,7 +1058,7 @@ async function createInstalledPetRender(petId: string, displayName: string, paus
               transform: scale(${scale});
               transform-origin: top left;
             }
-            ${createSpriteStateCss(".installed-sprite")}
+            ${createSpriteStateCss(".installed-sprite", stateRows)}
             @keyframes pet-frames {
               from { background-position: 0 var(--sprite-row-y); }
               to { background-position: calc(-${defaultPetSprite.frameWidth}px * var(--sprite-frames)) var(--sprite-row-y); }
@@ -1289,16 +1291,16 @@ function createPetWindowCss(paused: boolean, scale: PetScaleValue): string {
   `;
 }
 
-function createSpriteStateCss(selector: ".sprite" | ".installed-sprite"): string {
-  const reactionRules = Object.keys(defaultPetSprite.states).map((state) => createSpriteRule(`html[data-reaction-state="${state}"] ${selector}`, state as UniversalSpriteState));
+function createSpriteStateCss(selector: ".sprite" | ".installed-sprite", stateRows: Readonly<Record<UniversalSpriteState, SpriteStateDefinition>>): string {
+  const reactionRules = Object.keys(stateRows).map((state) => createSpriteRule(`html[data-reaction-state="${state}"] ${selector}`, state as UniversalSpriteState, stateRows));
   const motionRules = (Object.entries(motionToSpriteState) as Array<[PetMotionState, UniversalSpriteState]>)
     .filter(([motion]) => motion !== "idle")
-    .map(([motion, state]) => createSpriteRule(`html[data-motion-state="${motion}"] ${selector}`, state));
+    .map(([motion, state]) => createSpriteRule(`html[data-motion-state="${motion}"] ${selector}`, state, stateRows));
   return [...reactionRules, ...motionRules].join("\n");
 }
 
-function createSpriteRule(selector: string, state: UniversalSpriteState): string {
-  const row = defaultPetSprite.states[state];
+function createSpriteRule(selector: string, state: UniversalSpriteState, stateRows: Readonly<Record<UniversalSpriteState, SpriteStateDefinition>>): string {
+  const row = stateRows[state];
   const iterations = "iterations" in row ? row.iterations : "infinite";
   return `${selector} { --sprite-row-y: -${row.row * defaultPetSprite.frameHeight}px; --sprite-frames: ${row.frames}; --sprite-duration: ${row.durationMs}ms; --sprite-iterations: ${iterations}; }`;
 }

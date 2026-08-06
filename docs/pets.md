@@ -88,6 +88,17 @@ reaction into something visible:
    shows speech bubbles, alert indicators, pinned HUDs, and status badges as
    requested.
 
+The waiting animation cycle is a global preference in Control Center → Settings
+→ Reactions. **Normal** keeps the default `1010` ms cycle and **Relaxed** uses
+`2200` ms. The renderer derives a fresh sprite-state table for the selected
+duration instead of mutating `defaultPetSprite.states`, so all other reaction
+mappings and animation durations stay unchanged. The setting applies to both
+built-in and installed pets; plugin-provided sprite overrides continue to use
+their own FPS and loop settings. Changing the preference refreshes open default
+and agent pet windows, and the duration is part of their render identity so
+already-open windows reload their CSS immediately. The Settings preview uses the
+same configured duration.
+
 This separation — mapping vs message vs render — is deliberate: agents and
 plugins speak in *reactions*, and the host owns *how* those look and sound.
 

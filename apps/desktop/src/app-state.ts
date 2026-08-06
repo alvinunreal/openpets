@@ -3,7 +3,7 @@ import { dirname, isAbsolute, join } from "node:path";
 
 import { app } from "electron";
 
-import { defaultPetScale, markOnboardingCompleted, normalizeOnboardingCompleted, normalizePetConfinementEnabled, normalizePetCrossDisplayEnabled, normalizePetGravityEnabled, normalizePetScale, petScaleOptions, type PetScaleValue } from "./app-state-core.js";
+import { defaultPetScale, defaultWaitingAnimationDurationMs, markOnboardingCompleted, normalizeOnboardingCompleted, normalizePetConfinementEnabled, normalizePetCrossDisplayEnabled, normalizePetGravityEnabled, normalizePetScale, normalizeWaitingAnimationDurationMs, petScaleOptions, waitingAnimationDurationOptions, type PetScaleValue, type WaitingAnimationDurationMs } from "./app-state-core.js";
 import { builtInPet } from "./built-in-pet.js";
 import type { Point } from "./display.js";
 import { isSupportedLocale, type LocalePreference } from "./i18n/catalog.js";
@@ -43,6 +43,7 @@ export interface OpenPetsStateV1 {
     readonly locale: LocalePreference;
     readonly speechBubblesEnabled: boolean;
     readonly petScale: number;
+    readonly waitingAnimationDurationMs: WaitingAnimationDurationMs;
     readonly reactionAnimationOverrides?: ReactionAnimationOverrides;
     readonly onboardingCompleted: boolean;
     readonly claudeCommandPath?: string;
@@ -99,7 +100,7 @@ export type OpenPetsActivityRecord =
   | { readonly kind: "say"; readonly reaction?: OpenPetsReaction; readonly petId?: string; readonly surface?: "default" | "agent" }
   | { readonly kind: "react"; readonly reaction: OpenPetsReaction; readonly petId?: string; readonly surface?: "default" | "agent" };
 
-export { defaultPetScale, normalizePetScale, petScaleOptions, type PetScaleValue };
+export { defaultPetScale, defaultWaitingAnimationDurationMs, normalizePetScale, normalizeWaitingAnimationDurationMs, petScaleOptions, waitingAnimationDurationOptions, type PetScaleValue, type WaitingAnimationDurationMs };
 
 const stateFileName = "openpets-state.json";
 const directInstallLockName = ".install-pet.lock";
@@ -519,6 +520,7 @@ function normalizePreferences(value: Partial<OpenPetsStateV1["preferences"]>): O
     locale: normalizeLocalePreference(value.locale),
     speechBubblesEnabled: true,
     petScale: normalizePetScale(value.petScale),
+    waitingAnimationDurationMs: normalizeWaitingAnimationDurationMs(value.waitingAnimationDurationMs),
     reactionAnimationOverrides: normalizeReactionAnimationOverrides(value.reactionAnimationOverrides),
     onboardingCompleted: normalizeOnboardingCompleted(value),
     claudeCommandPath: normalizeCommandPath(value.claudeCommandPath),
@@ -599,6 +601,7 @@ function createDefaultState(): OpenPetsStateV1 {
       locale: "system",
       speechBubblesEnabled: true,
       petScale: defaultPetScale,
+      waitingAnimationDurationMs: defaultWaitingAnimationDurationMs,
       reactionAnimationOverrides: undefined,
       onboardingCompleted: false,
       claudeCommandPath: undefined,
