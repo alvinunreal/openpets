@@ -1,6 +1,10 @@
-import { BrowserWindow, session } from "electron";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+
+import { app, BrowserWindow, session } from "electron";
 
 import { debug } from "./logger.js";
+import { createVoiceCaptureCancellation } from "./voice-capture-cancellation.js";
 import {
   VOICE_MAX_AUDIO_BYTES,
   VOICE_MIN_AUDIO_BYTES,
@@ -10,7 +14,7 @@ import {
   type VoiceCaptureResult,
 } from "./voice-capture.js";
 
-const captureHtml = `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'">`;
+const VOICE_CAPTURE_PARTITION = "openpets-voice-capture";
 
 const acquireScript = `(async () => {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -72,22 +76,21 @@ function recordScript(durationMs: number): string {
   })()`;
 }
 
-type ElectronCaptureAttempt = VoiceCaptureAttempt & {
-  readonly partition: string;
-};
-
 export function createElectronVoiceCaptureFactory(): VoiceCaptureFactory {
   return (durationMs, onLive) => {
-    const partition = `openpets-voice-capture:${Date.now()}:${Math.random().toString(36).slice(2)}`;
-    const captureSession = session.fromPartition(partition, { cache: false });
-    captureSession.setPermissionRequestHandler((_contents, permission, callback) => callback(permission === "media"));
-    captureSession.setPermissionCheckHandler((_contents, permission) => permission === "media");
+    const captureHtmlPath = join(app.getAppPath(), "assets", "voice-capture.html");
+    const captureUrl = pathToFileURL(captureHtmlPath).toString();
+    const captureSession = session.fromPartition(VOICE_CAPTURE_PARTITION, { cache: false });
+    captureSession.setPermissionRequestHandler((contents, permission, callback) => callback(permission === "media" && contents?.getURL() === captureUrl));
+    captureSession.setPermissionCheckHandler((contents, permission) => permission === "media" && contents?.getURL() === captureUrl);
     const window = new BrowserWindow({
       show: false,
       width: 1,
       height: 1,
-      webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, partition },
+      webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, partition: VOICE_CAPTURE_PARTITION },
     });
+    window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    window.webContents.on("will-navigate", (event) => event.preventDefault());
     let cancelled = false;
     let disposed = false;
     let recording: VoiceCaptureRecording | null = null;
@@ -99,11 +102,14 @@ export function createElectronVoiceCaptureFactory(): VoiceCaptureFactory {
     const destroyWindow = (): void => {
       if (!window.isDestroyed()) window.destroy();
     };
+    const cancelCapture = createVoiceCaptureCancellation(async () => {
+      cancelled = true;
+      await execute<boolean>(cancelScript).catch(() => false);
+    }, destroyWindow);
 
-    const attempt: ElectronCaptureAttempt = {
-      partition,
+    const attempt: VoiceCaptureAttempt = {
       async acquire() {
-        await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(captureHtml)}`);
+        await window.loadFile(captureHtmlPath);
         const acquired = await execute<boolean>(acquireScript);
         if (!acquired || cancelled || !onLive()) {
           await attempt.cancel();
@@ -126,29 +132,19 @@ export function createElectronVoiceCaptureFactory(): VoiceCaptureFactory {
             await execute<boolean>(stopScript).catch(() => false);
             return recordingResult;
           },
-          cancel: async () => {
-            cancelled = true;
-            destroyWindow();
-            await execute<boolean>(cancelScript).catch(() => false);
-          },
-          close: async () => {
-            cancelled = true;
-            destroyWindow();
-            await execute<boolean>(cancelScript).catch(() => false);
-          },
+          cancel: cancelCapture,
+          close: cancelCapture,
         };
         return recording;
       },
       async cancel() {
-        cancelled = true;
-        destroyWindow();
-        await execute<boolean>(cancelScript).catch(() => false);
+        await cancelCapture();
         if (recording) await recording.cancel().catch(() => undefined);
       },
       async dispose() {
         if (disposed) return;
         disposed = true;
-        destroyWindow();
+        await cancelCapture();
         await captureSession.clearStorageData().catch(() => undefined);
       },
     };

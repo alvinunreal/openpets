@@ -9,6 +9,7 @@ import {
   type VoiceCaptureRecording,
   type VoiceCaptureResult,
 } from "../src/voice-capture.js";
+import { createVoiceCaptureCancellation } from "../src/voice-capture-cancellation.js";
 import {
   VOICE_CAPTURE_CANCELLED_ERROR,
   VOICE_EMPTY_TRANSCRIPT_ERROR,
@@ -18,6 +19,7 @@ import {
   VoiceListeningService,
 } from "../src/voice-listening-service.js";
 import { VoicePrivacyIndicator, type VoicePrivacyIndicatorSurface } from "../src/voice-privacy-indicator.js";
+import { VoiceOperationState } from "../src/voice-operation-state.js";
 
 class FakeSurface implements VoicePrivacyIndicatorSurface {
   showCount = 0;
@@ -121,7 +123,7 @@ type Fixture = {
 
 function fixture(
   transcriber: (capture: VoiceCaptureResult, signal: AbortSignal) => Promise<string> = async () => "  hello  ",
-  options: { acquisitionTimeoutMs?: number; transcriptionTimeoutMs?: number } = {},
+  options: { acquisitionTimeoutMs?: number; transcriptionTimeoutMs?: number; onPhaseChange?: (phase: "acquiring" | "recording" | "transcribing") => void } = {},
 ): Fixture {
   const surface = new FakeSurface();
   const indicator = new VoicePrivacyIndicator(() => surface);
@@ -130,7 +132,7 @@ function fixture(
     attempt = new ControlledAttempt(onAcquired);
     return attempt;
   }, indicator, { acquisitionTimeoutMs: options.acquisitionTimeoutMs });
-  const listening = new VoiceListeningService(capture, transcriber, { transcriptionTimeoutMs: options.transcriptionTimeoutMs });
+  const listening = new VoiceListeningService(capture, transcriber, { transcriptionTimeoutMs: options.transcriptionTimeoutMs, onPhaseChange: options.onPhaseChange });
   return { surface, indicator, capture, listening, getAttempt: () => attempt! };
 }
 
@@ -142,6 +144,54 @@ assert.equal(VOICE_ACQUISITION_TIMEOUT_MS, 15_000);
 assert.equal(VOICE_TRANSCRIPTION_TIMEOUT_MS, 30_000);
 assert.equal(VOICE_MIN_RECORDING_DURATION_MS, 1_000);
 assert.equal(VOICE_MAX_RECORDING_DURATION_MS, 30_000);
+
+{
+  const state = new VoiceOperationState();
+  const phases: Array<string | null> = [];
+  let cancelCount = 0;
+  state.subscribe(() => phases.push(state.snapshot()?.phase ?? null));
+  state.begin(async () => { cancelCount += 1; });
+  state.setPhase("recording");
+  state.setPhase("transcribing");
+  await state.snapshot()!.cancel();
+  state.settle();
+  assert.equal(cancelCount, 1);
+  assert.deepEqual(phases, ["acquiring", "recording", "transcribing", null]);
+}
+
+{
+  const events: string[] = [];
+  let releaseRenderer!: () => void;
+  const renderer = new Promise<void>((resolve) => { releaseRenderer = resolve; });
+  const cancel = createVoiceCaptureCancellation(async () => {
+    events.push("renderer-start");
+    await renderer;
+    events.push("renderer-end");
+  }, () => events.push("window-destroy"));
+  const first = cancel();
+  const second = cancel();
+  assert.equal(first, second);
+  assert.deepEqual(events, ["renderer-start"]);
+  releaseRenderer();
+  await first;
+  assert.deepEqual(events, ["renderer-start", "renderer-end", "window-destroy"]);
+}
+
+{
+  const events: string[] = [];
+  let releaseRenderer!: () => void;
+  const renderer = new Promise<void>((resolve) => { releaseRenderer = resolve; });
+  const cancel = createVoiceCaptureCancellation(async () => {
+    events.push("renderer-start");
+    await renderer;
+    events.push("renderer-end");
+  }, () => events.push("window-destroy"), 1);
+  await cancel();
+  assert.deepEqual(events, ["renderer-start", "window-destroy"]);
+  releaseRenderer();
+  await flush();
+  assert.deepEqual(events, ["renderer-start", "window-destroy", "renderer-end"]);
+}
 
 {
   const surface = new FakeSurface();
@@ -159,15 +209,19 @@ assert.equal(VOICE_MAX_RECORDING_DURATION_MS, 30_000);
 }
 
 {
-  const current = fixture();
+  const phases: string[] = [];
+  const current = fixture(async () => "  hello  ", { onPhaseChange: (phase) => phases.push(phase) });
   const pending = current.listening.listenOnce(45_000);
   await flush();
   assert.equal(current.surface.showCount, 0, "the indicator stays hidden while acquisition is pending");
+  assert.deepEqual(phases, ["acquiring"]);
   current.getAttempt().resolveAcquisition();
   await flush();
   assert.equal(current.surface.showCount, 1, "the indicator starts only after microphone acquisition");
+  assert.deepEqual(phases, ["acquiring", "recording"]);
   current.getAttempt().recording.resolveCapture();
   assert.deepEqual(await pending, { text: "hello" });
+  assert.deepEqual(phases, ["acquiring", "recording", "transcribing"]);
   assert.equal(current.surface.hideCount, 1);
   assert.equal(current.getAttempt().recording.closeCount, 1);
   assert.equal(current.getAttempt().disposeCount, 1);

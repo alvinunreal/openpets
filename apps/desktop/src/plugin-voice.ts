@@ -5,6 +5,7 @@ import { VoiceCaptureService } from "./voice-capture.js";
 import { createElectronVoiceCaptureFactory } from "./voice-capture-electron.js";
 import { createElectronVoicePrivacyIndicator } from "./voice-privacy-indicator-electron.js";
 import { VoiceListeningService } from "./voice-listening-service.js";
+import { VoiceOperationState, type VoiceOperationSnapshot } from "./voice-operation-state.js";
 
 /**
  * Plugin voice (§13.5). TTS speaks through the pet window's renderer
@@ -28,15 +29,26 @@ export function pluginVoiceStop(): void {
 let activeListeningService: VoiceListeningService | null = null;
 let activePluginId: string | undefined;
 let captureService: VoiceCaptureService | null = null;
+const voiceOperationState = new VoiceOperationState();
+
+export function getPluginVoiceOperation(): VoiceOperationSnapshot | null {
+  return voiceOperationState.snapshot();
+}
+
+export function subscribePluginVoiceOperation(listener: () => void): () => void {
+  return voiceOperationState.subscribe(listener);
+}
 
 export async function pluginVoiceListen(gateway: PluginAiGateway, opts: { timeoutMs: number; pluginId?: string }): Promise<{ text: string }> {
   if (activeListeningService) throw new Error("A voice capture is already in progress.");
   const service = new VoiceListeningService(
     getCaptureService(),
     (capture, signal) => gateway.transcribe(capture.bytes, capture.mimeType, signal),
+    { onPhaseChange: (phase) => voiceOperationState.setPhase(phase) },
   );
   activeListeningService = service;
   activePluginId = opts.pluginId;
+  voiceOperationState.begin(() => service.cancel());
   try {
     return await service.listenOnce(opts.timeoutMs);
   } finally {
@@ -44,6 +56,7 @@ export async function pluginVoiceListen(gateway: PluginAiGateway, opts: { timeou
       activeListeningService = null;
       activePluginId = undefined;
     }
+    voiceOperationState.settle();
   }
 }
 

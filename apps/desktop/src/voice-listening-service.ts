@@ -7,6 +7,7 @@ export const VOICE_TRANSCRIPTION_CANCELLED_ERROR = "Voice transcription was canc
 export const VOICE_CAPTURE_CANCELLED_ERROR = "Voice capture was cancelled.";
 
 export type VoiceTranscriber = (capture: VoiceCaptureResult, signal: AbortSignal) => Promise<string>;
+export type VoiceListeningPhase = "acquiring" | "recording" | "transcribing";
 
 type Deferred<T> = {
   readonly promise: Promise<T>;
@@ -27,18 +28,21 @@ type ActiveListen = {
 
 export type VoiceListeningServiceOptions = {
   readonly transcriptionTimeoutMs?: number;
+  readonly onPhaseChange?: (phase: VoiceListeningPhase) => void;
 };
 
 export class VoiceListeningService {
   readonly #capture: VoiceCaptureService;
   readonly #transcriber: VoiceTranscriber;
   readonly #transcriptionTimeoutMs: number;
+  readonly #onPhaseChange?: (phase: VoiceListeningPhase) => void;
   #active: ActiveListen | null = null;
 
   constructor(capture: VoiceCaptureService, transcriber: VoiceTranscriber, options: VoiceListeningServiceOptions = {}) {
     this.#capture = capture;
     this.#transcriber = transcriber;
     this.#transcriptionTimeoutMs = options.transcriptionTimeoutMs ?? VOICE_TRANSCRIPTION_TIMEOUT_MS;
+    this.#onPhaseChange = options.onPhaseChange;
   }
 
   listenOnce(recordingDurationMs: number): Promise<{ text: string }> {
@@ -57,6 +61,7 @@ export class VoiceListeningService {
       transcriptionTimedOut: false,
     };
     this.#active = active;
+    this.#onPhaseChange?.("acquiring");
     const run = this.#run(active, recordingDurationMs).finally(async () => {
       await this.#capture.cancelActive(active.cancelError?.message ?? "Voice listening finished.").catch(() => undefined);
       if (this.#active === active) this.#active = null;
@@ -89,11 +94,13 @@ export class VoiceListeningService {
       void startPromise.catch(() => undefined);
       const handle = await Promise.race([startPromise, active.cancelPromise]);
       active.capturePhase = "recording";
+      this.#onPhaseChange?.("recording");
       const capturePromise = handle.result;
       void capturePromise.catch(() => undefined);
       const capture = await Promise.race([capturePromise, active.cancelPromise]);
 
       active.capturePhase = "transcription";
+      this.#onPhaseChange?.("transcribing");
       const controller = new AbortController();
       active.transcriptionController = controller;
       let timeout: NodeJS.Timeout | null = null;

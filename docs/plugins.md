@@ -147,7 +147,7 @@ through this path. MiniMax supports OpenAI-compatible chat completions and
 streaming; choose OpenAI or Ollama when a plugin needs `voice.listen`.
 
 `voice.listen` is one-shot push-to-talk, never ambient. The host captures in a
-temporary per-request session and displays **OpenPets is listening** only after
+hidden, isolated microphone window and displays **OpenPets is listening** only after
 microphone acquisition succeeds. It accepts only one active capture, clamps the
 recording duration to 1-30 seconds, times microphone acquisition out after 15
 seconds, and bounds transcription separately at 30 seconds. The host can cancel
@@ -155,6 +155,9 @@ during acquisition, recording, or transcription; cancellation stops media tracks
 aborts transcription, closes the capture window, clears temporary session data,
 and prevents late renderer events from reviving the request. Whitespace-only
 transcripts fail with `Voice transcription returned no text.`
+The host-owned tray menu provides **Stop microphone listening** during
+acquisition/recording and **Cancel transcription** while transcription is
+pending; cancellation is not a public plugin SDK method.
 
 ### Display deliveries
 
@@ -218,6 +221,9 @@ mirror of all this is the SDK in [sdk.md](sdk.md).
   facade and host-owned transcription/cancellation lifecycle.
 - `voice-capture.ts` + `voice-capture-electron.ts` — bounded capture state and
   the temporary Electron microphone session.
+- `voice-capture-cancellation.ts` — idempotent renderer-cancel/window-destroy
+  ordering.
+- `voice-operation-state.ts` — internal tray cancellation state and phase tracking.
 - `voice-privacy-indicator-electron.ts` — the host-owned listening indicator.
 - `plugin-user-sound-store.ts` — stores imported user sounds as opaque refs, not
   raw filesystem paths.

@@ -187,15 +187,18 @@ install, assets, panels, diagnostics, and platform settings. Fully documented in
 [plugins.md](plugins.md) and [sdk.md](sdk.md).
 
 The plugin voice foundation is deliberately smaller than a conversation platform.
-`voice-capture-electron.ts` owns a hidden, sandboxed, per-capture microphone
-session; `voice-capture.ts` owns exactly-once cleanup and cancellation; and
+`voice-capture-electron.ts` owns a hidden, sandboxed microphone window and
+isolated session; `voice-capture.ts` owns exactly-once cleanup and cancellation; and
 `voice-privacy-indicator-electron.ts` shows the host-owned **OpenPets is listening**
 surface only after `getUserMedia()` succeeds. A capture is one-shot and one-at-a-
 time, with a 15-second acquisition timeout, a separate 30-second transcription
 timeout, and an explicit host cancellation path. Plugin teardown and app shutdown
 cancel the active capture, abort transcription, stop tracks, destroy the capture
 window, clear its temporary session data, and hide the indicator. No ambient or
-wake-word listening is implemented.
+wake-word listening is implemented. While active, the existing tray menu exposes
+**Stop microphone listening** during acquisition/recording and **Cancel
+transcription** while provider transcription is pending; the control disappears
+when the operation settles.
 
 The plugin subsystem also owns **display deliveries**: a lazy, transparent,
 host-owned surface used by `ctx.ui.delivery`. A delivery is rendered as a single
