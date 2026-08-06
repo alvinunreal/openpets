@@ -221,8 +221,8 @@ assert.match(controlCenterRendererSource, /getPetsState/, "Control Center must i
 assert.match(controlCenterRendererSource, /function IntegrationsView\(\)/, "Control Center must include the integrations page.");
 assert.match(petWindowSource, /max-width:\s*min\(220px/, "very long message bubbles must stay capped within the tight pet window.");
 assert.match(petWindowSource, /-webkit-line-clamp:\s*8/, "very long message bubbles must allow enough visible lines.");
-assert.match(petWindowSource, /createSpriteStateCss\("\.sprite"\)/, "built-in sprite CSS must react to reaction state.");
-assert.match(petWindowSource, /createSpriteStateCss\("\.installed-sprite"\)/, "installed sprite CSS must react to reaction state.");
+assert.match(petWindowSource, /createSpriteStateCss\("\.sprite", stateRows\)/, "built-in sprite CSS must react to configured reaction state.");
+assert.match(petWindowSource, /createSpriteStateCss\("\.installed-sprite", stateRows\)/, "installed sprite CSS must react to configured reaction state.");
 assert.match(petWindowSource, /html\[data-motion-state=\"\$\{motion\}\"\] \$\{selector\}/, "sprite CSS must let drag motion override reaction state.");
 assert.match(petWindowSource, /\.sprite, \.installed-sprite, \.bubble/, "reduced-motion CSS must include built-in and installed sprites.");
 assert.match(petWindowSource, /function createAgentPetWindow[\s\S]*?installMotionStatePublisher\(window\)/, "agent pet windows must publish motion state so dragged non-default pets run.");
