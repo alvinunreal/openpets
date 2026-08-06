@@ -41,6 +41,7 @@ const behaviorTests = [
   ".test-dist/tests/plugin-ai-gateway.test.js",
   ".test-dist/tests/voice-bridge.test.js",
   ".test-dist/tests/voice-lifecycle.test.js",
+  ".test-dist/tests/tray-voice.test.js",
   ".test-dist/tests/plugin-bridge-fuzz.test.js",
   ".test-dist/tests/pet-fallback-notify.test.js",
   ".test-dist/tests/pet-pool-order.test.js",

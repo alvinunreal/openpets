@@ -9,6 +9,7 @@ import { info, openLogsFolder } from "./logger.js";
 import { shellState, togglePaused } from "./state.js";
 import { getUpdateStatus, openUpdateReleasePage } from "./update-checker.js";
 import { getPluginVoiceOperation, subscribePluginVoiceOperation } from "./plugin-voice.js";
+import { createVoiceMenuItems } from "./tray-voice-menu.js";
 import { openControlCenterWindow } from "./windows.js";
 
 let tray: Tray | null = null;
@@ -48,7 +49,7 @@ export function refreshTrayMenu(): void {
     },
     ...createUpdateMenuItems(),
     { type: "separator" },
-    ...createVoiceMenuItems(),
+    ...createVoiceMenuItems(getPluginVoiceOperation()),
     {
       label: t("tray.defaultPet", { name: defaultPetName }),
       click: () => openControlCenterWindow("pets"),
@@ -113,15 +114,6 @@ export function refreshTrayMenu(): void {
   ]);
 
   tray.setContextMenu(menu);
-}
-
-function createVoiceMenuItems(): MenuItemConstructorOptions[] {
-  const operation = getPluginVoiceOperation();
-  if (!operation) return [];
-  return [{
-    label: operation.phase === "transcribing" ? t("tray.cancelVoiceTranscription") : t("tray.cancelVoiceListening"),
-    click: () => { void operation.cancel().catch(() => undefined); },
-  }];
 }
 
 function createUpdateMenuItems(): MenuItemConstructorOptions[] {
