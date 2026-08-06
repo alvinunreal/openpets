@@ -34,7 +34,7 @@ All from the repo root unless noted (full list in root `package.json`):
 | `pnpm dev:desktop:plugins` | Dev with official plugins hot-loaded |
 | `pnpm dev:desktop:third-parties` | Dev with direct plugin folders under `third-parties` hot-loaded |
 | `pnpm package:desktop` / `:dir` | Build + package the desktop app (full / unpacked dir) |
-| `pnpm release:desktop` | macOS-local release automation (GitHub draft) |
+| `pnpm release:desktop` | macOS-local build, automatic SignPath Windows signing, and verified GitHub publication |
 | `pnpm release:npm` | Publish npm packages |
 | `pnpm plugins:*` | Plugin test/validate/package/publish/deploy (see below) |
 
@@ -100,8 +100,19 @@ workspace packages. Packages must build and pass `check`/`test` first.
 
 ### Desktop app
 
-`pnpm release:desktop` (`apps/desktop/scripts/release-local.mjs`) does a
-macOS-local build + packaging and creates a GitHub draft release.
+`pnpm release:desktop -- --yes` (`apps/desktop/scripts/release-local.mjs`) does a
+macOS-local build + packaging, creates and pushes the release tag, dispatches
+the production SignPath Windows workflow, waits for its signed artifact, and
+only then creates a draft GitHub release, verifies its complete asset set, and
+publishes it. The local Windows installer is disposable; macOS and Linux
+artifacts remain unsigned.
+
+Use `pnpm release:desktop -- --dry-run` for a local artifact preview; it does
+not tag, dispatch SignPath, or mutate GitHub. If a tagged attempt is interrupted
+before publication, recover with `pnpm release:desktop -- --yes --resume`. Resume
+requires local and origin `v<version>` tags at `HEAD`, accepts only no release or
+a draft release, and refuses a published release. SignPath may pause for manual
+approval in its dashboard while the release script visibly waits.
 `electron-builder` handles cross-platform packaging; bundled mode unpacks the
 integration CLIs and bundles `plugins/official` as extra resources (verified by
 the packaging contract — see [testing-and-validation.md](testing-and-validation.md)).

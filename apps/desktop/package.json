@@ -1,6 +1,6 @@
 {
   "name": "@open-pets/desktop",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "private": true,
   "description": "OpenPets tray-first desktop companion app.",
   "license": "MIT",

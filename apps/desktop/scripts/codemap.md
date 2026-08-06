@@ -8,7 +8,7 @@ Build and release automation scripts for the OpenPets desktop application. Handl
 
 - **Node.js Scripts**: CommonJS (`.cjs`) for sync fs operations, ESM (`.mjs`) for modern async flow
 - **Safety-First**: Path validation before `rmSync`, git state verification, dry-run support
-- **GitHub Integration**: Uses `gh` CLI for draft release creation and artifact upload
+- **GitHub Integration**: Uses `gh` CLI for tag management, SignPath workflow dispatch/waiting, draft release creation, asset verification, and publication
 - **Cross-Platform Builds**: Orchestrates `electron-builder` for macOS, Windows, Linux from macOS host
 
 ## Flow
@@ -21,11 +21,17 @@ Resolve dist-electron path → Validate path components → rmSync recursive
 **Local Release** (`release-local.mjs`):
 ```
 Preflight checks (git clean, remote sync, version validity)
+→ Capture previous release tag before any new tag
 → Build and test (unless --skip-checks)
 → Clean output directory
 → Execute electron-builder for each target in build plan
-→ Generate SHA256SUMS
-→ (if --yes) Create GitHub draft release + upload artifacts
+→ (dry-run) Generate local preview SHA256SUMS and stop
+→ Create/push annotated release tag
+→ Dispatch SignPath workflow and wait for the matching signed run
+→ Replace disposable local Windows installer with the exact signed artifact
+→ Generate final SHA256SUMS
+→ Create GitHub draft, upload final assets with --clobber, verify names, publish
+→ (--resume) Rebuild/re-sign an existing tagged HEAD and repair only a draft
 ```
 
 **Desktop Tests** (`run-tests.mjs`):
@@ -37,7 +43,7 @@ Check preload syntax → Compile tests to .test-dist → Run behavior tests → 
 
 - **File System**: `apps/desktop/dist-electron/` (build output), `apps/desktop/dist/` (compiled JS)
 - **Git**: Working tree status, remote sync verification, tag existence checks
-- **GitHub**: `gh release create`, `gh release upload` to `alvinunreal/openpets`
+- **GitHub**: `gh workflow run`, `gh run list/download`, and draft-to-published release operations for `alvinunreal/openpets`
 - **Build Tools**: `pnpm`, `electron-builder`, `node --check`
 - **Node APIs**: `crypto` (SHA256), `fs`, `path`, `child_process.spawnSync`
 
@@ -57,8 +63,9 @@ Default targets:
 - Linux RPM (x64)
 - Linux tar.gz (x64)
 
-Optional flags:
-- `--include-mac-zip`: macOS ZIP archive
-- `--include-linux-deb`: Debian package
-- `--include-linux-targz`: Linux tar.gz archive
-- `--include-experimental-arm`: Windows/Linux ARM64 builds
+Options:
+- `--yes`: tag, obtain the SignPath-signed Windows x64 installer, verify a draft release, and publish
+- `--resume`: with `--yes`, retry a tagged `HEAD` and clobber draft assets; refuses published releases
+- `--dry-run`: local build/check and checksum preview only; no tag, signing, or GitHub mutation
+- `--skip-checks`: skip build/check commands; incompatible with `--yes`
+- `--include-experimental-arm`: build Windows/Linux ARM64 targets; unsigned Windows ARM64 is disposable and not published

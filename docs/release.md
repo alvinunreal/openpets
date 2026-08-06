@@ -1,6 +1,6 @@
 # OpenPets Desktop Release Guide
 
-This guide is for an AI agent creating a new OpenPets desktop release. The historical release flow builds Electron artifacts locally from macOS, creates a published GitHub Release, and uploads the assets. Windows signing uses SignPath from GitHub Actions because SignPath's trusted-build checks require the artifact to be built and uploaded as a GitHub workflow artifact.
+This guide is for an AI agent creating a new OpenPets desktop release. The release flow builds the desktop artifact set locally from macOS, then hands Windows signing to GitHub Actions/SignPath before creating and publishing a verified GitHub Release. The local Windows installer is disposable and is never uploaded.
 
 ## Repository and app
 
@@ -171,11 +171,16 @@ Before running `pnpm release:npm`, align every publishable package in `scripts/r
 7. Requires local `HEAD` to match the upstream branch.
 8. Requires desktop version to be stable semver and not `0.0.0`.
 9. Requires tag/release `v<version>` to not already exist.
-10. Runs build/checks.
-11. Builds release artifacts.
-12. Generates `SHA256SUMS`.
-13. Creates a published GitHub Release.
-14. Uploads top-level whitelisted artifacts only.
+10. Captures the previous release tag before creating the new tag.
+11. Runs build/checks and builds the complete local artifact plan while `v<version>` does not exist.
+12. Creates and pushes an annotated `v<version>` tag at `HEAD`.
+13. Dispatches `.github/workflows/signpath-windows.yml` against that tag with the production signing inputs.
+14. Finds and waits for the matching workflow run, including any required manual SignPath approval.
+15. Downloads `signed-openpets-windows-x64` outside the repository, requires the exact signed installer and handoff checksum, and replaces the disposable local Windows installer.
+16. Generates the release-wide `SHA256SUMS` only after the signed installer is in place.
+17. Creates a **draft** GitHub Release, uploads only the final artifacts and `SHA256SUMS`, verifies the exact remote asset set, and publishes it.
+
+`--resume` is available only with `--yes`. It requires local and origin `v<version>` tags to point to `HEAD`, refuses a published release, rebuilds and re-runs SignPath, and re-uploads draft assets with `--clobber` before repeating final verification and publication.
 
 Published releases are visible to the app update checker.
 
@@ -192,7 +197,7 @@ artifact set:
 
 - macOS DMG: x64 + arm64
 - macOS ZIP: x64 + arm64
-- Windows NSIS installer: x64
+- Windows NSIS installer: x64, replaced by the SignPath-signed workflow artifact
 - Linux AppImage: x64
 - Linux DEB: x64
 - Linux RPM: x64
@@ -205,7 +210,7 @@ OpenPets-<version>-mac-x64.dmg
 OpenPets-<version>-mac-arm64.dmg
 OpenPets-<version>-mac-x64.zip
 OpenPets-<version>-mac-arm64.zip
-OpenPets-<version>-win-x64-setup.exe
+OpenPets-<version>-win-x64-setup.exe  (SignPath Authenticode-signed)
 OpenPets-<version>-linux-x86_64.AppImage
 OpenPets-<version>-linux-amd64.deb
 OpenPets-<version>-linux-x86_64.rpm
@@ -222,11 +227,11 @@ pnpm release:desktop -- --yes --include-experimental-arm
 
 On Apple Silicon macOS, Linux RPM packaging can fail in `fpm`/`rpmbuild`, and
 Electron Builder can produce an invalid tiny DEB archive. If that happens, do
-not publish the broken artifacts. Publish the release with the valid artifacts,
-then build DEB/RPM inside the Ubuntu VMware guest and upload them to the same
-release. See [Linux DEB/RPM fallback via VMware](#linux-debrpm-fallback-via-vmware).
+not publish a partial release. Build valid DEB/RPM replacements inside the
+Ubuntu VMware guest, then restart the release flow with the complete final
+artifact set. See [Linux DEB/RPM fallback via VMware](#linux-debrpm-fallback-via-vmware).
 
-`--include-experimental-arm` adds Windows ARM64 and Linux ARM64 artifacts. Only use this if those artifacts can be tested.
+`--include-experimental-arm` builds Windows ARM64 and Linux ARM64 locally. The SignPath handoff currently signs only the x64 installer, so the unsigned Windows ARM64 installer remains disposable and is not uploaded. Only use this flag if the additional Linux artifact can be tested.
 
 ## Windows code signing with SignPath
 
@@ -305,7 +310,7 @@ The NSIS installer configuration is `openpets-windows-installer-zip`:
 </artifact-configuration>
 ```
 
-Use `test-signing` only to validate SignPath setup. For a production release, run the workflow against the newly created release tag with the production policy and configured artifact slugs:
+Use `test-signing` only to validate SignPath setup. The normal `--yes` release command dispatches the workflow after the local build has succeeded and the annotated release tag has been pushed. It supplies these production inputs:
 
 ```bash
 gh workflow run signpath-windows.yml --repo alvinunreal/openpets --ref v<version> \
@@ -314,23 +319,21 @@ gh workflow run signpath-windows.yml --repo alvinunreal/openpets --ref v<version
   -f artifact_configuration_installer_slug=openpets-windows-installer-zip
 ```
 
-Watch the run in GitHub Actions, then download its `signed-openpets-windows-x64` artifact. The workflow signs both the unpacked app executable and the final NSIS installer.
-If the run pauses during a SignPath approval step, a signer/approver must approve the request in the SignPath dashboard before the workflow can continue.
+The release script locates the newly dispatched run by workflow, tag ref, `HEAD` SHA, event, and dispatch time. It visibly waits for completion; if the run pauses during a SignPath approval step, a signer/approver must approve the request in the SignPath dashboard before the workflow can continue. The script does not assume that approval succeeds automatically.
 
-After the workflow succeeds, retain the signing request links from the workflow log / SignPath dashboard with the release records for auditability.
+After the workflow succeeds, the script downloads its `signed-openpets-windows-x64` artifact to a temporary directory outside the repository. It requires exactly `OpenPets-<version>-win-x64-setup.exe` and `SHA256SUMS.windows.txt`, validates the handoff checksum, replaces the disposable local Windows installer, and then generates the release-wide `SHA256SUMS`. `SHA256SUMS.windows.txt` is not uploaded to the GitHub Release.
 
-### Publishing a signed Windows release artifact
+### Recovery when the automated handoff is interrupted
 
-Until the local release script is replaced by a fully GitHub-hosted release flow, use this handoff:
+If the initial signing step fails after the tag was pushed, do not delete the tag. Retry the complete build/sign/upload flow with:
 
-1. Run `.github/workflows/signpath-windows.yml` for the release commit/tag.
-2. Download the `signed-openpets-windows-x64` workflow artifact.
-3. Replace the locally built unsigned Windows setup artifact with the signed `OpenPets-<version>-win-x64-setup.exe` before uploading release assets, or upload the signed installer manually with:
-   ```bash
-   gh release upload v<version> --repo alvinunreal/openpets OpenPets-<version>-win-x64-setup.exe SHA256SUMS.windows.txt
-   ```
-4. Do not publish both signed and unsigned Windows setup artifacts with the same filename. The GitHub Release should expose the signed installer.
-5. Regenerate and replace the release-wide `SHA256SUMS` after replacing the installer; `SHA256SUMS.windows.txt` from the workflow is only a handoff checksum for the signed Windows artifact.
+```bash
+pnpm release:desktop -- --yes --resume
+```
+
+`--resume` requires both local and origin `v<version>` tags to point to `HEAD`, accepts no release or a draft release, refuses a published release, and replaces draft assets with `--clobber` only after a fresh successful signing handoff. If the tag push itself failed, push that existing local tag to origin first. The script never deletes tags automatically.
+
+For a narrowly scoped manual recovery when the script cannot dispatch the workflow, use the production dispatch shown above, download the named final artifact with `gh run download`, and use only its signed installer when repairing a draft release. Never upload the workflow's `SHA256SUMS.windows.txt` as a release asset, never upload the local unsigned installer, and regenerate the release-wide `SHA256SUMS` after any replacement.
 
 ## Full release procedure
 
@@ -442,7 +445,11 @@ Run:
 pnpm release:desktop -- --dry-run
 ```
 
-This should pass preflight, build artifacts, generate checksums, and stop before creating the GitHub Release. A dry run is recommended for risky releases, but it can be skipped when the current release has already been validated and the user explicitly approves publishing directly.
+This should pass preflight, build artifacts, generate a local preview checksum,
+and stop before creating a tag, dispatching SignPath, or changing GitHub. The
+dry-run Windows installer is unsigned and is not a release asset. A dry run is
+recommended for risky releases, but it can be skipped when the current release
+has already been validated and the user explicitly approves publishing directly.
 
 If it fails because the tree is dirty, inspect:
 
@@ -452,7 +459,7 @@ git status --short
 
 The release script requires a clean tree before release creation.
 
-### 8. Create the published GitHub Release and upload assets
+### 8. Build, sign, verify, and publish the GitHub Release
 
 For the standard full-artifact desktop release:
 
@@ -460,7 +467,12 @@ For the standard full-artifact desktop release:
 pnpm release:desktop -- --yes
 ```
 
-The script creates a published release named/tagged:
+The script builds locally while the tag does not exist, creates and pushes an
+annotated tag, automatically dispatches the production SignPath workflow, and
+waits for its final artifact. It then replaces the local unsigned Windows
+installer, calculates `SHA256SUMS`, creates a **draft** release, uploads only
+the final artifacts and `SHA256SUMS`, verifies the exact remote asset names,
+and publishes the release named/tagged:
 
 ```txt
 v<version>
@@ -471,6 +483,16 @@ Example:
 ```txt
 v2.0.1
 ```
+
+If SignPath pauses for approval, approve the request in the SignPath dashboard;
+the script continues waiting and fails if the workflow does not succeed. If a
+signing or upload failure leaves the tag pushed, recover with:
+
+```bash
+pnpm release:desktop -- --yes --resume
+```
+
+`--resume` is only for the same tagged `HEAD` and refuses a published release.
 
 ### 9. Smoke test after publishing
 
@@ -546,23 +568,28 @@ git push
 
 ### Tag or release already exists
 
-Use a new version, or manually inspect GitHub releases/tags before proceeding.
+For a normal release, use a new version after inspecting GitHub. If this is a
+failed release attempt and local/origin `v<version>` both point to `HEAD`, use
+`pnpm release:desktop -- --yes --resume`; do not delete tags automatically.
 
 ### Partial GitHub upload failure or replacing an existing release's assets
 
-If the script creates the release but upload fails:
+The script keeps the release draft until the complete final asset set is
+uploaded and verified. If an upload fails:
 
 1. Inspect the release on GitHub.
-2. Upload missing or replacement artifacts manually with `--clobber`:
+2. Re-run the complete tagged flow:
 
 ```bash
-gh release upload v<version> --repo alvinunreal/openpets --clobber <artifact-path>
+pnpm release:desktop -- --yes --resume
 ```
 
-3. Regenerate and re-upload `SHA256SUMS` after the final artifact set changes.
-4. Re-check the release asset list; do not trust a wrapper's success summary if
+3. Re-check the release asset list; do not trust a wrapper's success summary if
    `gh release view` shows missing assets.
-5. Or delete the release/tag and rerun after fixing the issue.
+4. Never repair a public release with an unsigned Windows installer or
+   `SHA256SUMS.windows.txt`. If the script is unavailable, manually upload only
+   the verified final assets to the existing **draft** with `--clobber`, then
+   verify the exact set before publishing.
 
 ## Manual packaging smoke commands
 
@@ -615,7 +642,7 @@ Build only the Linux package targets in the guest:
 vagrant ssh -c 'set -e; cd /home/vagrant/src/openpets; pnpm install --frozen-lockfile; pnpm --filter @open-pets/desktop build; cd apps/desktop; node scripts/clean-package-output.cjs; pnpm exec electron-builder --linux deb --x64 --publish never; pnpm exec electron-builder --linux rpm --x64 --publish never; ls -lh dist-electron/OpenPets-<version>-linux-amd64.deb dist-electron/OpenPets-<version>-linux-x86_64.rpm; file dist-electron/OpenPets-<version>-linux-amd64.deb dist-electron/OpenPets-<version>-linux-x86_64.rpm'
 ```
 
-Copy the valid artifacts back through the VM's `/vagrant` share:
+Copy the valid artifacts back through the VM's `/vagrant` share for validation:
 
 ```bash
 vagrant ssh -c 'set -e; cp /home/vagrant/src/openpets/apps/desktop/dist-electron/OpenPets-<version>-linux-amd64.deb /vagrant/; cp /home/vagrant/src/openpets/apps/desktop/dist-electron/OpenPets-<version>-linux-x86_64.rpm /vagrant/'
@@ -623,47 +650,12 @@ cp /Volumes/external/vmware/ubuntu24/OpenPets-<version>-linux-amd64.deb apps/des
 cp /Volumes/external/vmware/ubuntu24/OpenPets-<version>-linux-x86_64.rpm apps/desktop/dist-electron/
 ```
 
-Regenerate `SHA256SUMS` for the final uploaded artifact set, then upload the
-DEB/RPM and replacement checksum file:
-
-```bash
-python3 - <<'PY'
-from hashlib import sha256
-from pathlib import Path
-
-version = '<version>'
-base = Path('apps/desktop/dist-electron')
-names = [
-    f'OpenPets-{version}-linux-amd64.deb',
-    f'OpenPets-{version}-linux-x64.tar.gz',
-    f'OpenPets-{version}-linux-x86_64.AppImage',
-    f'OpenPets-{version}-linux-x86_64.rpm',
-    f'OpenPets-{version}-mac-arm64.dmg',
-    f'OpenPets-{version}-mac-arm64.zip',
-    f'OpenPets-{version}-mac-x64.dmg',
-    f'OpenPets-{version}-mac-x64.zip',
-    f'OpenPets-{version}-win-x64-setup.exe',
-]
-lines = []
-for name in names:
-    path = base / name
-    lines.append(f'{sha256(path.read_bytes()).hexdigest()}  {name}')
-(base / 'SHA256SUMS').write_text('\n'.join(lines) + '\n')
-PY
-
-gh release upload v<version> --repo alvinunreal/openpets \
-  apps/desktop/dist-electron/OpenPets-<version>-linux-amd64.deb \
-  apps/desktop/dist-electron/OpenPets-<version>-linux-x86_64.rpm \
-  apps/desktop/dist-electron/SHA256SUMS \
-  --clobber
-```
-
-If an invalid DEB was already uploaded, remove it before uploading the rebuilt
-one:
-
-```bash
-gh release delete-asset v<version> OpenPets-<version>-linux-amd64.deb --repo alvinunreal/openpets --yes
-```
+The local release script cleans and rebuilds `dist-electron`, so do not copy
+these files in and then run `--yes` expecting them to be preserved. Instead,
+use the VM result to diagnose the macOS packaging failure and restart the
+release from a host that can produce the complete valid artifact set. Do not
+publish a partial release or repair a published release by uploading only a
+replacement DEB/RPM.
 
 ## Microsoft Store package quick actions
 
@@ -866,7 +858,10 @@ npx -y @open-pets/cli@<version> --help
 
 - Do not publish from an uncommitted local state.
 - Do not use `--skip-checks` with `--yes`; the script rejects this.
+- `--dry-run` is local only; it does not create tags, dispatch SignPath, or change GitHub.
+- Use `--resume` only with `--yes` after a failed tagged attempt; it refuses published releases.
 - Do not upload the entire `dist-electron` directory manually. Upload only final top-level artifacts and `SHA256SUMS`.
+- Do not upload `SHA256SUMS.windows.txt` or a locally built unsigned Windows installer.
 - Keep the tag format as `v<version>`.
 - Keep `publish: null` in `electron-builder.yml`; GitHub release upload is handled by the local script.
 - Windows icon is `apps/desktop/assets/app-icon.ico`.
