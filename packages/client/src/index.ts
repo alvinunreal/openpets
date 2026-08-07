@@ -240,14 +240,20 @@ export function sendRemoteRequest<T>(endpoint: OpenPetsRemoteEndpoint | string, 
     const socket = net.createConnection({ host: parsedEndpoint.host, port: parsedEndpoint.port });
     let buffer = "";
     let settled = false;
-    const connectTimer = setTimeout(() => finish(new OpenPetsClientError("connect_timeout", "Timed out connecting to remote OpenPets.")), options.connectTimeoutMs ?? remoteConnectTimeoutMs);
-    const responseTimer = setTimeout(() => finish(new OpenPetsClientError("response_timeout", "Timed out waiting for remote OpenPets response.")), options.responseTimeoutMs ?? remoteResponseTimeoutMs);
+    let connectTimer: NodeJS.Timeout | null = setTimeout(() => finish(new OpenPetsClientError("connect_timeout", "Timed out connecting to remote OpenPets.")), options.connectTimeoutMs ?? remoteConnectTimeoutMs);
+    let responseTimer: NodeJS.Timeout | null = null;
 
     const finish = (error?: unknown, result?: T): void => {
       if (settled) return;
       settled = true;
-      clearTimeout(connectTimer);
-      clearTimeout(responseTimer);
+      if (connectTimer) {
+        clearTimeout(connectTimer);
+        connectTimer = null;
+      }
+      if (responseTimer) {
+        clearTimeout(responseTimer);
+        responseTimer = null;
+      }
       socket.destroy();
       if (error) reject(error);
       else resolve(result as T);
@@ -255,7 +261,11 @@ export function sendRemoteRequest<T>(endpoint: OpenPetsRemoteEndpoint | string, 
 
     socket.setEncoding("utf8");
     socket.once("connect", () => {
-      clearTimeout(connectTimer);
+      if (connectTimer) {
+        clearTimeout(connectTimer);
+        connectTimer = null;
+      }
+      responseTimer = setTimeout(() => finish(new OpenPetsClientError("response_timeout", "Timed out waiting for remote OpenPets response.")), options.responseTimeoutMs ?? remoteResponseTimeoutMs);
       socket.write(requestLine);
     });
     socket.on("data", (chunk: string) => {
