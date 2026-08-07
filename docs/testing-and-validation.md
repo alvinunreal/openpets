@@ -35,11 +35,18 @@ dist checks. Three buckets:
   version checking, ZIP safety, Codex pets, Claude memory, reaction-animation
   mapping, plugin bridge/gateway guards, and `voice-lifecycle.test.ts` for the
   privacy indicator, capture cancellation/cleanup races, separate timeouts,
-  empty transcripts, and shutdown behavior. Compiled to `.test-dist/`.
+  empty transcripts, and shutdown behavior. `remote-control.test.ts` covers
+  secure opt-in configuration, verifier-only persistence, authentication,
+  scopes, malformed/oversized requests, rate limiting, rotation, revocation,
+  canonical IPv4/CGNAT boundaries, peer normalization, socket caps/deadlines,
+  away-pet side-effect suppression, and listener shutdown. Compiled to
+  `.test-dist/`.
 - **Contract** (`apps/desktop/contracts/*.contract.ts`): the public boundaries —
   - `catalog-fixture.contract.ts` — catalog validation against fixture data.
   - `local-ipc-protocol.contract.ts` — IPC request/response parsing
     ([ipc.md](ipc.md)).
+  - `remote-control-protocol.contract.ts` — remote allowlist and secure
+    configuration boundary.
   - `plugin-manifest.contract.ts` — manifest v1 schema, config refs, permissions,
     deferred features, action validation ([plugins.md](plugins.md)).
 - **Runtime checks** (`apps/desktop/src/check-*.ts`): notably
@@ -55,8 +62,9 @@ dist checks. Three buckets:
 Each package runs its own `check`/`test`. Notable contract/boundary coverage:
 
 - `packages/client/contracts/client-protocol.contract.ts` — the client side of
-  the IPC protocol, paired with the desktop's server-side contract so both ends
-  validate the same shapes.
+  the local IPC and explicit remote-client protocols, paired with the desktop's
+  server-side contract so both ends validate their separate shapes. Its remote
+  fixture asserts that remote mode works without consulting local discovery.
 - `packages/sdk/src/check-plugin-sdk.ts` — **SDK conformance**: compiles/runs a
   representative plugin against the test harness to detect drift between the
   published types (`index.ts`), the harness (`testing.ts`), and the desktop

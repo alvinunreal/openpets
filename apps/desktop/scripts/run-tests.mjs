@@ -48,6 +48,8 @@ const behaviorTests = [
   ".test-dist/tests/pet-pool.test.js",
   ".test-dist/tests/pool-toggle.test.js",
   ".test-dist/tests/local-ipc-confinement.test.js",
+  ".test-dist/tests/remote-control.test.js",
+  ".test-dist/tests/logger-redaction.test.js",
   ".test-dist/tests/confinement-permission.test.js",
   ".test-dist/tests/confinement-poller-backoff.test.js",
   ".test-dist/tests/window-tracker.test.js",
@@ -72,6 +74,7 @@ const behaviorTests = [
 ];
 const contractTests = [
   ".test-dist/contracts/local-ipc-protocol.contract.js",
+  ".test-dist/contracts/remote-control-protocol.contract.js",
   ".test-dist/contracts/catalog-fixture.contract.js",
   ".test-dist/contracts/plugin-manifest.contract.js",
 ];

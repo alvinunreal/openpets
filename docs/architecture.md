@@ -18,11 +18,13 @@ There are three runtime worlds. Keep them distinct in your head.
 
 1. **The desktop app** (`apps/desktop/`) — an Electron process tree. The main
    process owns state, windows, the tray, the pet windows, the plugin runtime,
-   and a **local IPC server**. This is the only long-lived process.
+   and a **local IPC server**, plus a separate opt-in remote-control listener.
+   This is the only long-lived process; remote control is disabled by default.
 2. **Agent-side integrations** (`packages/*`) — short-lived code that runs
    inside or alongside a coding agent (Claude Code hooks, the MCP server,
    OpenCode plugin, Cursor config, Pi extension, the CLI). They translate agent
-   activity into pet commands and send them over local IPC.
+   activity into pet commands and send them over local IPC unless an explicit
+   remote endpoint/token configuration selects the separate remote protocol.
 3. **The public web origin** (`openpets.dev`, source in `web/`) — static
    catalogs and asset hosting. The app fetches pet/plugin catalogs and downloads
    ZIPs from here. Only the *data* side of `web/` (catalogs, ZIP hosting, pet
@@ -41,6 +43,13 @@ coding agent  ──(hook/MCP/plugin event)──▶  @open-pets/client
                                                   ▼
                                          openpets.dev (catalogs, ZIPs on R2)
 ```
+
+An explicitly configured remote agent uses a separate path: private IPv4
+endpoint plus a paired token → `@open-pets/client` → the remote-control service
+→ the default pet only. It never reads local discovery, exposes the local IPC
+router, or participates in LAN pet presence or leases. The v1 transport is raw
+unencrypted TCP and is intended only for a trusted private network or an
+encrypted overlay with its own ACLs; CGNAT addressing alone is not encryption.
 
 ## The packages, and what each is for
 
@@ -70,6 +79,10 @@ These are the flows worth holding in memory. Each links to the doc that details 
   category, sent via the client over IPC, the lease manager routes it to a pet
   window, and the window plays the mapped animation with localized speech.
   See [ipc.md](ipc.md) and [pets.md](pets.md).
+- **Remote agent reaction → default pet.** A paired remote client uses the
+  separate versioned protocol. Scope checks, bounded payloads, timeouts, and
+  address rate limiting happen before the default-pet adapter; no lease or
+  arbitrary target is involved. See [ipc.md](ipc.md).
 - **Installing a pet.** The app fetches catalog v3 (paginated, with a v2/fixture
   fallback), downloads the pet ZIP from `zip.openpets.dev`, validates and
   extracts it, and records it in app state. See [catalog.md](catalog.md) and
@@ -104,8 +117,9 @@ These hold everywhere; the rest of the docs assume them.
 - **Atomic, safe I/O.** All persisted state uses temp-write + rename; all path
   handling rejects traversal and symlink escapes.
 - **Least privilege.** Renderers are sandboxed with narrow preload bridges and a
-  strict CSP; plugins run in a permission-gated sandbox; IPC over TCP is
-  restricted to private/loopback addresses.
+  strict CSP; plugins run in a permission-gated sandbox; local IPC over TCP is
+  restricted to private/loopback addresses; remote control is separate,
+  disabled-by-default, explicitly bound, authenticated, and scope-limited.
 - **Voice is bounded and visible.** Listening is one-shot, one-at-a-time,
   explicitly cancellable, visibly indicated while a media track is live, and
   bounded by separate microphone-acquisition and transcription timeouts.

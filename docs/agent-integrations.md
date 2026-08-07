@@ -3,11 +3,12 @@
 OpenPets reacts to coding agents. Each supported agent has an integration
 package that does two jobs: **configure** the agent to talk to OpenPets, and at
 runtime **translate** the agent's activity into safe pet reactions sent over
-local IPC. This doc covers all five integrations (Claude Code, MCP, OpenCode,
-Cursor, Pi), the shared speech-safety layer, and the CLI that orchestrates them.
+local IPC or an explicitly configured remote client. This doc covers all five
+integrations (Claude Code, MCP, OpenCode, Cursor, Pi), the shared speech-safety
+layer, and the CLI that orchestrates them.
 
-For the wire protocol they all use, see [ipc.md](ipc.md). Source maps live in
-each `packages/*/codemap.md`.
+For the local and remote wire protocols, see [ipc.md](ipc.md). Source maps live
+in each `packages/*/codemap.md`.
 
 ## The shared shape
 
@@ -26,6 +27,22 @@ Every integration follows the same contract, which is worth internalizing once:
   below), never from raw prompt/output text.
 - **Leases route the pet.** Integrations acquire a lease on first activity,
   heartbeat it, and release on shutdown. See the lease model in [ipc.md](ipc.md).
+
+Remote mode is the explicit exception to the lease rule: it is default-pet-only
+and does not acquire, heartbeat, or release leases. It is selected only through
+`@open-pets/client` remote options or the named `OPENPETS_REMOTE_ENDPOINT`,
+`OPENPETS_REMOTE_TOKEN`, and optional `OPENPETS_REMOTE_CLIENT_ID` environment
+configuration. The client does not read local discovery in that mode. The
+remote server exposes only scoped status, default-pet reactions, and optional
+short safe messages; it does not accept arbitrary pet IDs, prompt/output text,
+paths, files, media, installs, or discovery operations.
+
+Remote v1 is unencrypted raw TCP. Do not use it on public Internet paths,
+port-forwarded listeners, or shared/untrusted Wi-Fi; prefer an encrypted
+overlay with its own ACLs. A CGNAT-range endpoint is only an allowed private
+address classification, not an encryption boundary. Remote control configuration,
+client pairing, token rotation, and credential revocation can be managed directly
+in Control Center under Settings → Remote.
 
 ## Pet pool: multiple agents, multiple pets
 
@@ -186,6 +203,13 @@ others. Commands:
 The plugin subcommands are the author-side DX entry point — see
 [plugins.md](plugins.md), [sdk.md](sdk.md), and [development.md](development.md).
 The CLI enforces safe project paths and atomic config writes throughout.
+
+The CLI's `status`, `react`, and `say` commands also work with an explicitly
+configured remote client because they use the shared client factory. Remote
+credentials are consumed in memory and are not included in command output.
+The MCP wrapper skips local lease setup in remote mode and sends only the three
+remote-allowlisted operations; local users with no remote configuration retain
+discovery-based behavior unchanged.
 
 ## Quick orientation
 

@@ -46,9 +46,10 @@ export interface ToolContext {
 }
 
 export function createToolContext(configuredPetId?: string): ToolContext & { readonly client: OpenPetsClient } {
+  const client = createOpenPetsClient();
   return {
-    configuredPetId,
-    client: createOpenPetsClient(),
+    configuredPetId: client.transport === "remote" ? undefined : configuredPetId,
+    client,
   };
 }
 
@@ -129,6 +130,7 @@ export function recoverLease(client: OpenPetsClient, lease: LeaseContext, reques
 }
 
 async function ensureLease(context: ToolContext): Promise<boolean> {
+  if (context.client?.transport === "remote") return true;
   const lease = context.lease;
   if (!lease || lease.closing) return false;
   if (lease.lease) return true;
@@ -149,13 +151,16 @@ export async function handleReact(input: unknown, context: ToolContext): Promise
 
   try {
     const client = context.client ?? createOpenPetsClient();
-    const result = await client.react(parsed.data.reaction, { leaseId: context.lease!.lease!.leaseId });
+    const result = await client.react(parsed.data.reaction, client.transport === "remote" ? undefined : { leaseId: context.lease!.lease!.leaseId });
     return {
       content: [{ type: "text", text: `OpenPets reaction sent: ${parsed.data.reaction}` }],
       structuredContent: { ok: true, reaction: parsed.data.reaction, result },
     };
   } catch (error) {
-    return toolError(`OpenPets desktop app is not running or local IPC is unavailable. ${sanitizeError(error)}`);
+    const prefix = context.client?.transport === "remote"
+      ? "Remote OpenPets request was unavailable or rejected."
+      : "OpenPets desktop app is not running or local IPC is unavailable.";
+    return toolError(`${prefix} ${sanitizeError(error)}`);
   }
 }
 
@@ -167,13 +172,18 @@ export async function handleSay(input: unknown, context: ToolContext): Promise<C
 
   try {
     const client = context.client ?? createOpenPetsClient();
-    const result = await client.say(parsed.data.message, { reaction: parsed.data.reaction, leaseId: context.lease!.lease!.leaseId });
+    const result = await client.say(parsed.data.message, client.transport === "remote"
+      ? (parsed.data.reaction === undefined ? undefined : { reaction: parsed.data.reaction })
+      : { reaction: parsed.data.reaction, leaseId: context.lease!.lease!.leaseId });
     return {
       content: [{ type: "text", text: "OpenPets message sent." }],
       structuredContent: { ok: true, result },
     };
   } catch (error) {
-    return toolError(`OpenPets desktop app is not running or local IPC is unavailable. ${sanitizeError(error)}`);
+    const prefix = context.client?.transport === "remote"
+      ? "Remote OpenPets request was unavailable or rejected."
+      : "OpenPets desktop app is not running or local IPC is unavailable.";
+    return toolError(`${prefix} ${sanitizeError(error)}`);
   }
 }
 

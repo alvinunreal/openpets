@@ -55,6 +55,11 @@ const api = {
   getIntegrationsState: (selectedPetId, commandMode) => ipcRenderer.invoke("openpets:agent-setup-snapshot", selectedPetId, commandMode),
   runIntegrationAction: (action, selectedPetId, commandMode) => ipcRenderer.invoke("openpets:agent-setup-action", action, selectedPetId, commandMode),
   updateIntegrationCommandPaths: (patch) => ipcRenderer.invoke("openpets:agent-setup-command-paths", patch),
+  getRemoteSnapshot: () => ipcRenderer.invoke("openpets:remote-get-snapshot"),
+  configureRemote: (input) => ipcRenderer.invoke("openpets:remote-configure", input),
+  pairRemoteClient: (input) => ipcRenderer.invoke("openpets:remote-pair-client", input),
+  rotateRemoteClient: (clientId) => ipcRenderer.invoke("openpets:remote-rotate-client", clientId),
+  revokeRemoteClient: (clientId) => ipcRenderer.invoke("openpets:remote-revoke-client", clientId),
 };
 
 contextBridge.exposeInMainWorld("openPetsControlCenter", api);

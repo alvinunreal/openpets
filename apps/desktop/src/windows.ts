@@ -25,6 +25,8 @@ import { defaultPetSprite, getConfiguredSpriteStates, reactionAnimationMetadata,
 import { readSafePluginManifest } from "./plugin-manifest-reader.js";
 import { registerPluginAssetProtocol } from "./plugin-asset-protocol.js";
 import { checkForGitHubReleaseUpdate, getUpdateStatus, openUpdateReleasePage } from "./update-checker.js";
+import { getRemoteControlService } from "./remote-control-service.js";
+import { validateRemoteScopeList, type RemoteControlScope } from "./remote-control-protocol.js";
 
 type InternalUiWindowKind = "control-center";
 export type ControlCenterRoute = "dashboard" | "pets" | "settings" | "plugins" | "integrations";
@@ -410,6 +412,73 @@ export function installInternalUiHandlers(): void {
   ipcMain.handle("openpets:open-update-release-page", async (event) => {
     assertAllowedSender(event, ["control-center"]);
     await openUpdateReleasePage();
+  });
+
+  ipcMain.handle("openpets:remote-get-snapshot", async (event) => {
+    assertAllowedSender(event, ["control-center"]);
+    const service = getRemoteControlService();
+    return {
+      config: service.getConfiguration(),
+      clients: service.listClients(),
+    };
+  });
+
+  ipcMain.handle("openpets:remote-configure", async (event, input: unknown) => {
+    assertAllowedSender(event, ["control-center"]);
+    if (!isPlainObject(input) || typeof input.enabled !== "boolean") {
+      throw new Error("Invalid remote control configuration request.");
+    }
+    const { enabled, address, port } = input as { enabled: boolean; address?: unknown; port?: unknown };
+    if (address !== undefined && typeof address !== "string") {
+      throw new Error("Invalid remote control configuration request.");
+    }
+    if (port !== undefined && typeof port !== "number") {
+      throw new Error("Invalid remote control configuration request.");
+    }
+    const service = getRemoteControlService();
+    const config = await service.configure({
+      enabled,
+      ...(typeof address === "string" ? { address } : {}),
+      ...(typeof port === "number" ? { port } : {}),
+    });
+    return {
+      config,
+      clients: service.listClients(),
+    };
+  });
+
+  ipcMain.handle("openpets:remote-pair-client", async (event, input: unknown) => {
+    assertAllowedSender(event, ["control-center"]);
+    if (!isPlainObject(input) || typeof input.name !== "string" || !Array.isArray(input.scopes)) {
+      throw new Error("Invalid remote client pair request.");
+    }
+    const { name, scopes } = input as { name: string; scopes: unknown[] };
+    let normalizedScopes: RemoteControlScope[];
+    try {
+      normalizedScopes = validateRemoteScopeList(scopes);
+    } catch {
+      throw new Error("Invalid remote client pair request.");
+    }
+    const service = getRemoteControlService();
+    return service.pairClient({ name, scopes: normalizedScopes });
+  });
+
+  ipcMain.handle("openpets:remote-rotate-client", async (event, clientId: unknown) => {
+    assertAllowedSender(event, ["control-center"]);
+    if (typeof clientId !== "string" || !clientId) {
+      throw new Error("Invalid remote client rotate request.");
+    }
+    const service = getRemoteControlService();
+    return service.rotateClient(clientId);
+  });
+
+  ipcMain.handle("openpets:remote-revoke-client", async (event, clientId: unknown) => {
+    assertAllowedSender(event, ["control-center"]);
+    if (typeof clientId !== "string" || !clientId) {
+      throw new Error("Invalid remote client revoke request.");
+    }
+    const service = getRemoteControlService();
+    return service.revokeClient(clientId);
   });
 
   ipcMain.handle("openpets:set-default-pet", async (event, petId: unknown) => {
