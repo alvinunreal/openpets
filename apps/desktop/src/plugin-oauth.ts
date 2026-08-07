@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
+import { execFile } from "node:child_process";
 
 import { shell } from "electron";
 
@@ -70,7 +71,7 @@ export class PluginOauthBroker {
         authUrl.searchParams.set("code_challenge_method", "S256");
         for (const [key, value] of Object.entries(provider.authorizationParams)) authUrl.searchParams.set(key, value);
         info("plugin", "oauth flow starting", { pluginId, provider: config.provider });
-        await shell.openExternal(authUrl.toString());
+        await openAuthUrl(authUrl.toString());
         const code = await codePromise;
         const tokens = await exchangeCode(config, code, redirectUri, verifier);
         await this.#persistTokens(pluginId, config, tokens);
@@ -120,6 +121,39 @@ export class PluginOauthBroker {
       throw new Error("OAuth token persistence failed.");
     }
   }
+}
+
+/**
+ * Electron's shell.openExternal() can silently no-op on Linux when the ozone
+ * platform forced for rendering (x11/XWayland) doesn't match the process's
+ * actual Wayland session, without throwing an error. xdg-open talks to the
+ * desktop's configured URL handler directly and isn't subject to that
+ * mismatch, so prefer it on Linux and fall back to shell.openExternal
+ * everywhere else (and if xdg-open itself is unavailable/fails).
+ */
+async function openAuthUrl(url: string): Promise<void> {
+  if (process.platform === "linux") {
+    try {
+      // Electron force-sets GDK_BACKEND=x11 in its own process env when the
+      // ozone platform is forced to x11 (so its own GTK dialogs/theming stay
+      // consistent with the Chromium ozone backend). Inheriting that into a
+      // spawned browser child breaks it: e.g. Firefox on a Wayland session
+      // ends up in a broken half-Wayland/half-X11 state ("Failed to open
+      // Wayland display, fallback to X11 ... Wayland only build is missing
+      // Wayland display") even though the same command works fine from a
+      // plain terminal, where GDK_BACKEND isn't set at all. Strip it so the
+      // spawned browser gets the same clean environment a manual launch would.
+      const browserEnv = { ...process.env };
+      delete browserEnv.GDK_BACKEND;
+      await new Promise<void>((resolve, reject) => {
+        execFile("xdg-open", [url], { env: browserEnv }, (error) => (error ? reject(error) : resolve()));
+      });
+      return;
+    } catch (error) {
+      warn("plugin", "xdg-open failed, falling back to shell.openExternal", { error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  await shell.openExternal(url);
 }
 
 async function startLoopbackListener(stateToken: string): Promise<{ server: Server; port: number; codePromise: Promise<string> }> {
