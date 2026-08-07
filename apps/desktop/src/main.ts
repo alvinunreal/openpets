@@ -21,12 +21,21 @@ import { checkForGitHubReleaseUpdate } from "./update-checker.js";
 import { installInternalUiHandlers, installInternalUiProtocol } from "./windows.js";
 
 // OpenPets stores plugin secrets via Electron safeStorage, which requires a
-// real encryption backend. On Linux use the keyring (gnome-libsecret) so
-// safeStorage can encrypt; on macOS/Windows keep Chromium from prompting for
-// Keychain during startup/profile initialization.
+// real encryption backend. On Linux use the keyring so safeStorage can
+// encrypt; on macOS/Windows keep Chromium from prompting for Keychain during
+// startup/profile initialization.
+//
+// gnome-libsecret is Electron's OSCrypt backend written against real GNOME
+// Keyring; on KDE, KWallet's secret-service-compat layer implements the same
+// org.freedesktop.secrets D-Bus API (verified directly with secret-tool) but
+// doesn't satisfy Electron's stricter gnome-libsecret compatibility check, so
+// safeStorage.isEncryptionAvailable() returns false and plugin secret saves
+// fail with "Secret storage encryption is unavailable on this system." Use
+// the kwallet backend on KDE sessions instead.
 app.commandLine.appendSwitch("use-mock-keychain");
 if (process.platform === "linux") {
-  app.commandLine.appendSwitch("password-store", "gnome-libsecret");
+  const isKde = (process.env.XDG_CURRENT_DESKTOP ?? "").toLowerCase().includes("kde");
+  app.commandLine.appendSwitch("password-store", isKde ? "kwallet6" : "gnome-libsecret");
 } else {
   app.commandLine.appendSwitch("password-store", "basic");
 }
