@@ -266,6 +266,10 @@ plugin-scoped secret storage. While Google's
 consent screen is in Testing, add intended users as test users. Broad external
 distribution requires Google consent-screen verification.
 
+On KDE Plasma/Wayland specifically, the host-managed browser launch and secret
+persistence this flow depends on have platform-specific failure modes and
+fixes; see [wayland.md](wayland.md#plugin-oauth-on-kdewayland).
+
 Calendar Airmail reconciles a bounded rolling view of the primary calendar and
 keeps durable occurrence and delivery state so reminders recover across app
 restart, sleep, configuration changes, and reconnection. Temporary network

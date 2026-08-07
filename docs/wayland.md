@@ -66,3 +66,53 @@ Validated behavior in KDE Plasma Wayland:
 Do not document a stronger Wayland workaround unless it has been verified in the
 VM. For deeper source inspection, the relevant local read-only clones are listed
 in `AGENTS.md` under "Cloned Dependency Source".
+
+## Plugin OAuth on KDE/Wayland
+
+Two separate issues block plugin OAuth (`ctx.auth.oauth`, e.g. Calendar Airmail)
+on KDE Plasma/Wayland sessions, independent of the pet-dragging behavior above.
+Verified on real hardware: CachyOS Linux, KDE Plasma 6.7.4, KWin 6.7.4, Wayland
+session, `--ozone-platform=x11` forced (see "Accepted Wayland trade-offs" above
+for why x11/XWayland is forced at all).
+
+### Browser launch: `shell.openExternal()` can silently no-op
+
+`plugin-oauth.ts` used to call Electron's `shell.openExternal(authUrl)` to open
+the system browser for the PKCE authorization step. On this configuration it
+resolves without throwing, but no browser process or window is ever launched —
+confirmed by monitoring running processes and the window list for 25s
+bracketing the call: no new browser process, no new `xdg-open` process, no new
+window. A plain `xdg-open <url>` from a terminal in the same session works
+instantly.
+
+Fix: call `xdg-open` directly on Linux (falling back to `shell.openExternal` if
+it fails), which isn't subject to whatever internal ozone-platform/session
+mismatch makes `shell.openExternal()` a no-op here.
+
+A second, narrower issue sits underneath that: Electron force-sets
+`GDK_BACKEND=x11` in its own process environment when the ozone platform is
+forced to x11, for its own GTK dialogs/theming. Spawning `xdg-open` (or a
+browser directly) with that inherited means the spawned browser can end up in
+a broken half-Wayland/half-X11 state — observed concretely as Firefox refusing
+to open at all with `Failed to open Wayland display, fallback to X11 ...
+Wayland only build is missing Wayland display`, even though the identical
+command works fine from a plain terminal where `GDK_BACKEND` isn't set. Strip
+`GDK_BACKEND` from the environment passed to the spawned browser process.
+
+### Secret storage: `gnome-libsecret` doesn't satisfy Electron on KDE
+
+`password-store` was hardcoded to `gnome-libsecret` on Linux. On KDE this makes
+`safeStorage.isEncryptionAvailable()` return `false`, so a successfully-obtained
+OAuth token can't be persisted, failing with `"Secret storage encryption is
+unavailable on this system."`
+
+This isn't a broken keyring: `org.freedesktop.secrets` is registered and
+running (KDE's `ksecretd`, via `secretservicecompat`), and a manual
+`secret-tool store`/`secret-tool lookup` round-trip (the same libsecret
+mechanism Electron's OSCrypt backend uses) succeeds cleanly. `gnome-libsecret`
+is Electron's OSCrypt backend written against real GNOME Keyring; KWallet's
+secret-service-compat layer implements the same D-Bus API surface but doesn't
+satisfy Electron's stricter `gnome-libsecret` compatibility check.
+
+Fix: select the `kwallet6` backend when `XDG_CURRENT_DESKTOP` indicates a KDE
+session, keeping `gnome-libsecret` elsewhere on Linux.
