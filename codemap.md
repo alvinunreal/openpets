@@ -64,7 +64,7 @@ OpenPets is a pnpm/TypeScript monorepo for an Electron desktop companion app plu
 2. Agent integrations (`packages/claude`, `packages/opencode`, `packages/cursor`, `packages/pi`, and `packages/mcp`) configure agents or emit pet commands through `@open-pets/client`.
 3. The client discovers Unix sockets, Windows named pipes, or TCP endpoints for WSL cross-platform access.
 4. The desktop IPC server routes commands through lease-managed controllers so default and agent pets can coexist safely.
-5. The plugin service loads approved catalog or local `openpets.plugin.json` manifests, persists plugin state/config, schedules declarative timers, and bridges SDK v3 calls through permission-checked host modules for UI, audio, events, storage, AI, OAuth, voice, panels, and pet control.
+5. The plugin service loads approved catalog or local `openpets.plugin.json` manifests, persists plugin state/config, schedules declarative timers, and bridges SDK v3 calls through permission-checked host modules for UI, audio, events, storage, AI, OAuth, voice, panels, and pet control. Voice input remains one-shot, visibly indicated, cancellable, timeout-bounded, and never ambient.
 6. Pet windows render reaction-driven animations, localized speech, host-rendered bubbles/alerts/HUDs, and status reactions using desktop state plus reaction mapping metadata.
 7. Pet assets are resolved from built-in assets, locally developed Codex pets, or remotely downloaded catalog ZIPs.
 8. Workspace packages share TypeScript/ESM build conventions and are wired together through pnpm `workspace:*` dependencies.

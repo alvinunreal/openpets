@@ -34,6 +34,8 @@ toolsets:
 mac:
   icon: assets/app-icon.icns
   category: public.app-category.utilities
+  extendInfo:
+    NSMicrophoneUsageDescription: OpenPets uses your microphone only for one-shot, user-initiated voice input.
   target:
     - dmg
     - zip

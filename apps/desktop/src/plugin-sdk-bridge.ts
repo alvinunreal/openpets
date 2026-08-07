@@ -186,7 +186,7 @@ export interface PluginHostCapabilities {
   };
   voice: {
     speak(text: string, opts: { voice?: string; rate?: number }): Promise<void>;
-    listen(opts: { timeoutMs?: number }): Promise<{ text: string }>;
+    listen(opts: { timeoutMs?: number; pluginId?: string }): Promise<{ text: string }>;
   };
   auth: {
     oauth(pluginId: string, config: { provider: "google" | "spotify"; clientId: string; clientSecret?: string; scopes: string[] }): Promise<PluginOauthTokens>;
@@ -213,7 +213,7 @@ export interface PluginHostCapabilities {
     inQuietHours(): boolean;
   };
   /** Trusted host lifecycle hook; not exposed through the plugin SDK. */
-  clearPlugin?(pluginId: string): void;
+  clearPlugin?(pluginId: string): void | Promise<void>;
 }
 
 /**
@@ -350,6 +350,7 @@ export class PluginSdkBridge {
   readonly #logger: PluginRuntimeLogger;
   readonly #capabilities: PluginHostCapabilities;
   readonly #states = new Map<string, PluginRuntimeState>();
+  readonly #apiGenerations = new Map<string, number>();
   readonly #busTopics = new Map<string, Set<PluginBusTopicEntry>>();
 
   constructor(options: { stateStore: PluginStateStore; petApi: PluginPetApi; scheduler: PluginRuntimeScheduler; storage?: PluginStorageStore; onError?: (id: string, reason: string) => void; logger?: PluginRuntimeLogger; capabilities?: PluginHostCapabilities }) {
@@ -368,7 +369,9 @@ export class PluginSdkBridge {
     const state = this.#pluginState(record.id);
     const caps = this.#capabilities;
     const pluginId = record.id;
-    const requirePermission = (permission: PluginPermission) => { if (!approved.has(permission)) throw new Error(`Plugin permission is not approved: ${permission}`); };
+    const apiGeneration = this.#apiGenerations.get(pluginId) ?? 0;
+    const requireActive = () => { if ((this.#apiGenerations.get(pluginId) ?? 0) !== apiGeneration) throw new Error("Plugin is no longer active."); };
+    const requirePermission = (permission: PluginPermission) => { requireActive(); if (!approved.has(permission)) throw new Error(`Plugin permission is not approved: ${permission}`); };
     const runScheduled = async (callback: () => unknown) => { try { await callback(); } catch (error) { this.#onError(pluginId, safeError(error)); } };
     const getConfig = () => ({ ...(this.#stateStore.getRecord(pluginId)?.config ?? {}) }) as PluginConfig;
     const guardCallback = <A extends unknown[]>(fn: (...args: A) => unknown): ((...args: A) => void) => (...args) => { void Promise.resolve().then(() => fn(...args)).catch((error: unknown) => this.#onError(pluginId, safeError(error))); };
@@ -689,7 +692,7 @@ export class PluginSdkBridge {
           check(caps.settings.listenAllowed(), "Microphone access for plugins is disabled in settings.");
           const options = isRecord(opts) ? opts : {};
           const timeoutMs = options.timeoutMs === undefined ? 10_000 : clampNumber(Number(options.timeoutMs), 1_000, 30_000);
-          return caps.voice.listen({ timeoutMs });
+          return caps.voice.listen({ timeoutMs, pluginId });
         },
       },
       auth: {
@@ -829,6 +832,7 @@ export class PluginSdkBridge {
   }
 
   clearPlugin(id: string): void {
+    this.#apiGenerations.set(id, (this.#apiGenerations.get(id) ?? 0) + 1);
     const state = this.#pluginState(id);
     for (const slot of state.schedules.values()) slot.handle.cancel();
     state.schedules.clear();

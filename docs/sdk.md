@@ -72,6 +72,16 @@ still use public-host checks). `network:write` unlocks non-GET on `ctx.net` only
 Legacy `ctx.http.fetch` stays GET-only public HTTPS and never inherits local or
 write access.
 
+### `ctx.voice.listen`
+
+`ctx.voice.listen()` is a single, host-owned push-to-talk capture. It is visibly
+indicated only after microphone acquisition succeeds, never listens ambiently,
+and rejects concurrent requests. The host bounds acquisition at 15 seconds and
+transcription at 30 seconds, trims the returned text, and rejects empty output
+with `Voice transcription returned no text.` The host cancellation path is used
+when a plugin is stopped or OpenPets shuts down; plugin code does not receive raw
+audio, credentials, or a renderer handle for the privacy surface.
+
 Commands time out after five seconds by default. A command that deliberately
 waits for user interaction, such as host-mediated OAuth, may declare a bounded
 `timeoutMs` between one second and five minutes.

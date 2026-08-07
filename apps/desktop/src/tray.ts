@@ -8,9 +8,12 @@ import { quitOpenPets } from "./lifecycle.js";
 import { info, openLogsFolder } from "./logger.js";
 import { shellState, togglePaused } from "./state.js";
 import { getUpdateStatus, openUpdateReleasePage } from "./update-checker.js";
+import { getPluginVoiceOperation, subscribePluginVoiceOperation } from "./plugin-voice.js";
+import { createVoiceMenuItems } from "./tray-voice-menu.js";
 import { openControlCenterWindow } from "./windows.js";
 
 let tray: Tray | null = null;
+let voiceOperationSubscriptionInstalled = false;
 
 export function createAppTray(): Tray {
   if (tray) {
@@ -19,6 +22,10 @@ export function createAppTray(): Tray {
 
   tray = new Tray(createTrayIcon());
   tray.setToolTip("OpenPets");
+  if (!voiceOperationSubscriptionInstalled) {
+    voiceOperationSubscriptionInstalled = true;
+    subscribePluginVoiceOperation(() => refreshTrayMenu());
+  }
   refreshTrayMenu();
   info("tray", "created");
   console.log("OpenPets tray created.");
@@ -42,6 +49,7 @@ export function refreshTrayMenu(): void {
     },
     ...createUpdateMenuItems(),
     { type: "separator" },
+    ...createVoiceMenuItems(getPluginVoiceOperation()),
     {
       label: t("tray.defaultPet", { name: defaultPetName }),
       click: () => openControlCenterWindow("pets"),

@@ -33,7 +33,9 @@ dist checks. Three buckets:
 
 - **Behavior** (`apps/desktop/tests/*.test.ts`): lease manager, app state,
   version checking, ZIP safety, Codex pets, Claude memory, reaction-animation
-  mapping. Compiled to `.test-dist/`.
+  mapping, plugin bridge/gateway guards, and `voice-lifecycle.test.ts` for the
+  privacy indicator, capture cancellation/cleanup races, separate timeouts,
+  empty transcripts, and shutdown behavior. Compiled to `.test-dist/`.
 - **Contract** (`apps/desktop/contracts/*.contract.ts`): the public boundaries —
   - `catalog-fixture.contract.ts` — catalog validation against fixture data.
   - `local-ipc-protocol.contract.ts` — IPC request/response parsing

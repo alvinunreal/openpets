@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { OPENPETS_PLUGIN_MANIFEST_FILENAME, type OpenPetsDeclarativePluginManifest, type OpenPetsJavascriptPluginManifest } from "../src/plugin-manifest.js";
 import { type PluginPetApi } from "../src/plugin-pet-api.js";
 import { PluginRuntime, type PluginRuntimeScheduler, type PluginTimerHandle } from "../src/plugin-runtime.js";
+import { createDefaultPluginHostCapabilities } from "../src/plugin-sdk-bridge.js";
 import type { PluginJsHost, PluginJsHostInstance, PluginJsHostStartOptions } from "../src/plugin-js-host.js";
 import { initializePluginState, type PluginStateStore, type PluginStateRecord } from "../src/plugin-state.js";
 
@@ -265,6 +266,39 @@ await scenario("javascript stop cancels host", async ({ store }) => {
   assert.equal(jsHost.instances[0].stopped, true);
 });
 
+await scenario("stop drains in-flight javascript startup", async ({ store }) => {
+  addPlugin(store, { manifestVersion: 3, runtime: "javascript", sdkVersion: "3.0.0", approvedPermissions: ["voice:listen"] }, jsManifest({ manifestVersion: 3, sdkVersion: "3.0.0", permissions: ["voice:listen"] }));
+  let releaseStart!: () => void;
+  let startupStarted!: () => void;
+  let hostStopped = false;
+  let voiceCalls = 0;
+  let staleVoiceError = "";
+  const startup = new Promise<void>((resolve) => { startupStarted = resolve; });
+  const startGate = new Promise<void>((resolve) => { releaseStart = resolve; });
+  const capabilities = createDefaultPluginHostCapabilities(new FakePetApi());
+  capabilities.settings = { ...capabilities.settings, listenAllowed: () => true };
+  capabilities.voice = { ...capabilities.voice, listen: async () => { voiceCalls += 1; return { text: "late" }; } };
+  const jsHost: PluginJsHost = {
+    async startPlugin(options) {
+      startupStarted();
+      await startGate;
+      await options.sdk?.voice.listen({ timeoutMs: 1_000 }).catch((error: unknown) => { staleVoiceError = error instanceof Error ? error.message : String(error); });
+      return { stop: () => { hostStopped = true; } };
+    },
+  };
+  const rt = new PluginRuntime({ stateStore: store, petApi: new FakePetApi(), scheduler: new FakeScheduler(), allowedPluginRoots: [currentRoot], jsHost, capabilities });
+  const start = rt.start();
+  await startup;
+  let stopSettled = false;
+  const stop = rt.stop().then(() => { stopSettled = true; });
+  assert.equal(stopSettled, false);
+  releaseStart();
+  await Promise.all([start, stop]);
+  assert.equal(voiceCalls, 0);
+  assert.equal(staleVoiceError, "Plugin is no longer active.");
+  assert.equal(hostStopped, true);
+});
+
 await scenario("javascript startup failure marks broken", async ({ store }) => {
   const jsHost = new FakeJsHost();
   jsHost.fail = true;
@@ -384,6 +418,48 @@ await scenario("reload cancels stale timer", async ({ store, scheduler, petApi }
   scheduler.fire(1);
   await Promise.resolve();
   assert.deepEqual(petApi.events, ["speak:Stretch"]);
+});
+
+await scenario("reload waits for host teardown", async ({ store, scheduler }) => {
+  addPlugin(store);
+  let blockTeardown = false;
+  let releaseTeardown!: () => void;
+  let teardownStartedResolve!: () => void;
+  const teardownStarted = new Promise<void>((resolve) => { teardownStartedResolve = resolve; });
+  const capabilities = createDefaultPluginHostCapabilities(new FakePetApi());
+  (capabilities as { clearPlugin?: () => Promise<void> }).clearPlugin = () => blockTeardown ? new Promise<void>((resolve) => { teardownStartedResolve(); releaseTeardown = resolve; }) : Promise.resolve();
+  const rt = new PluginRuntime({ stateStore: store, petApi: new FakePetApi(), scheduler, allowedPluginRoots: [currentRoot], capabilities });
+  await rt.start();
+  blockTeardown = true;
+
+  const reload = rt.reloadPlugin("plug");
+  await teardownStarted;
+  assert.equal(scheduler.activeCount(), 0);
+  releaseTeardown();
+  await reload;
+  assert.equal(scheduler.activeCount(), 1);
+});
+
+await scenario("concurrent reloads are serialized", async ({ store, scheduler }) => {
+  addPlugin(store);
+  let blockTeardown = false;
+  let releaseTeardown!: () => void;
+  let teardownStartedResolve!: () => void;
+  const teardownStarted = new Promise<void>((resolve) => { teardownStartedResolve = resolve; });
+  const capabilities = createDefaultPluginHostCapabilities(new FakePetApi());
+  (capabilities as { clearPlugin?: () => Promise<void> }).clearPlugin = () => blockTeardown ? new Promise<void>((resolve) => { teardownStartedResolve(); releaseTeardown = resolve; }) : Promise.resolve();
+  const rt = new PluginRuntime({ stateStore: store, petApi: new FakePetApi(), scheduler, allowedPluginRoots: [currentRoot], capabilities });
+  await rt.start();
+  blockTeardown = true;
+
+  const first = rt.reloadPlugin("plug");
+  const second = rt.reloadPlugin("plug");
+  await teardownStarted;
+  assert.equal(scheduler.activeCount(), 0);
+  releaseTeardown();
+  blockTeardown = false;
+  await Promise.all([first, second]);
+  assert.equal(scheduler.activeCount(), 1);
 });
 
 await scenario("path outside install/root and oversized rejected", async ({ root, store }) => {

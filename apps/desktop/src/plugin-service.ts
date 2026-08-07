@@ -147,7 +147,7 @@ export class PluginService {
         try {
           const safeInstall = await resolveSafePluginInstallDir(this.#userDataPath, id, stale.installPath, stale.source);
           this.stateStore.removeRecord(id);
-          this.#capabilities?.clearPlugin?.(id);
+          await this.#capabilities?.clearPlugin?.(id);
           await fs.rm(join(this.#userDataPath, "plugin-user-sounds", id), { recursive: true, force: true }).catch(() => undefined);
           await fs.rm(safeInstall, { recursive: true, force: true });
         } catch (error) {
@@ -168,8 +168,8 @@ export class PluginService {
     }
   }
 
-  stop(): void {
-    this.runtime.stop();
+  async stop(): Promise<void> {
+    await this.runtime.stop();
   }
 
   getLocalSourcePaths(): string[] {
@@ -299,7 +299,7 @@ export class PluginService {
     this.stateStore.removeRecord(id);
     if (record.source === "local" && record.sourcePath) this.#onLocalPluginSourceRemoved?.(record.sourcePath);
     await this.runtime.reloadPlugin(id);
-    try { this.#capabilities?.clearPlugin?.(id); await fs.rm(join(this.#userDataPath, "plugin-user-sounds", id), { recursive: true, force: true }); if (realInstall) await fs.rm(realInstall, { recursive: true, force: true }); await fs.rm(join(this.#userDataPath, "plugin-storage", `${id}.json`), { force: true }); }
+    try { await this.#capabilities?.clearPlugin?.(id); await fs.rm(join(this.#userDataPath, "plugin-user-sounds", id), { recursive: true, force: true }); if (realInstall) await fs.rm(realInstall, { recursive: true, force: true }); await fs.rm(join(this.#userDataPath, "plugin-storage", `${id}.json`), { force: true }); }
     catch (error) { return this.#error(safeError(error)); }
     return { ok: true, snapshot: await this.getSnapshot() };
   }
@@ -403,7 +403,7 @@ export class PluginService {
       if (!isDevRecord) continue;
       this.stateStore.removeRecord(record.id);
       await this.runtime.reloadPlugin(record.id);
-      this.#capabilities?.clearPlugin?.(record.id);
+      await this.#capabilities?.clearPlugin?.(record.id);
       await fs.rm(join(this.#userDataPath, "plugin-user-sounds", record.id), { recursive: true, force: true }).catch(() => undefined);
       await fs.rm(record.installPath, { recursive: true, force: true }).catch(() => undefined);
       await fs.rm(join(this.#userDataPath, "plugin-storage", `${record.id}.json`), { force: true }).catch(() => undefined);
@@ -602,8 +602,8 @@ export async function executeDefaultPetPluginMenuSelect(pluginId: string, itemId
   await appPluginService.runtime.executeMenuSelect(pluginId, itemId);
 }
 
-export function stopPluginService(): void {
-  appPluginService?.stop();
+export async function stopPluginService(): Promise<void> {
+  await appPluginService?.stop();
 }
 
 export function getPluginService(): PluginService {

@@ -1,9 +1,11 @@
-import { BrowserWindow, session } from "electron";
-
 import { getDefaultPetWindowForPlugins } from "./default-pet-controller.js";
-import { debug } from "./logger.js";
 import { speakPetWindowTts, stopPetWindowTts } from "./pet-window.js";
 import type { PluginAiGateway } from "./plugin-ai-gateway.js";
+import { VoiceCaptureService } from "./voice-capture.js";
+import { createElectronVoiceCaptureFactory } from "./voice-capture-electron.js";
+import { createElectronVoicePrivacyIndicator } from "./voice-privacy-indicator-electron.js";
+import { VoiceListeningService } from "./voice-listening-service.js";
+import { VoiceOperationState, type VoiceOperationSnapshot } from "./voice-operation-state.js";
 
 /**
  * Plugin voice (§13.5). TTS speaks through the pet window's renderer
@@ -24,61 +26,57 @@ export function pluginVoiceStop(): void {
   if (window) stopPetWindowTts(window);
 }
 
-let listenInProgress = false;
+let activeListeningService: VoiceListeningService | null = null;
+let activePluginId: string | undefined;
+let captureService: VoiceCaptureService | null = null;
+const voiceOperationState = new VoiceOperationState();
 
-export async function pluginVoiceListen(gateway: PluginAiGateway, opts: { timeoutMs: number }): Promise<{ text: string }> {
-  if (listenInProgress) throw new Error("A voice capture is already in progress.");
-  listenInProgress = true;
+export function getPluginVoiceOperation(): VoiceOperationSnapshot | null {
+  return voiceOperationState.snapshot();
+}
+
+export function subscribePluginVoiceOperation(listener: () => void): () => void {
+  return voiceOperationState.subscribe(listener);
+}
+
+export async function pluginVoiceListen(gateway: PluginAiGateway, opts: { timeoutMs: number; pluginId?: string }): Promise<{ text: string }> {
+  if (activeListeningService) throw new Error("A voice capture is already in progress.");
+  const service = new VoiceListeningService(
+    getCaptureService(),
+    (capture, signal) => gateway.transcribe(capture.bytes, capture.mimeType, signal),
+    { onPhaseChange: (phase) => voiceOperationState.setPhase(phase) },
+  );
+  activeListeningService = service;
+  activePluginId = opts.pluginId;
+  voiceOperationState.begin(() => service.cancel());
   try {
-    const audio = await captureMicrophoneClip(opts.timeoutMs);
-    const text = await gateway.transcribe(audio, "audio/webm");
-    return { text };
+    return await service.listenOnce(opts.timeoutMs);
   } finally {
-    listenInProgress = false;
+    if (activeListeningService === service) {
+      activeListeningService = null;
+      activePluginId = undefined;
+    }
+    voiceOperationState.settle();
   }
 }
 
-async function captureMicrophoneClip(timeoutMs: number): Promise<Uint8Array> {
-  const partition = `openpets-voice-capture:${Date.now()}`;
-  const captureSession = session.fromPartition(partition, { cache: false });
-  // The one and only session where the microphone is allowed, per capture.
-  captureSession.setPermissionRequestHandler((_contents, permission, callback) => callback(permission === "media"));
-  captureSession.setPermissionCheckHandler((_contents, permission) => permission === "media");
+export async function cancelPluginVoiceListen(pluginId?: string, reason = "Voice capture was cancelled."): Promise<void> {
+  if (!activeListeningService) return;
+  if (pluginId && activePluginId && activePluginId !== pluginId) return;
+  await activeListeningService.cancel(reason).catch(() => undefined);
+}
 
-  const window = new BrowserWindow({
-    show: false,
-    width: 1,
-    height: 1,
-    webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, partition },
-  });
-  try {
-    const html = `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'">`;
-    await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
-    debug("plugin", "voice capture starting", { timeoutMs });
-    const base64 = await window.webContents.executeJavaScript(`(async () => {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
-      const chunks = [];
-      recorder.ondataavailable = (event) => { if (event.data.size > 0) chunks.push(event.data); };
-      const stopped = new Promise((resolve) => { recorder.onstop = resolve; });
-      recorder.start();
-      await new Promise((resolve) => setTimeout(resolve, ${Math.min(Math.max(timeoutMs, 1_000), 30_000)}));
-      recorder.stop();
-      await stopped;
-      for (const track of stream.getTracks()) track.stop();
-      const blob = new Blob(chunks, { type: "audio/webm" });
-      const buffer = await blob.arrayBuffer();
-      let binary = "";
-      const bytes = new Uint8Array(buffer);
-      for (let index = 0; index < bytes.length; index += 1) binary += String.fromCharCode(bytes[index]);
-      return btoa(binary);
-    })()`, true) as string;
-    const bytes = Buffer.from(base64, "base64");
-    if (bytes.byteLength < 128) throw new Error("Voice capture produced no audio.");
-    if (bytes.byteLength > 8 * 1024 * 1024) throw new Error("Voice capture is too large.");
-    return bytes;
-  } finally {
-    if (!window.isDestroyed()) window.destroy();
-    void captureSession.clearStorageData().catch(() => undefined);
+export async function shutdownPluginVoice(): Promise<void> {
+  if (activeListeningService) await activeListeningService.shutdown().catch(() => undefined);
+  else await captureService?.shutdown().catch(() => undefined);
+  activeListeningService = null;
+  activePluginId = undefined;
+}
+
+function getCaptureService(): VoiceCaptureService {
+  if (!captureService) {
+    const indicator = createElectronVoicePrivacyIndicator();
+    captureService = new VoiceCaptureService(createElectronVoiceCaptureFactory(), indicator);
   }
+  return captureService;
 }

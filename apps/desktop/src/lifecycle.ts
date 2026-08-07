@@ -6,9 +6,12 @@ import { info } from "./logger.js";
 import { stopLocalIpcServer } from "./local-ipc.js";
 import { closeAllLanVisitingPets } from "./lan-pet-controller.js";
 import { stopPluginService } from "./plugin-service.js";
+import { shutdownPluginVoice } from "./plugin-voice.js";
 import { focusOpenTaskWindows } from "./windows.js";
 
 let intentionalQuit = false;
+let cleanupStarted = false;
+let cleanupFinished = false;
 let hardExitTimer: NodeJS.Timeout | null = null;
 
 export function installAppLifecycle(): void {
@@ -30,15 +33,24 @@ export function installAppLifecycle(): void {
     console.log("OpenPets activate event received; not opening a dashboard window.");
   });
 
-  app.on("before-quit", () => {
+  app.on("before-quit", (event) => {
+    if (cleanupFinished) return;
+    event.preventDefault();
+    if (cleanupStarted) return;
+    cleanupStarted = true;
     intentionalQuit = true;
     info("app", "before quit cleanup begin");
     scheduleHardExitFallback("before-quit");
-    stopPluginService();
-    stopLocalIpcServer();
-    closeAllLanVisitingPets();
-    closeAllAgentPets();
-    destroyDefaultPet();
+    void (async () => {
+      await shutdownPluginVoice().catch(() => undefined);
+      await stopPluginService().catch(() => undefined);
+      stopLocalIpcServer();
+      closeAllLanVisitingPets();
+      closeAllAgentPets();
+      destroyDefaultPet();
+      cleanupFinished = true;
+      app.quit();
+    })();
   });
 }
 

@@ -21,7 +21,7 @@ import {
 import { motionStop } from "./pet-motion-engine.js";
 import { PluginSecretsStore } from "./plugin-secrets.js";
 import { showPluginToast } from "./plugin-toast.js";
-import { pluginVoiceListen, pluginVoiceSpeak } from "./plugin-voice.js";
+import { cancelPluginVoiceListen, pluginVoiceListen, pluginVoiceSpeak, shutdownPluginVoice } from "./plugin-voice.js";
 import { registerDelivery, stopDeliverySystem, teardownPluginDeliveries } from "./plugin-delivery.js";
 import type { PluginHostCapabilities, PluginPickedFileHost } from "./plugin-sdk-bridge.js";
 import { maxUserSoundBytes, UserSoundStore, userSoundMimeByExtension } from "./plugin-user-sound-store.js";
@@ -67,7 +67,7 @@ export type ElectronPluginHostCapabilities = PluginHostCapabilities & {
   readonly secretsStore: PluginSecretsStore;
   readonly aiGateway: PluginAiGateway;
   /** Tear down everything a plugin owns on stop/reload. */
-  clearPlugin(pluginId: string): void;
+  clearPlugin(pluginId: string): Promise<void>;
   shutdown(): void;
 };
 
@@ -208,7 +208,7 @@ export function createElectronPluginHostCapabilities(userDataPath: string): Elec
     },
     voice: {
       speak: async (text, opts) => { try { await pluginVoiceSpeak(text, opts); } catch (error) { warn("plugin", "voice speak failed", { reason: error instanceof Error ? error.message : "unknown", errorCode: classifyPluginError(error) }); throw error; } },
-      listen: async (opts) => { try { return await pluginVoiceListen(aiGateway, { timeoutMs: opts.timeoutMs ?? 10_000 }); } catch (error) { warn("plugin", "voice listen failed", { reason: error instanceof Error ? error.message : "unknown", errorCode: classifyPluginError(error) }); throw error; } },
+      listen: async (opts) => { try { return await pluginVoiceListen(aiGateway, { timeoutMs: opts.timeoutMs ?? 10_000, pluginId: opts.pluginId }); } catch (error) { warn("plugin", "voice listen failed", { reason: error instanceof Error ? error.message : "unknown", errorCode: classifyPluginError(error) }); throw error; } },
     },
     auth: {
       oauth: async (pluginId, config) => { try { return await oauthBroker.oauth(pluginId, config); } catch (error) { warn("plugin", "oauth failed", { pluginId, provider: config.provider, reason: error instanceof Error ? error.message : "unknown", errorCode: classifyPluginError(error) }); throw error; } },
@@ -290,7 +290,8 @@ export function createElectronPluginHostCapabilities(userDataPath: string): Elec
       listenAllowed: () => getPluginPlatformSettings().allowMicrophone,
       inQuietHours: () => isInQuietHours(),
     },
-    clearPlugin(pluginId: string) {
+    async clearPlugin(pluginId: string) {
+      await cancelPluginVoiceListen(pluginId, "The plugin was stopped.").catch(() => undefined);
       try {
         teardownPluginDeliveries(pluginId);
         clearPluginPetsForPlugin(pluginId);
@@ -302,6 +303,7 @@ export function createElectronPluginHostCapabilities(userDataPath: string): Elec
       motionStop("default");
     },
     shutdown() {
+      void shutdownPluginVoice().catch(() => undefined);
       shutdown();
     },
   };

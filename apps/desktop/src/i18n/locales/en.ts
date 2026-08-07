@@ -18,6 +18,8 @@ export const en = {
   "tray.integrations": "Integrations...",
   "tray.plugins": "Plugins...",
   "tray.settings": "Settings...",
+  "tray.cancelVoiceListening": "Stop microphone listening",
+  "tray.cancelVoiceTranscription": "Cancel transcription",
   "tray.openLogsFolder": "Open Logs Folder...",
   "tray.quit": "Quit OpenPets",
 
