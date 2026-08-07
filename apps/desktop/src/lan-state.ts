@@ -1,4 +1,5 @@
 export type LanEdge = "left" | "right" | "up" | "down";
+export type LanMode = "off" | "server" | "client";
 
 export type LanTopology = Readonly<Record<string, Readonly<Partial<Record<LanEdge, string>>>>>;
 
@@ -42,6 +43,19 @@ export type LanState = {
   readonly pets?: readonly LanPetRecord[];
   readonly updatedAt: number;
 };
+
+/**
+ * LAN ownership is fail-closed for external pet actions until a current state
+ * proves that this host owns the pet locally.
+ */
+export function isLanPetAwayForLocalHost(mode: LanMode, state: LanState | null, localHost: string | null, multiPetEnabled: boolean): boolean {
+  if (mode === "off") return false;
+  if (!state || !localHost) return true;
+  if (multiPetEnabled) {
+    return !(state.pets ?? []).some((pet) => pet.ownerHost === localHost && pet.currentHost === localHost);
+  }
+  return state.currentHost !== localHost;
+}
 
 export interface LanCoordinatorOptions {
   readonly staleClientMs: number;

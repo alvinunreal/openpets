@@ -5,11 +5,13 @@ import { delimiter, join, resolve } from "node:path";
 import { getAppStateSnapshot, initializeAppState, releaseStartupInstallLock } from "./app-state.js";
 import { createAppIcon } from "./assets.js";
 import { setLocaleFromPreference } from "./i18n/index.js";
-import { installDefaultPetDisplayHandlers, shouldOpenDefaultPetOnLaunch, showDefaultPet } from "./default-pet-controller.js";
+import { applyExternalPetReaction, applyExternalPetSay, getDefaultPetPaused, installDefaultPetDisplayHandlers, isDefaultPetVisible, shouldOpenDefaultPetOnLaunch, showDefaultPet } from "./default-pet-controller.js";
 import { installAppLifecycle } from "./lifecycle.js";
-import { startLanController } from "./lan-controller.js";
+import { initializeLanController, isDefaultPetAwayForLan, startLanController } from "./lan-controller.js";
 import { debug, error as logError, getLogFilePath, info, initializeLogger, warn } from "./logger.js";
 import { startLocalIpcServer } from "./local-ipc.js";
+import { initializeRemoteControlService } from "./remote-control-service.js";
+import { openPetsRemoteVersion, type RemoteStatusSnapshot } from "./remote-control-protocol.js";
 import { startDevPluginWatcher } from "./plugin-dev-watcher.js";
 import { createElectronPluginHostCapabilities } from "./plugin-host-capabilities.js";
 import { defaultPluginPetApi } from "./plugin-pet-api.js";
@@ -98,6 +100,15 @@ if (!gotSingleInstanceLock) {
     initializeAppState();
     // Resolve the UI language before any window or the tray is built.
     setLocaleFromPreference(getAppStateSnapshot().preferences.locale);
+    initializeLanController();
+    const remoteControlService = initializeRemoteControlService({
+      statePath: join(app.getPath("userData"), "openpets-remote-control.json"),
+      getStatusSnapshot: getRemoteStatusSnapshot,
+      isDefaultPetAway: isDefaultPetAwayForLan,
+      applyReaction: (reaction) => ({ shown: applyExternalPetReaction(reaction).shown }),
+      applySay: (message, reaction) => ({ shown: applyExternalPetSay(message, reaction).shown }),
+      log: (message) => info("remote", message),
+    });
     installInternalUiProtocol();
     installInternalUiHandlers();
     createAppTray();
@@ -117,6 +128,11 @@ if (!gotSingleInstanceLock) {
       showDefaultPet();
     }
     startLanController();
+    try {
+      await remoteControlService.start();
+    } catch {
+      warn("remote", "remote control listener unavailable");
+    }
     refreshTrayMenu();
     void (async () => {
       const service = pluginService;
@@ -163,4 +179,24 @@ function writePluginRuntimeLog(level: "debug" | "info" | "warn" | "error", messa
   else if (level === "info") info("plugin", message, fields);
   else if (level === "warn") warn("plugin", message, fields);
   else debug("plugin", message, fields);
+}
+
+function getRemoteStatusSnapshot(): RemoteStatusSnapshot {
+  const state = getAppStateSnapshot();
+  const configuredDefault = state.pets.installed.find((pet) => pet.id === state.preferences.defaultPetId);
+  const defaultPet = configuredDefault && !configuredDefault.broken ? configuredDefault : state.pets.installed.find((pet) => pet.builtIn) ?? state.pets.installed[0];
+  return {
+    ok: true,
+    appRunning: true,
+    protocolVersion: openPetsRemoteVersion,
+    defaultPet: {
+      id: defaultPet?.id ?? "builtin",
+      builtIn: defaultPet?.builtIn === true,
+      broken: defaultPet?.broken === true,
+    },
+    paused: getDefaultPetPaused(),
+    defaultPetVisible: isDefaultPetVisible(),
+    openDefaultPetOnLaunch: state.preferences.openDefaultPetOnLaunch,
+    speechBubblesEnabled: state.preferences.speechBubblesEnabled,
+  };
 }

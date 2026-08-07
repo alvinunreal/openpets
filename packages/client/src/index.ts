@@ -4,9 +4,11 @@ import { posix, win32 } from "node:path";
 
 import { parseIpcEndpoint, readDiscoveryFile, type OpenPetsDiscoveryFile } from "./discovery.js";
 import { connectTimeoutMs, maxIpcMessageBytes, openPetsIpcVersion, parseIpcResponse, responseTimeoutMs, validateReaction, OpenPetsClientError, type OpenPetsIpcMethod, type OpenPetsIpcRequest, type OpenPetsReaction } from "./protocol.js";
+import { maxRemoteMessageBytes, openPetsRemoteProtocol, openPetsRemoteVersion, parseRemoteEndpoint, parseRemoteResponse, remoteConnectTimeoutMs, remoteResponseTimeoutMs, validateRemoteClientId, validateRemoteMessage, validateRemoteReaction, validateRemoteToken, type OpenPetsRemoteEndpoint, type OpenPetsRemoteMethod, type OpenPetsRemoteRequest } from "./remote-protocol.js";
 
 export { getDiscoveryFilePath, parseIpcEndpoint, readDiscoveryFile, validateDiscovery, validateEndpoint, type OpenPetsDiscoveryFile, type ParsedIpcEndpoint } from "./discovery.js";
 export { allowedReactions, OpenPetsClientError, type OpenPetsReaction } from "./protocol.js";
+export { maxRemoteMessageBytes, openPetsRemoteProtocol, openPetsRemoteVersion, parseRemoteEndpoint, validateRemoteClientId, validateRemoteMessage, validateRemoteReaction, validateRemoteToken, type OpenPetsRemoteEndpoint, type OpenPetsRemoteMethod, type OpenPetsRemoteRequest, type OpenPetsRemoteResponse } from "./remote-protocol.js";
 
 /**
  * Stable per-process session nonce, generated once at module load.
@@ -18,8 +20,19 @@ const SESSION_NONCE = randomUUID();
 
 export interface OpenPetsClientOptions {
   readonly discoveryPath?: string;
+  /** Explicit remote mode. Remote mode never reads the local discovery file. */
+  readonly remote?: OpenPetsRemoteOptions;
+  readonly remoteEndpoint?: string;
+  readonly remoteToken?: string;
+  readonly remoteClientId?: string;
   readonly connectTimeoutMs?: number;
   readonly responseTimeoutMs?: number;
+}
+
+export interface OpenPetsRemoteOptions {
+  readonly endpoint: string;
+  readonly token: string;
+  readonly clientId?: string;
 }
 
 export interface OpenPetsStatusResult {
@@ -62,6 +75,7 @@ export interface OpenPetsPetListItem {
 }
 
 export interface OpenPetsClient {
+  readonly transport?: "local" | "remote";
   hello(): Promise<unknown>;
   status(options?: { readonly leaseId?: string }): Promise<OpenPetsStatusResult>;
   listPets(): Promise<OpenPetsPetListResult>;
@@ -76,22 +90,28 @@ export interface OpenPetsClient {
 }
 
 export function createOpenPetsClient(options: OpenPetsClientOptions = {}): OpenPetsClient {
+  const remote = resolveRemoteOptions(options);
+  const unsupportedRemote = <T>(): Promise<T> => Promise.reject(new OpenPetsClientError("remote_method_not_supported", "This operation is not available in remote mode."));
+
   return {
-    hello: () => sendDiscoveredRequest("hello", {}, options),
+    transport: remote ? "remote" : "local",
+    hello: () => remote ? sendRemoteRequest(remote.endpoint, remote.token, remote.clientId, "status", {}, options) : sendDiscoveredRequest("hello", {}, options),
     status: async (statusOptions) => {
       try {
+        if (remote) return await sendRemoteRequest<OpenPetsStatusResult>(remote.endpoint, remote.token, remote.clientId, "status", {}, options);
         return await sendDiscoveredRequest<OpenPetsStatusResult>("status", { leaseId: statusOptions?.leaseId }, options);
       } catch (error) {
         return {
           ok: false,
           appRunning: false,
-          unavailableReason: error instanceof Error ? error.message : "OpenPets is unavailable.",
+          unavailableReason: remote ? "Remote OpenPets is unavailable." : error instanceof Error ? error.message : "OpenPets is unavailable.",
         };
       }
     },
-    listPets: async () => parsePetListResult(await sendDiscoveredRequest("pets.list", {}, options)),
-    installPet: async (petId) => parsePetInstallResult(await sendDiscoveredRequest("pets.install", { petId: validatePetId(petId) }, { ...options, responseTimeoutMs: options.responseTimeoutMs ?? 60_000 })),
+    listPets: async () => remote ? unsupportedRemote() : parsePetListResult(await sendDiscoveredRequest("pets.list", {}, options)),
+    installPet: async (petId) => remote ? unsupportedRemote() : parsePetInstallResult(await sendDiscoveredRequest("pets.install", { petId: validatePetId(petId) }, { ...options, responseTimeoutMs: options.responseTimeoutMs ?? 60_000 })),
     installLocalPet: async (path, installOptions) => {
+      if (remote) return unsupportedRemote();
       if (typeof path !== "string" || path.trim().length === 0) {
         throw new OpenPetsClientError("invalid_params", "Path must be a non-empty string.");
       }
@@ -104,12 +124,17 @@ export function createOpenPetsClient(options: OpenPetsClientOptions = {}): OpenP
       }
       return parsePetInstallResult(await sendDiscoveredRequest("pets.install-local", { path: trimmedPath, kind: installOptions.kind }, { ...options, responseTimeoutMs: options.responseTimeoutMs ?? 60_000 }));
     },
-    acquireLease: (leaseOptions) => sendDiscoveredRequest("lease.acquire", { requestedPetId: leaseOptions?.requestedPetId, clientPid: process.pid, sessionNonce: SESSION_NONCE }, options),
-    heartbeatLease: (leaseId) => sendDiscoveredRequest("lease.heartbeat", { leaseId }, options),
-    releaseLease: (leaseId) => sendDiscoveredRequest("lease.release", { leaseId }, options),
-    react: (reaction, reactOptions) => sendDiscoveredRequest("pet.react", { reaction: validateReaction(reaction), leaseId: reactOptions?.leaseId }, options),
-    say: (message, sayOptions) => sendDiscoveredRequest("pet.say", { message, reaction: sayOptions?.reaction, leaseId: sayOptions?.leaseId }, options),
+    acquireLease: (leaseOptions) => remote ? unsupportedRemote() : sendDiscoveredRequest("lease.acquire", { requestedPetId: leaseOptions?.requestedPetId, clientPid: process.pid, sessionNonce: SESSION_NONCE }, options),
+    heartbeatLease: (leaseId) => remote ? unsupportedRemote() : sendDiscoveredRequest("lease.heartbeat", { leaseId }, options),
+    releaseLease: (leaseId) => remote ? unsupportedRemote() : sendDiscoveredRequest("lease.release", { leaseId }, options),
+    react: (reaction, reactOptions) => remote
+      ? sendRemoteRequest(remote.endpoint, remote.token, remote.clientId, "pet.react", { reaction: validateRemoteReaction(reaction) }, options)
+      : sendDiscoveredRequest("pet.react", { reaction: validateReaction(reaction), leaseId: reactOptions?.leaseId }, options),
+    say: (message, sayOptions) => remote
+      ? sendRemoteRequest(remote.endpoint, remote.token, remote.clientId, "pet.say", { message: validateRemoteMessage(message), ...(sayOptions?.reaction === undefined ? {} : { reaction: validateRemoteReaction(sayOptions.reaction) }) }, options)
+      : sendDiscoveredRequest("pet.say", { message, reaction: sayOptions?.reaction, leaseId: sayOptions?.leaseId }, options),
     showMedia: (path, mediaOptions) => {
+      if (remote) return unsupportedRemote();
       if (typeof path !== "string" || path.trim().length === 0) {
         throw new OpenPetsClientError("invalid_params", "Media path must be a non-empty string.");
       }
@@ -165,6 +190,96 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 async function sendDiscoveredRequest<T>(method: OpenPetsIpcMethod, params: unknown, options: OpenPetsClientOptions): Promise<T> {
   const discovery = readDiscoveryFile(options.discoveryPath);
   return sendRequest<T>(discovery, method, params, options);
+}
+
+interface ResolvedRemoteOptions {
+  readonly endpoint: OpenPetsRemoteEndpoint;
+  readonly token: string;
+  readonly clientId?: string;
+}
+
+function resolveRemoteOptions(options: OpenPetsClientOptions): ResolvedRemoteOptions | null {
+  const explicit = options.remote;
+  const hasFlatRemote = options.remoteEndpoint !== undefined || options.remoteToken !== undefined || options.remoteClientId !== undefined;
+  const hasEnvironmentRemote = process.env.OPENPETS_REMOTE_ENDPOINT !== undefined || process.env.OPENPETS_REMOTE_TOKEN !== undefined || process.env.OPENPETS_REMOTE_CLIENT_ID !== undefined;
+  if (!explicit && !hasFlatRemote && !hasEnvironmentRemote) return null;
+
+  const endpoint = explicit?.endpoint ?? options.remoteEndpoint ?? process.env.OPENPETS_REMOTE_ENDPOINT;
+  const token = explicit?.token ?? options.remoteToken ?? process.env.OPENPETS_REMOTE_TOKEN;
+  const clientId = explicit?.clientId ?? options.remoteClientId ?? process.env.OPENPETS_REMOTE_CLIENT_ID;
+  if (endpoint === undefined || token === undefined) {
+    throw new OpenPetsClientError("invalid_remote_configuration", "Remote configuration is incomplete.");
+  }
+  const validatedClientId = validateRemoteClientId(clientId);
+  return {
+    endpoint: parseRemoteEndpoint(endpoint),
+    token: validateRemoteToken(token),
+    ...(validatedClientId === undefined ? {} : { clientId: validatedClientId }),
+  };
+}
+
+export function sendRemoteRequest<T>(endpoint: OpenPetsRemoteEndpoint | string, token: string, clientId: string | undefined, method: OpenPetsRemoteMethod, params: unknown, options: OpenPetsClientOptions = {}): Promise<T> {
+  const parsedEndpoint = typeof endpoint === "string" ? parseRemoteEndpoint(endpoint) : parseRemoteEndpoint(`tcp://${endpoint.host}:${endpoint.port}`);
+  const validToken = validateRemoteToken(token);
+  const validClientId = validateRemoteClientId(clientId);
+  const request: OpenPetsRemoteRequest = {
+    id: randomUUID(),
+    protocol: openPetsRemoteProtocol,
+    version: openPetsRemoteVersion,
+    ...(validClientId === undefined ? {} : { clientId: validClientId }),
+    token: validToken,
+    method,
+    params,
+  };
+  const requestLine = `${JSON.stringify(request)}\n`;
+  if (Buffer.byteLength(requestLine, "utf8") > maxRemoteMessageBytes) {
+    return Promise.reject(new OpenPetsClientError("request_too_large", "Remote request is too large."));
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    const socket = net.createConnection({ host: parsedEndpoint.host, port: parsedEndpoint.port });
+    let buffer = "";
+    let settled = false;
+    const connectTimer = setTimeout(() => finish(new OpenPetsClientError("connect_timeout", "Timed out connecting to remote OpenPets.")), options.connectTimeoutMs ?? remoteConnectTimeoutMs);
+    const responseTimer = setTimeout(() => finish(new OpenPetsClientError("response_timeout", "Timed out waiting for remote OpenPets response.")), options.responseTimeoutMs ?? remoteResponseTimeoutMs);
+
+    const finish = (error?: unknown, result?: T): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(connectTimer);
+      clearTimeout(responseTimer);
+      socket.destroy();
+      if (error) reject(error);
+      else resolve(result as T);
+    };
+
+    socket.setEncoding("utf8");
+    socket.once("connect", () => {
+      clearTimeout(connectTimer);
+      socket.write(requestLine);
+    });
+    socket.on("data", (chunk: string) => {
+      buffer += chunk;
+      if (Buffer.byteLength(buffer, "utf8") > maxRemoteMessageBytes) {
+        finish(new OpenPetsClientError("response_too_large", "Remote response is too large."));
+        return;
+      }
+      const newline = buffer.indexOf("\n");
+      if (newline < 0) return;
+      try {
+        const parsed = parseRemoteResponse<T>(JSON.parse(buffer.slice(0, newline)) as unknown);
+        if (parsed.id !== request.id) throw new OpenPetsClientError("invalid_remote_response", "Remote response is invalid.");
+        if (parsed.ok) finish(undefined, parsed.result);
+        else finish(new OpenPetsClientError(parsed.error?.code ?? "remote_request_failed", "Remote request failed."));
+      } catch (error) {
+        finish(error);
+      }
+    });
+    socket.once("error", () => finish(new OpenPetsClientError("unavailable", "Remote OpenPets is unavailable.")));
+    socket.once("end", () => {
+      if (!settled) finish(new OpenPetsClientError("connection_closed", "Remote OpenPets closed the connection."));
+    });
+  });
 }
 
 export function sendRequest<T>(discovery: OpenPetsDiscoveryFile, method: OpenPetsIpcMethod, params: unknown, options: OpenPetsClientOptions = {}): Promise<T> {

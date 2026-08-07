@@ -6,10 +6,10 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 
-import { parseMcpArgs } from "./args.js";
+import { createHelpText, parseMcpArgs } from "./args.js";
 import { wireTransportLifecycle, type OpenPetsLeaseResult } from "./index.js";
 import { createOpenPetsMcpServer } from "./server.js";
-import { createMcpStatus, handleReact, sanitizeUnavailableReason, type LeaseContext, type OpenPetsMcpStatus } from "./tools.js";
+import { createMcpStatus, handleReact, handleSay, sanitizeUnavailableReason, type LeaseContext, type OpenPetsMcpStatus } from "./tools.js";
 
 parseMcpArgs(["--pet", "snoopy"]);
 parseMcpArgs(["--pet=snoopy"]);
@@ -17,6 +17,7 @@ parseMcpArgs(["--pet", "Bad Pet"]);
 parseMcpArgs(["--help"]);
 assertRejects(() => parseMcpArgs(["--pet", "bad/pet"]));
 assertRejects(() => parseMcpArgs(["--agent", "claude"]));
+if (!createHelpText().includes("remote mode rejects --pet")) throw new Error("MCP help does not define remote --pet behavior.");
 
 const unavailableStatus = createMcpStatus({ ok: false, appRunning: false, unavailableReason: "/Users/alvin/.config/OpenPets/runtime/ipc.json ENOENT" }, "snoopy");
 if (unavailableStatus.routingImplemented !== true || unavailableStatus.configuredPetId !== "snoopy") {
@@ -30,6 +31,7 @@ if (sanitizeUnavailableReason("/tmp/openpets-501/openpets-1.sock ENOENT")?.inclu
 }
 
 await checkMcpServerContract();
+await checkRemoteModeLeaseFree();
 await checkStdioServerContract();
 await checkT6TransportOnclose();
 await checkT7EnsureLeaseHeartbeatFirst();
@@ -95,6 +97,39 @@ async function checkMcpServerContract(): Promise<void> {
   } finally {
     await client.close();
     await server.close();
+  }
+}
+
+async function checkRemoteModeLeaseFree(): Promise<void> {
+  const calls: string[] = [];
+  const fakeClient = {
+    transport: "remote" as const,
+    status: async () => ({ ok: true, appRunning: true }),
+    listPets: async () => ({ ok: true as const, pets: [], defaultPetId: "builtin" }),
+    installPet: async () => { throw new Error("unused"); },
+    installLocalPet: async () => { throw new Error("unused"); },
+    acquireLease: async () => { calls.push("acquire"); throw new Error("remote lease must not be requested"); },
+    heartbeatLease: async () => { calls.push("heartbeat"); throw new Error("remote lease must not be requested"); },
+    releaseLease: async () => { calls.push("release"); return { released: true }; },
+    react: async (_reaction: string, options?: { readonly leaseId?: string }) => {
+      if (options?.leaseId !== undefined) calls.push("react-lease");
+      return { shown: true };
+    },
+    say: async (_message: string, options?: { readonly leaseId?: string }) => {
+      if (options?.leaseId !== undefined) calls.push("say-lease");
+      return { shown: true };
+    },
+    showMedia: async () => ({ ok: true, shown: true }),
+    hello: async () => ({ ok: true }),
+  };
+  const context = { client: fakeClient, leaseReady: Promise.resolve() };
+  if ((await handleReact({ reaction: "working" }, context)).isError) throw new Error("Remote MCP reaction unexpectedly failed.");
+  if ((await handleSay({ message: "Remote message" }, context)).isError) throw new Error("Remote MCP say unexpectedly failed.");
+  if (calls.length > 0) throw new Error(`Remote MCP mode invoked local lease operations: ${calls.join(",")}`);
+  const failed = await handleReact({ reaction: "working" }, { ...context, client: { ...fakeClient, react: async () => { throw new Error("remote failure"); } } });
+  const failureText = (failed.content?.[0] as { readonly text?: unknown } | undefined)?.text;
+  if (typeof failureText !== "string" || !failureText.includes("Remote OpenPets request") || failureText.includes("local IPC")) {
+    throw new Error("Remote MCP failure wording exposed local-only details.");
   }
 }
 

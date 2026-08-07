@@ -5,7 +5,7 @@ import { appendFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
-export type LogScope = "app" | "ipc" | "lease" | "pet.default" | "pet.agent" | "pet.window" | "plugin" | "state" | "tray" | "ui" | "terminal-focus" | "window-tracker" | "capabilities";
+export type LogScope = "app" | "ipc" | "lease" | "pet.default" | "pet.agent" | "pet.window" | "plugin" | "state" | "tray" | "ui" | "remote" | "terminal-focus" | "window-tracker" | "capabilities";
 
 type LogFields = Record<string, unknown>;
 
@@ -30,7 +30,7 @@ export function initializeLogger(): void {
     const message = initError instanceof Error ? initError.message : String(initError);
     logFilePath = null;
     previousLogFilePath = null;
-    console.error("OpenPets file logger unavailable; continuing without log file.", message);
+    console.error("OpenPets file logger unavailable; continuing without log file.", redactLogText(message));
   }
 }
 
@@ -68,13 +68,22 @@ export function error(scope: LogScope, message: string, errorOrFields?: unknown,
   writeLog("error", scope, message, normalized);
 }
 
+/** Redact bearer tokens and remote endpoints before they reach any log sink. */
+export function redactLogText(value: string): string {
+  return value
+    .replace(/\btcp:\/\/(?:\[[^\]\s]+\]|[A-Za-z0-9._:-]+):\d{1,5}\b/gi, "[redacted-endpoint]")
+    .replace(/[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}/g, "[redacted-token]")
+    .replace(/(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{43,}(?![A-Za-z0-9_-])/g, "[redacted-token]")
+    .replace(/[A-Za-z0-9+/=]{40,}/g, "[redacted-token]");
+}
+
 function writeLog(level: LogLevel, scope: LogScope, message: string, fields: LogFields | undefined): void {
   if (levelPriority[level] < levelPriority[configuredLevel]) return;
   let line: string;
   try {
-    line = `${new Date().toISOString()} ${level.toUpperCase().padEnd(5)} ${scope.padEnd(12)} ${message}${formatFields(fields)}\n`;
+    line = `${new Date().toISOString()} ${level.toUpperCase().padEnd(5)} ${scope.padEnd(12)} ${redactLogText(message)}${formatFields(fields)}\n`;
   } catch (formatError) {
-    line = `${new Date().toISOString()} ${level.toUpperCase().padEnd(5)} ${scope.padEnd(12)} ${message} logFormatError=${JSON.stringify(formatError instanceof Error ? formatError.message : String(formatError))}\n`;
+    line = `${new Date().toISOString()} ${level.toUpperCase().padEnd(5)} ${scope.padEnd(12)} ${redactLogText(message)} logFormatError=${JSON.stringify(redactLogText(formatError instanceof Error ? formatError.message : String(formatError)))}\n`;
   }
 
   if (mirrorToConsole) {
@@ -88,7 +97,7 @@ function writeLog(level: LogLevel, scope: LogScope, message: string, fields: Log
 
   if (!logFilePath) return;
   void appendFile(logFilePath, line, "utf8").catch((appendError: unknown) => {
-    if (mirrorToConsole) console.error("Failed to write OpenPets log file.", appendError);
+    if (mirrorToConsole) console.error("Failed to write OpenPets log file.", appendError instanceof Error ? formatError(appendError) : redactLogText(String(appendError)));
   });
 }
 
@@ -100,7 +109,7 @@ function rotateCurrentLog(currentPath: string, previousPath: string): void {
     if (existsSync(previousPath)) renameSync(previousPath, join(dirname(previousPath), "openpets.previous.old.log"));
     renameSync(currentPath, previousPath);
   } catch (rotationError: unknown) {
-    if (mirrorToConsole) console.error("Failed to rotate OpenPets log file.", rotationError);
+    if (mirrorToConsole) console.error("Failed to rotate OpenPets log file.", rotationError instanceof Error ? formatError(rotationError) : redactLogText(String(rotationError)));
   }
 }
 
@@ -110,7 +119,7 @@ function normalizeLogLevel(value: string | undefined): LogLevel | null {
 }
 
 function isDevRun(): boolean {
-  return process.env.OPENPETS_DEV === "1" || process.env.NODE_ENV === "development" || !app.isPackaged;
+  return process.env.OPENPETS_DEV === "1" || process.env.NODE_ENV === "development" || app?.isPackaged === false;
 }
 
 function formatFields(fields: LogFields | undefined): string {
@@ -148,7 +157,7 @@ function formatError(error: Error): { readonly name: string; readonly message: s
 }
 
 function redact(value: string): string {
-  return value.replace(/[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}/g, "[redacted-token]").replace(/[A-Za-z0-9+/=]{40,}/g, "[redacted-token]");
+  return redactLogText(value);
 }
 
 function isSensitiveKey(key: string): boolean {

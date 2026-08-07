@@ -161,6 +161,9 @@ async function main(): Promise<void> {
 
   const lease: LeaseContext = {};
   const context = createToolContext(options.petId);
+  if (context.client.transport === "remote" && options.petId !== undefined) {
+    throw new Error("Remote mode does not support --pet; remote control uses the default pet.");
+  }
   const leaseReady = acquireStartupLease(context.client, lease, options.petId);
   const server = createOpenPetsMcpServer({ ...context, lease, leaseReady });
   const transport = new StdioServerTransport();
@@ -174,6 +177,7 @@ async function main(): Promise<void> {
 }
 
 async function acquireStartupLease(client: ReturnType<typeof createToolContext>["client"], lease: LeaseContext, requestedPetId: string | undefined): Promise<void> {
+  if (client.transport === "remote") return;
   try {
     lease.lease = await client.acquireLease({ requestedPetId });
     lease.staleLeaseId = undefined;

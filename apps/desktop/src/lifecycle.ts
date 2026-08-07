@@ -4,6 +4,7 @@ import { closeAllAgentPets } from "./agent-pet-controller.js";
 import { destroyDefaultPet } from "./default-pet-controller.js";
 import { info } from "./logger.js";
 import { stopLocalIpcServer } from "./local-ipc.js";
+import { stopRemoteControlService } from "./remote-control-service.js";
 import { closeAllLanVisitingPets } from "./lan-pet-controller.js";
 import { stopPluginService } from "./plugin-service.js";
 import { shutdownPluginVoice } from "./plugin-voice.js";
@@ -44,6 +45,7 @@ export function installAppLifecycle(): void {
     void (async () => {
       await shutdownPluginVoice().catch(() => undefined);
       await stopPluginService().catch(() => undefined);
+      await stopRemoteControlService().catch(() => undefined);
       stopLocalIpcServer();
       closeAllLanVisitingPets();
       closeAllAgentPets();

@@ -12,11 +12,9 @@ import { createLanRequestHandler } from "./lan-http-controller.js";
 import { readPersistedLanState, writePersistedLanState } from "./lan-persistence.js";
 import { planLanWorkActivities, shouldPublishLanWorkSignal, shouldRetryLanWorkReturn } from "./lan-pet-activity.js";
 import { applyLanVisitingPetSay, getLanVisitingPetPosition, syncLanVisitingPets } from "./lan-pet-controller.js";
-import { LanCoordinator, countLanTopologyLinks, normalizeLanHost, normalizeLanTopology, validateLanTopology, type LanEdge, type LanPoint, type LanState, type LanTopology, type LanTopologyIssue } from "./lan-state.js";
+import { isLanPetAwayForLocalHost, LanCoordinator, countLanTopologyLinks, normalizeLanHost, normalizeLanTopology, validateLanTopology, type LanEdge, type LanMode, type LanPoint, type LanState, type LanTopology, type LanTopologyIssue } from "./lan-state.js";
 import { info, warn, error as logError } from "./logger.js";
 import type { OpenPetsReaction } from "./local-ipc-protocol.js";
-
-type LanMode = "off" | "server" | "client";
 
 export type LanStatusSnapshot = {
   readonly mode: LanMode;
@@ -60,23 +58,39 @@ let activeServerUrl = "";
 let activeLocalHost = "";
 let activeToken: string | null = null;
 let activeSessionToken: string | null = null;
+let lanControllerInitialized = false;
+let lanControllerStarted = false;
 const seenActivitySequences = new Map<string, number>();
 const pendingWorkReturns = new Map<string, NodeJS.Timeout>();
 
+/** Establish LAN mode before any service or UI can make ownership decisions. */
+export function initializeLanController(): void {
+  if (lanControllerInitialized) return;
+  lanControllerInitialized = true;
+  activeMode = normalizeMode(process.env.OPENPETS_LAN_MODE);
+  activeLocalHost = activeMode === "off" ? "" : normalizeLanHost(process.env.OPENPETS_LAN_HOSTNAME) || hostname();
+  activeServerUrl = "";
+  activeToken = null;
+  activeSessionToken = null;
+  lastLanState = null;
+}
+
 export function startLanController(): void {
-  const mode = normalizeMode(process.env.OPENPETS_LAN_MODE);
+  initializeLanController();
+  if (lanControllerStarted) return;
+  lanControllerStarted = true;
+
+  const mode = activeMode;
   if (mode === "off") return;
 
-  const localHost = normalizeLanHost(process.env.OPENPETS_LAN_HOSTNAME) || hostname();
+  const localHost = activeLocalHost;
   const port = normalizePort(process.env.OPENPETS_LAN_PORT) ?? defaultPort;
   const serverUrl = normalizeServerUrl(process.env.OPENPETS_LAN_SERVER, port);
   const auth = resolveLanAuthConfig(app.getPath("userData"), process.env, { serverMode: mode === "server" });
   const token = auth.token;
   const topology = parseLanTopology(process.env.OPENPETS_LAN_TOPOLOGY);
   multiPetEnabled = process.env.OPENPETS_LAN_PETS === "multi";
-  activeMode = mode;
   activeServerUrl = serverUrl;
-  activeLocalHost = localHost;
   activeToken = token;
   const topologyIssues = validateLanTopology(topology);
   coordinator = new LanCoordinator({ staleClientMs, topology });
@@ -158,6 +172,7 @@ async function registerLanClient(serverUrl: string, localHost: string, token: st
     missedPolls = 0;
     applyLanState(state, localHost);
   } catch (registerError) {
+    lastLanState = null;
     missedPolls += 1;
     warn("app", "lan register failed", { error: registerError instanceof Error ? registerError.message : String(registerError), missedPolls });
     if (shouldHideLanPetAfterMisses(missedPolls)) {
@@ -208,6 +223,7 @@ async function pollLanServer(serverUrl: string, localHost: string, token: string
     missedPolls = 0;
     applyLanState(state, localHost);
   } catch (pollError) {
+    lastLanState = null;
     missedPolls += 1;
     const now = Date.now();
     if (shouldLogLanPollFailure(now, lastPollWarningAt)) {
@@ -251,6 +267,11 @@ export function broadcastLanPetActivity(reaction: OpenPetsReaction): void {
     .catch((activityError) => warn("app", "lan work activity publish failed", {
       error: activityError instanceof Error ? activityError.message : String(activityError),
     }));
+}
+
+/** Remote control must not wake or forward a default pet that LAN mode owns elsewhere. */
+export function isDefaultPetAwayForLan(): boolean {
+  return isLanPetAwayForLocalHost(activeMode, lastLanState, activeLocalHost || null, multiPetEnabled);
 }
 
 function applyLanWorkActivities(state: LanState, localHost: string): void {

@@ -34,9 +34,10 @@ launching a second one.
 
 `main.ts` runs a deterministic bootstrap (see `src/codemap.md` for the exact
 order): install lifecycle handlers → initialize app state → initialize the
-logger → create the tray → start the local IPC server → initialize the plugin
-service (with the Electron JS host) → optionally show the default pet. Shutdown
-runs the reverse: stop the plugin service, IPC server, and pet windows on quit.
+logger → create the tray → start the local IPC server → start the persisted,
+opt-in remote-control service if enabled → initialize the plugin service (with
+the Electron JS host) → optionally show the default pet. Shutdown stops the
+plugin service, remote-control listener, local IPC server, and pet windows.
 
 Key files: `main.ts` (entry/bootstrap), `lifecycle.ts` (app events + cleanup),
 `state.ts` (shell pause flag).
@@ -126,6 +127,38 @@ helpers. This is covered in depth in [pets.md](pets.md).
 TCP, routes a versioned JSON protocol, and writes a discovery file so clients
 can find it. The lease manager (`lease-manager.ts`) sits behind it. Full
 contract in [ipc.md](ipc.md).
+
+### Remote control service
+
+`remote-control-service.ts` is deliberately not a mode of `local-ipc.ts`. It is
+disabled unless a local caller explicitly configures a concrete private,
+loopback, link-local, or CGNAT-range IPv4 address and port. Wildcards, public
+addresses, hostnames, IPv6, non-canonical IPv4 text, and port zero are rejected.
+Its own versioned protocol has a 4 KiB payload cap, bounded socket lifetime,
+concurrent-socket cap, and per-remote-address rate limit. The absolute deadline
+remains through response shutdown so half-open peers are reclaimed without
+truncating a complete response.
+
+Pairing creates a named client and a high-entropy token. The plaintext token is
+returned only by the local pairing/rotation API; persistence stores only its
+SHA-256 verifier plus client metadata and activity timestamps. The main-process
+IPC interface (`openpets:remote-*`) supports Control Center management: configuration,
+pairing, listing, rotation, and revocation. Control Center (Settings → Remote)
+provides a dedicated UI with listener configuration, explicit IPv4 bind validation,
+a prominent unencrypted TCP transport warning with explicit acknowledgement before
+enabling, paired client listing with scope badges, pairing with `say` unchecked by default,
+a one-time token handoff panel with environment/CLI setup guidance (`OPENPETS_REMOTE_ENDPOINT="tcp://<address>:<port>"` derived from active listener state), and confirmation
+modals for token rotation and client revocation.
+
+Remote requests can only read a sanitized status snapshot, react to the default pet,
+or say a short validated message with the `say` scope. Leases, installation, discovery,
+files, media, paths, prompts, tool output, and arbitrary pet targets are not part of the
+remote capability. Explanatory copy in Control Center highlights these default-pet-only
+and no-files/media constraints. LAN ownership is initialized before the remote service
+singleton and Control Center handlers; the persisted listener starts only after the normal
+UI/local-IPC startup steps. While LAN ownership is unknown or belongs to another host,
+remote reactions and speech return `shown: false` instead of waking or forwarding the
+local default pet. With LAN mode off, local default-pet behavior is unchanged.
 
 **Pet fallback notification:** when an agent requests a specific pet via
 `--pet <id>` and that pet is not installed (or is invalid/broken), the lease
@@ -261,8 +294,10 @@ ZIPs) and runs third-party plugin code, so it is defensive by construction:
   default pet even when install/render logic is correct. (This is a documented,
   easy-to-hit footgun in `AGENTS.md`.)
 - **Mock keychain** to avoid OS credential prompts.
-- **IPC network security**: TCP mode is restricted to loopback/private
-  addresses; public IPs and hostnames are rejected. See [ipc.md](ipc.md).
+- **IPC network security**: local TCP mode is restricted to loopback/private
+  addresses; public IPs and hostnames are rejected. Remote control is separate,
+  opt-in, explicitly bound, authenticated per client, and scope limited; it
+  never writes a discovery file. See [ipc.md](ipc.md).
 - **Defensive I/O**: atomic writes everywhere; path-traversal and symlink checks
   on every filesystem boundary; strict ZIP entry validation (`zip-safety.ts`).
 - **Plugin sandbox**: plugins run in hidden, session-partitioned BrowserWindows

@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
 
-import { LanCoordinator, countLanTopologyLinks, normalizeLanEdge, normalizeLanHost, normalizeLanPetId, normalizeLanPoint, normalizeLanTopology, validateLanTopology } from "../src/lan-state.js";
+import { isLanPetAwayForLocalHost, LanCoordinator, countLanTopologyLinks, normalizeLanEdge, normalizeLanHost, normalizeLanPetId, normalizeLanPoint, normalizeLanTopology, validateLanTopology } from "../src/lan-state.js";
 
 const coordinator = new LanCoordinator({ staleClientMs: 1_000 });
+
+assert.equal(isLanPetAwayForLocalHost("off", null, "alpha", false), false, "LAN-disabled mode must preserve local remote actions");
+assert.equal(isLanPetAwayForLocalHost("client", null, "alpha", false), true, "LAN ownership must fail closed before the first state is available");
+assert.equal(isLanPetAwayForLocalHost("server", { enabled: true, currentHost: null, clients: [], updatedAt: 0 }, "alpha", false), true, "unknown LAN ownership must keep remote actions hidden");
+assert.equal(isLanPetAwayForLocalHost("client", { enabled: true, currentHost: "alpha", clients: [], updatedAt: 0 }, "alpha", false), false, "known local LAN ownership should permit remote actions");
+assert.equal(isLanPetAwayForLocalHost("server", { enabled: true, currentHost: "beta", clients: [], updatedAt: 0 }, "alpha", false), true, "remote LAN ownership should suppress local remote actions");
+assert.equal(isLanPetAwayForLocalHost("client", { enabled: true, currentHost: "beta", clients: [], pets: [{ ownerHost: "alpha", petId: "cat", currentHost: "alpha" }], updatedAt: 0 }, "alpha", true), false, "multi-pet local ownership should permit remote actions for the local pet");
+assert.equal(isLanPetAwayForLocalHost("client", { enabled: true, currentHost: "alpha", clients: [], pets: [{ ownerHost: "alpha", petId: "cat", currentHost: "beta" }], updatedAt: 0 }, "alpha", true), true, "multi-pet visiting ownership should suppress local remote actions");
 
 let state = coordinator.register("Akshar", { x: 100, y: 100 }, 1_000);
 assert.equal(state.currentHost, "Akshar", "first registered host should own the LAN pet");

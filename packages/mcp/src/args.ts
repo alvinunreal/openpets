@@ -53,5 +53,5 @@ export function validateRawPetArg(value: string): string {
 }
 
 export function createHelpText(): string {
-  return `OpenPets MCP server\n\nUsage:\n  open-pets-mcp [--pet <petId>]\n\nOptions:\n  --pet <petId>  Request an installed OpenPets pet for this MCP process; missing pets fall back to default.\n  --help         Show this help.\n  --version      Show package version.\n`;
+  return `OpenPets MCP server\n\nUsage:\n  open-pets-mcp [--pet <petId>]\n\nOptions:\n  --pet <petId>  Request an installed OpenPets pet for local IPC; remote mode rejects --pet and uses only the default pet.\n  --help         Show this help.\n  --version      Show package version.\n`;
 }

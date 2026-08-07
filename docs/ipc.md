@@ -1,14 +1,15 @@
-# Local IPC Protocol & Client
+# Local IPC, Remote Control Protocol & Client
 
-Everything an agent does to a pet travels over a **local IPC channel** between
-the agent-side code and the desktop app. The wire contract is defined by
-`@open-pets/client` (`packages/client/`) and served by the desktop's
-`local-ipc.ts`. This doc explains the transport, the discovery handshake, the
-lease model, and the request surface. It is the contract both sides must agree
-on; the client package is the source of truth for exact shapes.
+Normal agent activity travels over a **local IPC channel** between the
+agent-side code and the desktop app. The local wire contract is defined by
+`@open-pets/client` (`packages/client/`) and served by `local-ipc.ts`. OpenPets
+also has a separate, disabled-by-default remote-control protocol for explicitly
+paired coding agents. This doc explains both contracts; their request routers,
+authentication, discovery behavior, and capabilities must remain separate.
 
 Source maps: `packages/client/src/codemap.md` (client),
-`apps/desktop/src/codemap.md` (server side: `local-ipc*.ts`, `lease-manager.ts`).
+`apps/desktop/src/codemap.md` (local server side: `local-ipc*.ts`,
+`lease-manager.ts`; remote side: `remote-control-*.ts`).
 
 ## Why local IPC and not HTTP
 
@@ -156,10 +157,76 @@ set before sending, and `@open-pets/agent-events` validates *speech* strings
 (single line, length-bounded, no code/URLs/paths/secrets) so nothing unsafe ever
 reaches a bubble. See [agent-integrations.md](agent-integrations.md).
 
+## Remote control protocol
+
+Remote control is an independent versioned line-delimited JSON protocol owned by
+`apps/desktop/src/remote-control-service.ts` and
+`packages/client/src/remote-protocol.ts`. It is not a network transport for
+local IPC and it never reads or writes the local discovery file.
+
+The service is disabled by default. Enabling it requires a local configuration
+with a concrete IPv4 address from loopback, private, link-local, or CGNAT
+`100.64.0.0/10` ranges and a non-zero port. Wildcard addresses, public
+addresses, hostnames, IPv6, and implicit/default bindings are rejected. The
+client accepts remote configuration
+only through explicit `remote: { endpoint, token, clientId? }` options, the
+equivalent `remoteEndpoint`/`remoteToken`/`remoteClientId` options, or the
+carefully named `OPENPETS_REMOTE_ENDPOINT`, `OPENPETS_REMOTE_TOKEN`, and
+`OPENPETS_REMOTE_CLIENT_ID` environment variables. A configured remote client
+never consults discovery.
+
+Remote messages are capped at 4 KiB, one request per bounded socket, and are
+rate-limited per remote address. The absolute connection deadline remains active
+through response shutdown, so a peer that leaves the TCP connection half-open
+cannot retain a concurrent-socket slot indefinitely; complete responses remain
+readable before the bounded socket is reclaimed. Malformed, unauthenticated,
+oversized, and unsupported requests receive generic errors. Pairing and rotation generate an
+opaque high-entropy token and disclose it exactly once to the local caller;
+only a SHA-256 verifier is persisted. Local service actions can list metadata,
+rotate, or revoke clients without returning a token for an existing client.
+
+The allowlist is deliberately small:
+
+| Remote method | Required scope | Capability |
+|---------------|----------------|------------|
+| `status` | `status` | Minimal sanitized app/default-pet snapshot |
+| `pet.react` | `react` | Allowlisted reaction on the default pet only |
+| `pet.say` | `say` | Short validated single-line message on the default pet only |
+
+Remote requests have no lease, install, discovery, file, media, path, prompt,
+tool-output, or arbitrary-pet-target capability. Remote reactions are not
+forwarded through LAN pet presence. Existing MCP and CLI commands that use
+status/react/say can use this mode through the client options or environment;
+unsupported local-only operations fail with a generic remote-mode error.
+
+When LAN mode is enabled, its mode is initialized before the remote listener and
+remote `pet.react`/`pet.say` fail closed with `shown: false` until current LAN
+ownership proves that the local host owns the default pet. LAN-disabled mode
+preserves the normal local default-pet behavior.
+
+Remote protocol v1 is raw TCP and is **not encrypted**. A trusted private
+network is an explicit deployment prerequisite: a network observer can capture
+and replay the bearer token. Never bind it for public Internet access, use port
+forwarding, or place it on shared/untrusted Wi-Fi. An encrypted overlay with
+its own access-control list is strongly preferred. CGNAT-range addressing is
+only an address classification for the boundary check; it does not provide
+encryption or confidentiality.
+
+### Control Center Setup & Pairing Flow
+
+Control Center provides UI management under **Settings → Remote**:
+
+1. **Status & Listener Configuration**: Disabled by default. Enabling requires entering an explicit concrete IPv4 bind address and port (no wildcard `0.0.0.0` or default autocomplete).
+2. **Transport Warning & Acknowledgement**: Enabling requires reading a prominent warning regarding raw unencrypted TCP and explicitly checking an acknowledgement of the private network requirement before the listener can be started.
+3. **Paired Client Management**: Displays active/revoked clients with scopes (`status`, `react`, `say`), creation date, and last activity time.
+4. **Pairing Flow**: Pairing requires a client name and scope selection (`status` and `react` required; `say` unchecked by default).
+5. **One-Time Token Handoff**: Pair and rotate return the plaintext bearer token exactly once in a dedicated setup modal along with Client ID, environment variable examples (`OPENPETS_REMOTE_ENDPOINT="tcp://<address>:<port>"`, `OPENPETS_REMOTE_CLIENT_ID`, `OPENPETS_REMOTE_TOKEN`), and copy controls. Dismissing the modal immediately clears the token from component state. The token is never stored in plaintext or logged.
+6. **Rotation & Revocation**: Destructive actions require explicit confirmation modals. Revoking immediately invalidates access for the client ID.
+
 ## Security
 
-- **Token auth** on every request; the token comes only from the discovery file,
-  which is permission-checked.
+- **Local token auth** on every local request; the token comes only from the
+  permission-checked local discovery file.
 - **TCP is private-only.** IPv4 addresses only (no hostnames); allowed ranges are
   loopback `127.0.0.0/8`, private `10/8`, `172.16/12`, `192.168/16`, and
   link-local `169.254/16`. `0.0.0.0`, public IPs, and hostnames are rejected.
@@ -173,6 +240,8 @@ reaches a bubble. See [agent-integrations.md](agent-integrations.md).
   validation.
 - `apps/desktop/contracts/local-ipc-protocol.contract.ts` — server-side
   request/response parsing.
+- `apps/desktop/contracts/remote-control-protocol.contract.ts` — remote
+  allowlist, validation, and secure binding configuration.
 
 These run in the test suite ([testing-and-validation.md](testing-and-validation.md))
 and are the guardrail against protocol drift between client and app.
