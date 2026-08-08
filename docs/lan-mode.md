@@ -1,4 +1,8 @@
-﻿# OpenPets LAN mode
+---
+description: Explore the experimental OpenPets LAN mode for multi-machine pet visits, authenticated server/client setup, topology hints, and packaging validation.
+---
+
+# LAN mode
 
 This experimental mode makes one OpenPets default pet shared across PCs on a LAN.
 Only the current owner machine shows the pet. Dragging the pet to a screen edge
@@ -26,7 +30,7 @@ remains experimental.
 Set `OPENPETS_LAN_PETS=multi` on every participating host to exercise the next
 experimental phase. Each host registers its selected default pet. When that pet
 migrates away, its default window hides; the destination opens a dedicated
-visiting-pet window keyed by owner host. Owner identity—not pet package ID—is
+visiting-pet window keyed by owner host. Owner identity - not pet package ID - is
 the window key, so two people may select the same pet without colliding.
 
 The destination must have the selected pet installed and healthy. The bundled

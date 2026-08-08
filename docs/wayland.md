@@ -1,4 +1,8 @@
-# Linux Wayland drag notes
+---
+description: Troubleshoot OpenPets on Linux Wayland, including manual dragging limits, accepted trade-offs, OAuth browser launch, and KDE secret storage.
+---
+
+# Linux Wayland notes
 
 OpenPets supports pet dragging on Linux Wayland by using Electron/Chromium's
 native draggable region path for the visible pet sprite. This lets the compositor
@@ -79,8 +83,7 @@ for why x11/XWayland is forced at all).
 
 `plugin-oauth.ts` used to call Electron's `shell.openExternal(authUrl)` to open
 the system browser for the PKCE authorization step. On this configuration it
-resolves without throwing, but no browser process or window is ever launched —
-confirmed by monitoring running processes and the window list for 25s
+resolves without throwing, but no browser process or window is ever launched - confirmed by monitoring running processes and the window list for 25s
 bracketing the call: no new browser process, no new `xdg-open` process, no new
 window. A plain `xdg-open <url>` from a terminal in the same session works
 instantly.
@@ -93,7 +96,7 @@ A second, narrower issue sits underneath that: Electron force-sets
 `GDK_BACKEND=x11` in its own process environment when the ozone platform is
 forced to x11, for its own GTK dialogs/theming. Spawning `xdg-open` (or a
 browser directly) with that inherited means the spawned browser can end up in
-a broken half-Wayland/half-X11 state — observed concretely as Firefox refusing
+a broken half-Wayland/half-X11 state - observed concretely as Firefox refusing
 to open at all with `Failed to open Wayland display, fallback to X11 ...
 Wayland only build is missing Wayland display`, even though the identical
 command works fine from a plain terminal where `GDK_BACKEND` isn't set. Strip

@@ -1,10 +1,14 @@
-# Pets: Model, Installation & Rendering
+---
+description: Learn how OpenPets pet packages describe sprites, reactions, speech, motion, install paths, ZIP safety, and local authoring.
+---
+
+# Pets
 
 A "pet" is an animated character that lives in a transparent desktop window and
 reacts to agent activity. This doc covers the whole pet lifecycle: what a pet is
 made of, how it gets onto disk, how reactions become animations, and how the
-windows behave. For the catalog that ships pets see [catalog.md](catalog.md);
-for the command path that triggers reactions see [ipc.md](ipc.md).
+windows behave. For the catalog that ships pets see [Catalogs](/catalog);
+for the command path that triggers reactions see [IPC and remote control](/ipc).
 
 Source maps: `apps/desktop/src/codemap.md` (pet windows, controllers,
 installation), `packages/install-pet/codemap.md` (standalone installer).
@@ -13,20 +17,20 @@ installation), `packages/install-pet/codemap.md` (standalone installer).
 
 A pet package is small and asset-driven:
 
-- **`pet.json`** — metadata: `id`, `displayName`, `description`,
+- **`pet.json`** - metadata: `id`, `displayName`, `description`,
   `spritesheetPath`, and optional `category` / `subcategory` / `sourceUrl` /
-  `xHandle`. (Catalog entries carry the same identity plus hosting URLs — see
-  [catalog.md](catalog.md).)
-- **`spritesheet.webp`** — a grid of animation frames. Frames are at least
+  `xHandle`. (Catalog entries carry the same identity plus hosting URLs - see
+  [Catalogs](/catalog).)
+- **`spritesheet.webp`** - a grid of animation frames. Frames are at least
   `192x208`; thumbnails are derived from the spritesheet.
 
 There are three sources a pet can come from at runtime:
 
-1. **Built-in pet** (`built-in-pet.ts`) — a bundled spritesheet that always
+1. **Built-in pet** (`built-in-pet.ts`) - a bundled spritesheet that always
    works as a fallback, even offline with nothing installed.
-2. **Catalog pets** — downloaded from the public catalog and extracted into
+2. **Catalog pets** - downloaded from the public catalog and extracted into
    `userData/pets/{id}/`.
-3. **Codex pets** — locally-developed pets imported from `~/.codex/pets/`
+3. **Codex pets** - locally-developed pets imported from `~/.codex/pets/`
    (`codex-pets.ts`), the dev workflow for authoring a new pet before
    publishing it.
 
@@ -34,18 +38,18 @@ There are three sources a pet can come from at runtime:
 
 Two distinct window roles, two controllers:
 
-- **Default pet** (`default-pet-controller.ts`) — the always-on companion shown
+- **Default pet** (`default-pet-controller.ts`) - the always-on companion shown
   when enabled. Persistent. Remembers its position per connected monitor and
   clamps it back into the visible work area after display changes. Shows
   transient reactions and status badges. Not lease-bound.
-- **Agent pets** (`agent-pet-controller.ts`) — shown on explicit agent request,
+- **Agent pets** (`agent-pet-controller.ts`) - shown on explicit agent request,
   routed by a **lease**. The first lease opens the window; the last lease
   released closes it. This lets several agents each get their own pet without
   colliding with the default pet. Agent pets roam with the same physics as
   the default pet (gravity + bounce, driven by `pet-roaming-controller.ts`).
   Session lifetime is tracked via PID liveness: when a client process
   terminates, the lease is released within ~5 s and the pet window closes.
-  See the lease model in [ipc.md](ipc.md).
+  See the lease model in [IPC and remote control](/ipc).
 
 Both are created by `pet-window.ts` as transparent, frameless, always-on-top
 windows, driven through `pet-preload.cjs` for drag and click-through behavior.
@@ -61,9 +65,9 @@ state returns that visitor to its owner.
 While a pet is click-through it only learns that the cursor is over it through
 *forwarded* mouse events (`setIgnoreMouseEvents(true, { forward: true })`), which
 Electron delivers on macOS and Windows but not on Linux (Linux pet windows are
-kept interactive instead). Both compositors can silently stop forwarding — macOS
+kept interactive instead). Both compositors can silently stop forwarding - macOS
 across Space switches, display sleep, and fullscreen transitions; Windows after
-rapid pet reloads and fullscreen sweeps — which would leave the pet stuck
+rapid pet reloads and fullscreen sweeps - which would leave the pet stuck
 click-through and impossible to grab. A cursor-probe watchdog in `pet-window.ts`
 re-arms forwarding from the main process (`screen.getCursorScreenPoint()`), which
 keeps working even when forwarding is dead. The platform predicates live in
@@ -76,14 +80,13 @@ for permission, success, error, idle, …). The rendering pipeline turns a
 reaction into something visible:
 
 1. `reaction-animation-mapping.ts` resolves a reaction to a **sprite animation
-   state** (`resolveReactionSpriteState`). This mapping is **user-configurable** —
-   users can override which animation a reaction plays, and overrides persist in
+   state** (`resolveReactionSpriteState`). This mapping is **user-configurable** - users can override which animation a reaction plays, and overrides persist in
    app state. The selectable animation states include idle, review, running,
    waiting, waving, jumping, and failed; `waving` covers attention/notification
    style reactions.
 2. `reaction-messages.ts` picks a **speech message** from the pool for that
    reaction; `i18n/reactions/` provides the localized pools so speech matches the
-   active locale (see [i18n.md](i18n.md)).
+   active locale (see [Internationalization](/i18n)).
 3. `pet-window.ts` renders the chosen animation via CSS sprite animation, and
    shows speech bubbles, alert indicators, pinned HUDs, and status badges as
    requested.
@@ -99,7 +102,7 @@ and agent pet windows, and the duration is part of their render identity so
 already-open windows reload their CSS immediately. The Settings preview uses the
 same configured duration.
 
-This separation — mapping vs message vs render — is deliberate: agents and
+This separation - mapping vs message vs render - is deliberate: agents and
 plugins speak in *reactions*, and the host owns *how* those look and sound.
 
 ## Motion
@@ -122,22 +125,22 @@ target vectors and physics overrides through the engine's public API
 **sole continuous position writer**; all per-pet step loops were eliminated to
 prevent jitter from competing writers. Sub-pixel fractional accumulators
 (`fracX` / `fracY` in `MotionState`) ensure smooth movement at any tick rate.
-See [plugins.md](plugins.md) and [sdk.md](sdk.md) for the plugin side.
+See [Plugin platform](/plugins) and [Plugin SDK v3](/sdk) for the plugin side.
 
 ### Display containment and cross-display roaming
 
 `display.ts` owns all screen-geometry decisions. Per-tick clamping in
 `clampPosition()` follows a strict priority order:
 
-1. **Confinement** — if a pet has a terminal-bounds assignment (see below), it
+1. **Confinement** - if a pet has a terminal-bounds assignment (see below), it
    is always snapped into those bounds regardless of any other flag.
-2. **Cross-display roaming** (default **off**) — if the
+2. **Cross-display roaming** (default **off**) - if the
    `petCrossDisplayEnabled` preference is on, `clampToNearestDisplayIfOffscreen`
    is used: the pet is left alone while its bottom-center anchor overlaps any
    display's work area, and is only snapped to the nearest display edge when
    fully off-screen. This lets pets cross seams between adjacent displays
    freely.
-3. **Legacy single-display mode** — if `petCrossDisplayEnabled` is off, the
+3. **Legacy single-display mode** - if `petCrossDisplayEnabled` is off, the
    original `clampToVisibleWorkArea` behavior is used (pet is clamped to the
    display nearest its geometric center).
 
@@ -154,8 +157,8 @@ are left untouched.
 
 The `petCrossDisplayEnabled` toggle lives in Control Center → Settings, under
 the **Movement** section, and is a global flag (not per-pet). It is shown
-disabled with explanatory helper text until a movement plugin — one granted the
-`pet:move` permission, such as Walkabout — is enabled, since cross-display
+disabled with explanatory helper text until a movement plugin - one granted the
+`pet:move` permission, such as Walkabout - is enabled, since cross-display
 roaming has no effect without a mover driving motion. Confinement remains
 strictly per-pet and always takes priority regardless of the cross-display flag.
 
@@ -177,7 +180,7 @@ at window creation via `isEffectiveWaylandBackend()` in `pet-window.ts` (which
 delegates the pure decision to `computeEffectiveWaylandBackend()` in
 `wayland-backend.ts`): under the forced x11 backend it returns `false` and the
 working `setBounds` drag path is used. The backend-forcing itself lives in `main.ts` and is documented in
-[desktop.md](desktop.md#linux-display-backend-ozonewayland), including the
+[Desktop app](/desktop#linux-display-backend-ozonewayland), including the
 `OPENPETS_ALLOW_WAYLAND=1` opt-out (which restores native Wayland and therefore
 disables the motion/drag/always-on-top behavior above, with a one-time startup
 warning).
@@ -231,8 +234,9 @@ permissions. The pet `id` must match `^[a-z0-9][a-z0-9_-]{0,63}$` and cannot be
 `codex-pets.ts` imports pets from `~/.codex/pets/` with the same metadata
 validation, so an author can iterate on a pet locally before it is published to
 the catalog. The publishing path (zipping, thumbnailing, uploading to R2,
-regenerating the catalog) lives in `web/`'s sync scripts and is documented in
-`web/docs/pet_publishing.md`; the contract those produce is in [catalog.md](catalog.md).
+regenerating the catalog) lives in `web/`'s sync scripts. The contract those
+scripts produce is in [Catalogs](/catalog), with release checks in
+[Testing and validation](/testing-and-validation).
 
 ## Image protocols & CSP
 
@@ -241,7 +245,7 @@ Pet images are served to renderers through internal protocols
 protocol or image source must be added to the CSP in **both**
 `apps/desktop/vite.config.ts` and `apps/desktop/src/renderer/index.html`, or
 images silently fall back to the default pet. This is the single most common
-"why is my pet showing the wrong sprite" bug — see [desktop.md](desktop.md).
+"why is my pet showing the wrong sprite" bug - see [Desktop app](/desktop).
 
 ## Where to look first
 
@@ -257,4 +261,3 @@ images silently fall back to the default pet. This is the single most common
 | Movement | `pet-motion-engine.ts` |
 | Display containment / cross-screen | `display.ts`, `confinement-manager.ts` |
 | Topology-change reclamp | `default-pet-controller.ts` → `reclampAllLivePetWindows` |
-</content>

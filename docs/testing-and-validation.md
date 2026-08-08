@@ -1,29 +1,33 @@
-# Testing, Verification & Production Validity
+---
+description: Follow the OpenPets quality ladder for desktop tests, package contracts, plugin harnesses, production release gates, and catalog verification.
+---
+
+# Testing and validation
 
 OpenPets ships an Electron app, npm packages, third-party-runnable plugin code,
-and remotely-hosted catalogs — so "does it pass tests" is necessary but not
+and remotely-hosted catalogs - so "does it pass tests" is necessary but not
 sufficient. This doc lays out the full quality ladder: unit/behavior tests,
 **contract tests** at public boundaries, runtime checks, the **plugin release
-validators**, and **catalog verification** — i.e. what "production-valid" means
+validators**, and **catalog verification** - i.e. what "production-valid" means
 before you ship pets, plugins, packages, or the app.
 
 ## The quality ladder
 
 From fastest/narrowest to broadest:
 
-1. **Behavior tests** — unit tests of pure logic.
-2. **Contract tests** — validate public boundaries (IPC, catalog, manifest)
+1. **Behavior tests** - unit tests of pure logic.
+2. **Contract tests** - validate public boundaries (IPC, catalog, manifest)
    against fixtures so producers and consumers can't drift apart.
-3. **Runtime checks** (`check-*.ts`) — assertions about packaging, CSP, SDK
+3. **Runtime checks** (`check-*.ts`) - assertions about packaging, CSP, SDK
    conformance, and integration previews that run as part of `check`/`test`.
-4. **Release validators** — the gates that catch *production-breaking* mistakes
+4. **Release validators** - the gates that catch *production-breaking* mistakes
    the test suite alone misses (catalog/package drift, missing ZIPs, SHA
    mismatches, unresolved `$t:`).
-5. **Live validation** — post-deploy checks against the real origin.
+5. **Live validation** - post-deploy checks against the real origin.
 
 Run the suite with `pnpm test` (builds first, then each package's tests) and
 `pnpm check` (per-package typecheck + build + contract checks). See
-[development.md](development.md) for the command surface.
+[Development](/development) for the command surface.
 
 ## Desktop tests
 
@@ -41,49 +45,47 @@ dist checks. Three buckets:
   canonical IPv4/CGNAT boundaries, peer normalization, socket caps/deadlines,
   away-pet side-effect suppression, and listener shutdown. Compiled to
   `.test-dist/`.
-- **Contract** (`apps/desktop/contracts/*.contract.ts`): the public boundaries —
-  - `catalog-fixture.contract.ts` — catalog validation against fixture data.
-  - `local-ipc-protocol.contract.ts` — IPC request/response parsing
-    ([ipc.md](ipc.md)).
-  - `remote-control-protocol.contract.ts` — remote allowlist and secure
+- **Contract** (`apps/desktop/contracts/*.contract.ts`): the public boundaries - - `catalog-fixture.contract.ts` - catalog validation against fixture data.
+  - `local-ipc-protocol.contract.ts` - IPC request/response parsing
+    ([IPC and remote control](/ipc)).
+  - `remote-control-protocol.contract.ts` - remote allowlist and secure
     configuration boundary.
-  - `plugin-manifest.contract.ts` — manifest v1 schema, config refs, permissions,
-    deferred features, action validation ([plugins.md](plugins.md)).
+  - `plugin-manifest.contract.ts` - manifest v1 schema, config refs, permissions,
+    deferred features, action validation ([Plugin platform](/plugins)).
 - **Runtime checks** (`apps/desktop/src/check-*.ts`): notably
-  - `check-packaging-contract.ts` — asserts the packaged app includes bundled
+  - `check-packaging-contract.ts` - asserts the packaged app includes bundled
     official plugins as extra resources, every bundled plugin's manifest + entry
     exist, the pet-window CSP allows the bundled emoji font, etc. This is the
     guard that a *packaged* build is actually shippable.
-  - `check-opencode-desktop-setup.ts` — verifies the bundled OpenCode setup
+  - `check-opencode-desktop-setup.ts` - verifies the bundled OpenCode setup
     preview matches expectations.
 
 ## Package tests & contracts
 
 Each package runs its own `check`/`test`. Notable contract/boundary coverage:
 
-- `packages/client/contracts/client-protocol.contract.ts` — the client side of
+- `packages/client/contracts/client-protocol.contract.ts` - the client side of
   the local IPC and explicit remote-client protocols, paired with the desktop's
   server-side contract so both ends validate their separate shapes. Its remote
   fixture asserts that remote mode works without consulting local discovery.
-- `packages/sdk/src/check-plugin-sdk.ts` — **SDK conformance**: compiles/runs a
+- `packages/sdk/src/check-plugin-sdk.ts` - **SDK conformance**: compiles/runs a
   representative plugin against the test harness to detect drift between the
   published types (`index.ts`), the harness (`testing.ts`), and the desktop
-  bridge. Changing the SDK without updating all three fails here. See [sdk.md](sdk.md).
-- `packages/cursor/src/check-cursor.ts`, `packages/opencode` checks, etc. —
-  validate the safe config-write behavior (status classification, redaction,
+  bridge. Changing the SDK without updating all three fails here. See [Plugin SDK v3](/sdk).
+- `packages/cursor/src/check-cursor.ts`, `packages/opencode` checks, etc. - validate the safe config-write behavior (status classification, redaction,
   symlink/oversize rejection, atomic writes, uninstall preserving user entries).
-  See [agent-integrations.md](agent-integrations.md).
+  See [Agent integrations](/agent-integrations).
 
 ## Plugin testing
 
 - **Unit**: each official plugin has a `test.js` using
-  `@open-pets/plugin-sdk/testing` — fake time/events, descriptor-level
+  `@open-pets/plugin-sdk/testing` - fake time/events, descriptor-level
   assertions, no Electron. Run via `pnpm plugins:test`, which first runs
   `pnpm plugins:locales` (`scripts/check-plugin-locales.mjs`) to verify every
-  `$t:`/`ctx.t()` key resolves. See [sdk.md](sdk.md).
+  `$t:`/`ctx.t()` key resolves. See [Plugin SDK v3](/sdk).
 - **Manifest validation**: `openpets plugin validate <dir>` checks manifest,
   permissions, SDK compatibility, config field types, network hosts, asset
-  formats/size caps, entry files, and panels — run it before packaging.
+  formats/size caps, entry files, and panels - run it before packaging.
 
 - **Calendar Airmail**: its deterministic harness coverage should exercise the
   primary-calendar reconciliation, state-appropriate connection commands,
@@ -121,7 +123,7 @@ and `web/public/plugins/submissions.json` and asserts:
 
 The full pre-ship sequence (from `AGENTS.md`):
 `pnpm plugins:package` → `pnpm plugins:validate-release` → deploy/upload →
-`pnpm plugins:validate-live`. Treat a failing validator as a hard stop — these
+`pnpm plugins:validate-live`. Treat a failing validator as a hard stop - these
 are exactly the mistakes that 404 a plugin or render a raw `$t:...` to users.
 For the full plugin catalog release path in one command, run
 `pnpm plugins:release`; it packages, validates, publishes ZIPs, deploys the web
@@ -130,18 +132,18 @@ catalog, then validates the live catalog.
 ## Catalog verification (production gate for pets)
 
 Pet catalogs have a parallel "doctor" run from `web/` (read-only; safe anytime).
-Detailed in `web/docs/pet_publishing.md`; the gate in brief:
+The gate in brief:
 
 | Command | Adds |
 |---------|------|
 | `bun run verify:catalog` | manifest integrity, artifact freshness vs manifest, on-disk assets, orphan dirs |
-| `bun run verify:catalog:remote` | HEAD-checks every ZIP on R2 — catches "not installable" pets |
+| `bun run verify:catalog:remote` | HEAD-checks every ZIP on R2 - catches "not installable" pets |
 | `bun run verify:catalog:prod` | diffs local vs the deployed prod catalog (pending/removed) |
 | `bun run verify:catalog:all` | all of the above |
 
 The non-negotiable rule: **never ship a catalog entry whose ZIP isn't live on
 R2.** Run `verify:catalog:remote` before deploying and `verify:catalog:prod`
-after to confirm the deploy landed. See [catalog.md](catalog.md).
+after to confirm the deploy landed. See [Catalogs](/catalog).
 
 ## What "production-valid" means
 
@@ -157,9 +159,8 @@ Before shipping, the relevant gate must be green:
 - **A pet catalog change** → `verify:catalog:remote` before, `verify:catalog:prod`
   after.
 - **Linux-specific behavior** → validated on the Ubuntu VM
-  ([development.md](development.md)).
+  ([Development](/development)).
 
 If a gate is skipped, say so explicitly rather than implying coverage. Contract
-and validator failures are signal, not noise — they encode the ways this product
+and validator failures are signal, not noise - they encode the ways this product
 has broken in production before.
-</content>

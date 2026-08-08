@@ -1,13 +1,17 @@
-# Agent Integrations & CLI
+---
+description: Connect Claude Code, OpenCode, Cursor, Pi, and MCP-capable assistants to OpenPets through local companion events.
+---
+
+# Agent integrations
 
 OpenPets reacts to coding agents. Each supported agent has an integration
 package that does two jobs: **configure** the agent to talk to OpenPets, and at
 runtime **translate** the agent's activity into safe pet reactions sent over
 local IPC or an explicitly configured remote client. This doc covers all five
 integrations (Claude Code, MCP, OpenCode, Cursor, Pi), the shared speech-safety
-layer, and the CLI that orchestrates them.
+layer, and the CLI commands that orchestrate them.
 
-For the local and remote wire protocols, see [ipc.md](ipc.md). Source maps live
+For the local and remote wire protocols, see [IPC and remote control](/ipc). Source maps live
 in each `packages/*/codemap.md`.
 
 ## The shared shape
@@ -26,7 +30,7 @@ Every integration follows the same contract, which is worth internalizing once:
 - **Speech is always safe.** Automatic messages come from validated pools (see
   below), never from raw prompt/output text.
 - **Leases route the pet.** Integrations acquire a lease on first activity,
-  heartbeat it, and release on shutdown. See the lease model in [ipc.md](ipc.md).
+  heartbeat it, and release on shutdown. See the lease model in [IPC and remote control](/ipc).
 
 Remote mode is the explicit exception to the lease rule: it is default-pet-only
 and does not acquire, heartbeat, or release leases. It is selected only through
@@ -62,14 +66,13 @@ their own pet from a user-configured ordered list.
   eligible pet (installed, non-broken, excluding the built-in default).
 - When a session ends its lease, its pet slot is freed and available to the next
   session.
-- **`--pet <id>` always takes priority** and bypasses the pool entirely —
-  unchanged from current behavior.
+- **`--pet <id>` always takes priority** and bypasses the pool entirely - unchanged from current behavior.
 
 **Eligible pool pets** are installed, non-broken pets excluding the built-in
 default. Broken or uninstalled pets are skipped silently.
 
 **Cross-platform and agent-agnostic.** Pool assignment is pure lease logic with
-no platform dependency — it works on macOS, Windows, and Linux. Any agent that
+no platform dependency - it works on macOS, Windows, and Linux. Any agent that
 acquires a lease through the shared OpenPets client benefits automatically: Claude
 Code CLI, opencode, Cursor, and any other MCP client all go through the same
 `lease.acquire` path.
@@ -80,14 +83,14 @@ without `--pet` share the single default pet.
 ## Safe speech: `@open-pets/agent-events`
 
 `packages/agent-events/` is the shared guardrail. It provides curated speech
-pools by category — `thinking`, `success`, `error`, `permission` — and the
+pools by category - `thinking`, `success`, `error`, `permission` - and the
 validators that keep messages safe: single line, 1–140 chars, and rejecting
 code, URLs, file paths, and secret-like tokens. `pickHookSpeech(category)`
 selects a message; `validateHookSpeech()` enforces the rules. `claude`,
 `opencode`, and `pi` all depend on it so no integration can leak sensitive text
 into a bubble.
 
-## Claude Code — `@open-pets/claude`
+## Claude Code - `@open-pets/claude`
 
 The deepest integration, because Claude Code has a rich hook system.
 
@@ -113,11 +116,15 @@ The deepest integration, because Claude Code has a rich hook system.
 Doctor/install/uninstall helpers (`installClaudeHooks`, `doctorClaudeHooks`, …)
 are what the Control Center Integrations page and the CLI call.
 
-## MCP server — `@open-pets/mcp`
+![OpenPets Integrations window showing the Claude Code card installed alongside other editor integration cards.](/docs/claude-integrations-grid.png)
+
+![Claude Code detail screen showing connection status, pet routing, advanced detection, replace and remove actions, and MCP details.](/docs/claude-connection-advanced.png)
+
+## MCP server - `@open-pets/mcp`
 
 A standalone stdio MCP server (`open-pets-mcp`) for any MCP-capable agent. It
-registers exactly three tools — `openpets_status`, `openpets_react`,
-`openpets_say` — with Zod-validated input and read-only/idempotent annotations.
+registers exactly three tools - `openpets_status`, `openpets_react`,
+`openpets_say` - with Zod-validated input and read-only/idempotent annotations.
 On startup it acquires a lease, heartbeats every ~5s, and releases on transport
 close or SIGINT/SIGTERM. Shutdown marks the shared lease context as closing,
 stops timers, waits for in-flight startup and single-flight recovery from either
@@ -139,7 +146,7 @@ signals. `--pet <id>` targets a specific pet.
 > `openpets pets`; to install one use `openpets install <pet-id>` or the Pets
 > tab in Control Center.
 
-## OpenCode — `@open-pets/opencode`
+## OpenCode - `@open-pets/opencode`
 
 Ships both a config manager and a runtime plugin.
 
@@ -162,7 +169,11 @@ Ships both a config manager and a runtime plugin.
   a Scoop installation is detectable even when Electron inherited an older
   environment.
 
-## Cursor — `@open-pets/cursor`
+![OpenPets Integrations window showing the OpenCode card ready to install.](/docs/opencode-integrations-grid.png)
+
+![OpenCode setup detail screen showing global setup status, pet routing, advanced detection, install and remove buttons, and config preview.](/docs/opencode-global-setup.png)
+
+## Cursor - `@open-pets/cursor`
 
 Pure file management for Cursor, no runtime hooks (Cursor drives the pet via the
 MCP server). It manages the `openpets` entry in `mcp.json` (global
@@ -174,7 +185,7 @@ unpinned versions (`@latest`). Rules ownership requires an exact
 `OPENPETS:CURSOR_RULES:START/END` marker pair. The desktop uses preview/copy;
 the CLI writes project rules.
 
-## Pi — `@open-pets/pi`
+## Pi - `@open-pets/pi`
 
 A Pi coding-agent extension (declared in `pi.extensions`). It maps Pi lifecycle
 events (`session_start`, `agent_start`, `turn_start`, …) to reactions and
@@ -183,7 +194,7 @@ registers a `/openpets` slash command namespace (`status`, `test`,
 non-blocking; it registers **no** model-callable tools, and never forwards
 prompt/assistant/tool/command text, paths, URLs, or secrets.
 
-## The CLI — `@open-pets/cli`
+## The CLI - `@open-pets/cli`
 
 The user-facing front door (`openpets`), and the package that composes the
 others. Commands:
@@ -200,8 +211,8 @@ others. Commands:
 | `plugin validate <dir>` | Validate a plugin before install/release |
 | `plugin new <name> --template <t>` | Scaffold an SDK v3 plugin |
 
-The plugin subcommands are the author-side DX entry point — see
-[plugins.md](plugins.md), [sdk.md](sdk.md), and [development.md](development.md).
+The plugin subcommands are the author-side DX entry point - see
+[Plugin platform](/plugins), [Plugin SDK v3](/sdk), and [Development](/development).
 The CLI enforces safe project paths and atomic config writes throughout.
 
 The CLI's `status`, `react`, and `say` commands also work with an explicitly
@@ -220,4 +231,3 @@ discovery-based behavior unchanged.
 | OpenCode | `.opencode/` or `~/.config/opencode/` | plugin event hooks |
 | Cursor | `.cursor/mcp.json` + rules | MCP tools |
 | Pi | `pi.extensions` | extension events + `/openpets` |
-</content>

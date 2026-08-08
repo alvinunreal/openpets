@@ -1,11 +1,15 @@
-# Desktop App
+---
+description: Tour the OpenPets desktop app process model, startup path, pet windows, plugin subsystem, local IPC, security model, and packaging notes.
+---
+
+# Desktop app
 
 The desktop app (`apps/desktop/`) is the heart of OpenPets: the only long-lived
 process, owner of all state, windows, the tray, pet rendering, the plugin
 runtime, and the local IPC server that agents talk to. This doc explains its
 process model, the major subsystems, and the rules that keep it secure and
-stable. For the pet rendering specifics see [pets.md](pets.md); for the IPC wire
-contract see [ipc.md](ipc.md); for plugins see [plugins.md](plugins.md).
+stable. For the pet rendering specifics see [Pets](/pets); for the IPC wire
+contract see [IPC and remote control](/ipc); for plugins see [Plugin platform](/plugins).
 
 Source map: `apps/desktop/codemap.md` and `apps/desktop/src/codemap.md` are the
 authoritative file-by-file maps. This doc is the narrative on top of them.
@@ -69,14 +73,14 @@ The x11-forcing branch and the `OPENPETS_ALLOW_WAYLAND` opt-out are asserted by
 `check-packaging-contract.ts`, so this behavior cannot silently regress.
 
 On Windows, the shell silently strips `HWND_TOPMOST` from other windows when an
-app enters fullscreen (browser video, games) and never restores it — and no
+app enters fullscreen (browser video, games) and never restores it - and no
 Electron event fires when it happens, so the `show`/`restore` re-assertions
 never run and the pet stays buried until manually toggled. Pet windows
 therefore re-assert always-on-top on a 1s interval while visible (the
 shell's demotion sweep re-strips the flag every ~2-4s while a fullscreen app
 is foreground, so the cadence bounds the buried time to under a second),
 dropping
-Electron's cached always-on-top flag first — Electron short-circuits
+Electron's cached always-on-top flag first - Electron short-circuits
 `setAlwaysOnTop(true)` when its cached state already matches, so without the
 cache-bust the re-assert never reaches the OS
 (`createBasePetWindow` in `pet-window.ts`); the call is a cheap no-op while the
@@ -85,7 +89,7 @@ explicit macOS `visibleOnFullScreen: true` behavior.
 
 Separately, Chromium's native window occlusion tracker considers every window
 on a display occluded while a fullscreen app is active there and stops
-painting it — a transparent pet window goes blank even with its z-order
+painting it - a transparent pet window goes blank even with its z-order
 intact. `main.ts` disables `CalculateNativeWinOcclusion` on Windows so the
 pet keeps rendering during fullscreen video and games.
 
@@ -110,7 +114,7 @@ pet keeps rendering during fullscreen video and games.
 
 The React/Tailwind UI under `src/renderer/`. Pages: **Dashboard, Pets,
 Integrations, Plugins, Settings**. It is a pure consumer of main-process
-snapshots and actions exposed over the preload bridge — it holds no privileged
+snapshots and actions exposed over the preload bridge - it holds no privileged
 capability of its own. The renderer is the only "frontend" in scope for these
 docs (the `web/` marketing site is out of scope). See
 `src/renderer/src/codemap.md` for component structure.
@@ -119,14 +123,14 @@ docs (the `web/` marketing site is out of scope). See
 
 Pet rendering lives in `pet-window.ts` plus the two controllers
 (`default-pet-controller.ts`, `agent-pet-controller.ts`) and the motion/mapping
-helpers. This is covered in depth in [pets.md](pets.md).
+helpers. This is covered in depth in [Pets](/pets).
 
 ### Local IPC server
 
 `local-ipc.ts` runs a `net.Server` over a Unix socket / Windows named pipe /
 TCP, routes a versioned JSON protocol, and writes a discovery file so clients
 can find it. The lease manager (`lease-manager.ts`) sits behind it. Full
-contract in [ipc.md](ipc.md).
+contract in [IPC and remote control](/ipc).
 
 ### Remote control service
 
@@ -197,19 +201,18 @@ all platforms.
 
 **Toggle side-effects:** disabling the pool immediately despawns all active pool
 pets (releases their leases, which closes their windows). Re-enabling respawns a
-pool pet for every session whose client PID is still alive — those sessions
+pool pet for every session whose client PID is still alive - those sessions
 acquire new leases and their windows reopen. Sessions whose processes have already
 terminated are skipped. This is handled by `dispatchPoolToggle` in `local-ipc.ts`,
 wired from the `update-preferences` IPC handler in `windows.ts`.
 
 **Session teardown:** a periodic liveness sweep (the `local-ipc.ts` cleanup timer
-calling `lease-manager.ts`'s `checkPidLiveness`) releases an agent pet's lease —
-and so closes its window — once the owning session is gone. It probes the
+calling `lease-manager.ts`'s `checkPidLiveness`) releases an agent pet's lease - and so closes its window - once the owning session is gone. It probes the
 **terminal owner PID** (when known) as well as the client PID, so an orphaned but
 still-running client can't keep a pet alive indefinitely. Expiring the 15s TTL is
 the backstop; liveness is the prompt path.
 
-See [agent-integrations.md](agent-integrations.md) for the
+See [Agent integrations](/agent-integrations) for the
 full behavioral description.
 
 ### Plugin subsystem
@@ -217,7 +220,7 @@ full behavioral description.
 A large, self-contained subsystem (`plugin-*.ts`) covering manifests, state,
 runtime, the sandboxed JS host, the permission-checked SDK bridge, catalog/local
 install, assets, panels, diagnostics, and platform settings. Fully documented in
-[plugins.md](plugins.md) and [sdk.md](sdk.md).
+[Plugin platform](/plugins) and [Plugin SDK v3](/sdk).
 
 The plugin voice foundation is deliberately smaller than a conversation platform.
 `voice-capture-electron.ts` owns a hidden, sandboxed microphone window and
@@ -252,18 +255,18 @@ the plugin is installed.
 `agent-setup.ts` detects installed agents and runs configuration actions (MCP
 add/replace/remove, hooks install/uninstall/doctor, memory file install),
 delegating to the integration packages. `claude-memory.ts` manages the Claude
-instructions file. See [agent-integrations.md](agent-integrations.md).
+instructions file. See [Agent integrations](/agent-integrations).
 
 ### Catalog & installation
 
 `catalog.ts` fetches the pet catalog (v3 paginated, with v2/fixture fallback);
 `pet-installation.ts` downloads + validates + extracts pet ZIPs; `codex-pets.ts`
-imports locally-developed pets. See [catalog.md](catalog.md) and [pets.md](pets.md).
+imports locally-developed pets. See [Catalogs](/catalog) and [Pets](/pets).
 
 ### i18n
 
 `src/i18n/` resolves the active locale and serves localized host UI text and pet
-reaction speech, with English fallback. See [i18n.md](i18n.md).
+reaction speech, with English fallback. See [Internationalization](/i18n).
 
 ### Updates
 
@@ -297,12 +300,12 @@ ZIPs) and runs third-party plugin code, so it is defensive by construction:
 - **IPC network security**: local TCP mode is restricted to loopback/private
   addresses; public IPs and hostnames are rejected. Remote control is separate,
   opt-in, explicitly bound, authenticated per client, and scope limited; it
-  never writes a discovery file. See [ipc.md](ipc.md).
+  never writes a discovery file. See [IPC and remote control](/ipc).
 - **Defensive I/O**: atomic writes everywhere; path-traversal and symlink checks
   on every filesystem boundary; strict ZIP entry validation (`zip-safety.ts`).
 - **Plugin sandbox**: plugins run in hidden, session-partitioned BrowserWindows
   with navigation/window-open hardening and permission-gated SDK calls. See
-  [plugins.md](plugins.md).
+  [Plugin platform](/plugins).
 
 - **Trusted plugin assets**: `openpets-plugin-asset:` serves only an enabled,
   exact-version JavaScript plugin's declared sprite. The protocol accepts only a
@@ -316,18 +319,17 @@ ZIPs) and runs third-party plugin code, so it is defensive by construction:
 `electron-builder.yml` configures cross-platform packaging (macOS/Windows/Linux)
 with ASAR. Bundled mode unpacks the integration binaries from ASAR so hooks/MCP
 can spawn them. `scripts/release-local.mjs` automates a macOS-local release with
-a GitHub draft. See [development.md](development.md) for the release flow.
+a GitHub draft. See [Development](/development) for the release flow.
 
 ## Where to look first
 
 | If you're touching… | Start in |
 |---------------------|----------|
 | Tray menu / Control Center routing | `tray.ts`, `windows.ts` |
-| Pet appearance / animation | `pet-window.ts`, `reaction-animation-mapping.ts` ([pets.md](pets.md)) |
-| Agent → pet command path | `local-ipc.ts`, `lease-manager.ts` ([ipc.md](ipc.md)) |
+| Pet appearance / animation | `pet-window.ts`, `reaction-animation-mapping.ts` ([Pets](/pets)) |
+| Agent → pet command path | `local-ipc.ts`, `lease-manager.ts` ([IPC and remote control](/ipc)) |
 | Persisted settings | `app-state.ts` |
-| Plugin behavior | `plugin-service.ts` + `plugin-*.ts` ([plugins.md](plugins.md)) |
-| Agent configuration | `agent-setup.ts` ([agent-integrations.md](agent-integrations.md)) |
-| Install / catalog | `catalog.ts`, `pet-installation.ts` ([catalog.md](catalog.md)) |
+| Plugin behavior | `plugin-service.ts` + `plugin-*.ts` ([Plugin platform](/plugins)) |
+| Agent configuration | `agent-setup.ts` ([Agent integrations](/agent-integrations)) |
+| Install / catalog | `catalog.ts`, `pet-installation.ts` ([Catalogs](/catalog)) |
 | Anything renderer-visible with a URL | also update the CSP (both files) |
-</content>

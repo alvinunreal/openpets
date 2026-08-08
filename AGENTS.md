@@ -29,7 +29,7 @@ at `docs/README.md`, then read the doc for the area you're touching:
 - **`docs/agent-integrations.md`** — Claude/MCP/OpenCode/Cursor/Pi + the CLI.
 - **`docs/plugins.md`** — plugin platform: manifest, permissions, runtime,
   sandbox, install paths, packaging/publishing, troubleshooting.
-- **`docs/superplugins.md`** — companion-first direction, official lineup,
+- **`docs/official-plugins.md`** — companion-first direction, official lineup,
   bundling/enabled defaults, right-click action strategy.
 - **`docs/sdk.md`** — public SDK v3 contract + the deterministic test harness.
 - **`docs/i18n.md`** — translations across host UI, reaction speech, and plugins.
@@ -81,7 +81,7 @@ not carry legacy bloat for deprecated plugin/catalog behavior.
 
 Before changing plugin platform code, official plugins, plugin catalog generation, plugin packaging, plugin runtime behavior, or plugin-facing UI, read:
 - `docs/plugins.md` for the current plugin platform architecture, manifest/runtime rules, local development workflow, publishing commands, and troubleshooting notes.
-- `docs/superplugins.md` for the companion-first plugin direction, planned official plugin lineup, bundling defaults, and right-click plugin action strategy.
+- `docs/official-plugins.md` for the companion-first plugin direction, current official plugin lineup, bundling defaults, and right-click plugin action strategy.
 
 When plugin work is finished, update these docs if behavior, commands, manifests, plugin IDs, default bundled/enabled status, catalog workflow, permissions, or the planned plugin lineup changed. Do not leave plugin docs stale after implementation.
 

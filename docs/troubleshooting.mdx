@@ -1,0 +1,71 @@
+---
+title: Troubleshooting
+description: Diagnose common OpenPets desktop, CLI, MCP, pet, and plugin issues.
+sidebar:
+  label: Troubleshooting
+---
+
+Start with the smallest boundary and move outward: desktop app, local IPC, agent
+configuration, then plugin or pet package state.
+
+## Desktop app is not reachable
+
+Make sure OpenPets is running, then check connectivity:
+
+```bash
+npx @open-pets/cli status
+```
+
+If the CLI cannot reach the app, restart OpenPets and try again. The desktop app
+starts the local IPC server during its main-process bootstrap.
+
+## Agent does not trigger pet reactions
+
+Run the project doctor:
+
+```bash
+npx @open-pets/cli doctor
+```
+
+Then verify the integration path:
+
+- Claude Code should have managed hook and MCP entries.
+- OpenCode should have its config and OpenPets hook plugin installed.
+- Cursor should have project MCP config when using project setup.
+- Generic clients should run `npx @open-pets/cli mcp`.
+
+See [Agent integrations](/agent-integrations) and [MCP](/mcp).
+
+## Plugin will not install or start
+
+Validate the plugin folder:
+
+```bash
+npx @open-pets/cli plugin validate ./my-plugin
+```
+
+Common causes are invalid `openpets.plugin.json`, unsupported permissions,
+unsafe relative asset paths, undeclared network hosts, missing localized `$t:`
+values, missing entry files, or SDK version drift.
+
+For SDK v3 authoring, see [Plugin SDK v3](/sdk). For runtime architecture and
+catalog/local install behavior, see [Plugin platform](/plugins).
+
+## Pet renders as a fallback
+
+Check whether the package has valid metadata and whether its spritesheet or
+image assets are available. During desktop UI development, missing renderer CSP
+entries for internal pet protocols can also make images appear as fallback pets.
+
+See [Pets](/pets), [Pet format](/pet-format), and [Desktop app](/desktop).
+
+## Linux or Wayland drag behavior is odd
+
+Window movement and activation behavior can vary by compositor. Read
+[Wayland](/wayland) for current notes.
+
+## Where logs live
+
+Desktop logs are written under the app config directory. The repository docs for
+desktop logging and development workflows live in [Desktop app](/desktop) and
+[Development](/development).

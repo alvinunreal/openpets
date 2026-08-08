@@ -1,0 +1,63 @@
+---
+title: MCP integration
+description: Connect any MCP-capable assistant to OpenPets through the local @open-pets/cli MCP server.
+sidebar:
+  label: MCP
+---
+
+OpenPets exposes a local MCP server for assistants that support stdio MCP
+servers. The MCP layer is optional; the desktop app and plugins work without it.
+
+## Server command
+
+Use this command in your MCP client configuration:
+
+```bash
+npx @open-pets/cli mcp
+```
+
+The command starts the OpenPets MCP wrapper and forwards tool calls to the
+running desktop app through the local IPC client.
+
+## What MCP controls
+
+MCP clients can drive local pet behavior such as:
+
+- setting a reaction
+- showing a speech bubble
+- updating task/status feedback
+- routing work to an agent-specific pet when supported
+
+OpenPets keeps this local. The desktop app owns rendering, IPC validation,
+leases, and pet state. Agent tools should not expose prompts, source code,
+secrets, logs, or file paths in pet speech unless a user explicitly asks for
+that behavior.
+
+## Dedicated integrations
+
+Some tools have a richer setup path:
+
+- Claude Code uses managed hooks and MCP config.
+- OpenCode uses managed config and the OpenPets hook plugin.
+- Cursor can use project-local MCP config and rules.
+- Pi has an extension package.
+
+See [Agent integrations](/agent-integrations) for those paths.
+
+## Diagnose MCP
+
+Check the desktop app first:
+
+```bash
+npx @open-pets/cli status
+```
+
+Then inspect the project integration:
+
+```bash
+npx @open-pets/cli doctor
+```
+
+If your client launches MCP from a project directory, make sure the command it
+runs resolves `@open-pets/cli` and that the OpenPets desktop app is already
+running.

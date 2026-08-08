@@ -1,4 +1,8 @@
-# Local IPC, Remote Control Protocol & Client
+---
+description: Reference the local OpenPets IPC transports, discovery handshake, request protocol, lease model, remote control surface, and security boundaries.
+---
+
+# IPC and remote control
 
 Normal agent activity travels over a **local IPC channel** between the
 agent-side code and the desktop app. The local wire contract is defined by
@@ -22,9 +26,9 @@ natural place to enforce trust (a token + a private endpoint). The protocol is a
 
 The client and server pick a transport per platform:
 
-- **Unix domain socket** — macOS and Linux.
-- **Windows named pipe** — Windows.
-- **TCP (IPv4)** — used for cross-platform/WSL: a WSL client connects to the
+- **Unix domain socket** - macOS and Linux.
+- **Windows named pipe** - Windows.
+- **TCP (IPv4)** - used for cross-platform/WSL: a WSL client connects to the
   Windows desktop app over a private IP.
 
 TCP is the one that touches the network, so it is locked down (see Security).
@@ -40,7 +44,7 @@ contains the endpoint to connect to and an auth **token**. A client:
 2. Parses + validates the endpoint (`parseIpcEndpoint` / `validateEndpoint`).
 3. Opens a connection and sends a request carrying the token.
 
-If the file is missing or the app is down, the client fails fast — integrations
+If the file is missing or the app is down, the client fails fast - integrations
 treat the app as "unavailable" and degrade gracefully rather than blocking the
 agent.
 
@@ -90,7 +94,7 @@ issued during registration; possession of the shared LAN token alone cannot
 publish activity or return a pet for another active host.
 
 `pet.showMedia` renders a local image file as a transient media bubble on the
-pet — for example an image a local generation tool just produced. Params:
+pet - for example an image a local generation tool just produced. Params:
 `path` (required absolute path, extension must be `.png`/`.jpg`/`.jpeg`/
 `.webp`/`.gif`, file capped at 10 MB), optional `message` (validated exactly
 like `pet.say`), optional `reaction`, and optional `durationMs` (1000–30000,
@@ -131,7 +135,7 @@ one window. The model (server side in `lease-manager.ts`):
   on demand and disappear when their agents are done.
 - **Liveness reclaims dead sessions.** A periodic check releases a lease once its
   owning process is gone, probing the **terminal owner PID** (when known) as well
-  as the client PID — so a lease can't outlive its session even when the client
+  as the client PID - so a lease can't outlive its session even when the client
   process is orphaned but still alive.
 - The default pet is persistent and not lease-bound.
 
@@ -146,8 +150,8 @@ on `SIGINT`/`SIGTERM`), so the pet tears down promptly when the session ends and
 the shutdown path never runs twice. Failures are swallowed so the agent is never
 blocked by pet IPC.
 
-See [pets.md](pets.md) for what happens once a command reaches a pet window, and
-[agent-integrations.md](agent-integrations.md) for how each integration drives
+See [Pets](/pets) for what happens once a command reaches a pet window, and
+[Agent integrations](/agent-integrations) for how each integration drives
 this surface.
 
 ## Reaction validation
@@ -155,7 +159,7 @@ this surface.
 Reactions are a closed enum. The client validates a reaction against the allowed
 set before sending, and `@open-pets/agent-events` validates *speech* strings
 (single line, length-bounded, no code/URLs/paths/secrets) so nothing unsafe ever
-reaches a bubble. See [agent-integrations.md](agent-integrations.md).
+reaches a bubble. See [Agent integrations](/agent-integrations).
 
 ## Remote control protocol
 
@@ -236,13 +240,12 @@ Control Center provides UI management under **Settings → Remote**:
 
 ## Contracts
 
-- `packages/client/contracts/client-protocol.contract.ts` — client-side protocol
+- `packages/client/contracts/client-protocol.contract.ts` - client-side protocol
   validation.
-- `apps/desktop/contracts/local-ipc-protocol.contract.ts` — server-side
+- `apps/desktop/contracts/local-ipc-protocol.contract.ts` - server-side
   request/response parsing.
-- `apps/desktop/contracts/remote-control-protocol.contract.ts` — remote
+- `apps/desktop/contracts/remote-control-protocol.contract.ts` - remote
   allowlist, validation, and secure binding configuration.
 
-These run in the test suite ([testing-and-validation.md](testing-and-validation.md))
+These run in the test suite ([Testing and validation](/testing-and-validation))
 and are the guardrail against protocol drift between client and app.
-</content>

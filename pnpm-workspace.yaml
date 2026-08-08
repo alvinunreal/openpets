@@ -14,7 +14,9 @@ supportedArchitectures:
 allowBuilds:
   '@google/genai': true
   electron-winstaller: false
+  esbuild: true
   get-windows: true
   koffi: true
   protobufjs: true
   sharp: true
+  workerd: true

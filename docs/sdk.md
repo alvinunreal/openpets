@@ -1,25 +1,30 @@
+---
+description: Build OpenPets SDK v3 plugins with the host-provided context object, voice and delivery APIs, testing harness, and scaffolded plugin packages.
+---
+
 # Plugin SDK v3
 
 `@open-pets/plugin-sdk` (`packages/sdk/`) is the **public, author-facing
 contract** for OpenPets plugins. It is a *types-first* package: it ships
 TypeScript declarations describing the `OpenPetsContext` a plugin receives, plus
 a deterministic, no-Electron **test harness**. The real behavior is injected at
-runtime by the desktop host — the SDK is the shape both sides agree on.
+runtime by the desktop host - the SDK is the shape both sides agree on.
 
 For the platform that *implements* this contract (sandbox, permissions, install),
-see [plugins.md](plugins.md). Source map: `packages/sdk/src/codemap.md`.
+see [Plugin platform](/plugins). Source map: `packages/sdk/src/codemap.md`.
 
-Current version: SDK `3.0.0`, paired with manifest `manifestVersion: 3`.
+Current line: SDK `3.x`, paired with plugin `manifestVersion: 3`. The exact
+published package version is owned by `packages/sdk/package.json`.
 
 ## How the contract is enforced
 
 There are three copies of "the SDK" and they must stay in lockstep:
 
-1. **The published types** — `packages/sdk/src/index.ts`. What authors program
+1. **The published types** - `packages/sdk/src/index.ts`. What authors program
    against.
-2. **The host implementation** — `apps/desktop/src/plugin-sdk-bridge.ts` and its
+2. **The host implementation** - `apps/desktop/src/plugin-sdk-bridge.ts` and its
    `plugin-sdk-*` namespace modules. What actually runs.
-3. **The test harness** — `packages/sdk/src/testing.ts`. A mock `ctx` for unit
+3. **The test harness** - `packages/sdk/src/testing.ts`. A mock `ctx` for unit
    tests.
 
 A conformance check (`packages/sdk/src/check-plugin-sdk.ts`) compiles/runs a
@@ -32,7 +37,7 @@ contract silently breaks.
 
 A plugin exports a registration hook; at runtime the host calls it with a
 host-backed `ctx` (`OpenPetsContext`). Capabilities are grouped into namespaces,
-each gated by a permission ([plugins.md](plugins.md)):
+each gated by a permission ([Plugin platform](/plugins)):
 
 | Namespace | What it does | Rough permission |
 |-----------|--------------|------------------|
@@ -56,10 +61,10 @@ each gated by a permission ([plugins.md](plugins.md)):
 | `ctx.assets` | Resolve declared asset refs (icons/images/sprites/sounds) | (declared assets) |
 | `ctx.commands` | Register right-click commands | `commands` |
 | `ctx.status` | Publish status text | (status surface) |
-| `ctx.t` | Localized strings via plugin locales | — |
-| `ctx.log` | Plugin logging | — |
+| `ctx.t` | Localized strings via plugin locales | - |
+| `ctx.log` | Plugin logging | - |
 
-The exact signatures live in `packages/sdk/src/index.ts` — that file is the
+The exact signatures live in `packages/sdk/src/index.ts` - that file is the
 contract, so program against it rather than any list copied into a doc.
 `OpenPetsPermission` in the SDK mirrors manifest validation so authors get
 autocomplete for exactly the capabilities they can request.
@@ -100,7 +105,7 @@ in encrypted plugin-scoped secret storage; plugins should not log it.
 requires the dedicated `ui:delivery` permission. Authors provide a stable
 plugin-scoped key, a courier returned by `ctx.assets.sprite()` for a
 manifest-declared sprite, plain-text title/detail, and a near-term expiry. The
-host—not plugin code—selects the cursor display, renders the delivery, queues it
+host - not plugin code - selects the cursor display, renders the delivery, queues it
 with other work, and controls its visual behavior. Coordinates, HTML, URLs,
 arbitrary asset paths, and animation controls are intentionally outside this
 contract.
@@ -124,13 +129,13 @@ host lifecycle signal rather than a durable acknowledgement.
 - **State survives restarts.** `ctx.storage` persists; schedules reconcile after
   restart/sleep. Stateful companions (reminders, virtual pet) rely on this.
 - **Localize by reference.** Use `$t:` in the manifest and `ctx.t(key, vars)` in
-  code; ship `locales/en.json`. See [i18n.md](i18n.md).
+  code; ship `locales/en.json`. See [Internationalization](/i18n).
 - **Declare visual assets explicitly.** A delivery courier must be a declared
   sprite asset, never an installed-pet ID or filesystem path. Sprite-grid config
   is a host-rendered select presentation whose previews must refer to declared
   sprites; the host honors reduced-motion preferences in that picker.
 
-## The test harness — `@open-pets/plugin-sdk/testing`
+## The test harness - `@open-pets/plugin-sdk/testing`
 
 Plugin tests import `createTestHarness(register, options)`. It builds a
 deterministic mock `ctx` with **fake time** and runs the plugin's startup
@@ -144,8 +149,8 @@ without Electron, then exposes controls and assertions:
 
 This is why official plugins can have fast, deterministic `test.js` suites:
 they assert that a scheduled job *would* fire and the pet *would* speak, by
-advancing fake time — no rendering, no flake. See `plugins/official/*/test.js`
-for real examples and [testing-and-validation.md](testing-and-validation.md) for
+advancing fake time - no rendering, no flake. See `plugins/official/*/test.js`
+for real examples and [Testing and validation](/testing-and-validation) for
 how these run in CI.
 
 ## Starting a plugin
@@ -155,5 +160,4 @@ scaffolds a working SDK v3 package wired to this contract and the testing
 harness. The templates intentionally exercise current surfaces (`ctx.ui.alert`,
 dynamic speech, events, schedules, storage, commands, AI, assets, and a
 Tamagotchi-style state loop) so authors have a real starting point rather than an
-empty file. See [plugins.md](plugins.md) for the full authoring workflow.
-</content>
+empty file. See [Plugin platform](/plugins) for the full authoring workflow.

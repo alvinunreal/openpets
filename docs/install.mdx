@@ -1,0 +1,61 @@
+---
+title: Install OpenPets
+description: Download and launch the OpenPets desktop app on macOS, Windows, or Linux.
+sidebar:
+  label: Install
+  order: 2
+---
+
+OpenPets is distributed from the public GitHub releases page.
+
+```bash
+open https://github.com/alvinunreal/openpets/releases/latest
+```
+
+## Choose an asset
+
+| Platform | Download |
+| --- | --- |
+| macOS Apple Silicon | `OpenPets-*-mac-arm64.dmg` |
+| macOS Intel | `OpenPets-*-mac-x64.dmg` |
+| Windows | `OpenPets-*-win-x64-setup.exe` |
+| Linux | `OpenPets-*-linux-x86_64.AppImage` |
+
+Windows release installers are signed. macOS builds may still be unsigned, so
+macOS can show a security warning the first time you open the app.
+
+## macOS quarantine note
+
+If macOS blocks the app after you drag it into Applications, remove the
+quarantine attribute:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/OpenPets.app
+```
+
+Then open OpenPets again.
+
+## Linux note
+
+The Linux AppImage is the main portable package. Make it executable if your file
+manager does not offer to run it:
+
+```bash
+chmod +x OpenPets-*-linux-x86_64.AppImage
+```
+
+OpenPets has dedicated Wayland notes for drag and window behavior in
+[Wayland](/wayland).
+
+## After launch
+
+OpenPets adds a tray/menu bar icon and shows a pet on the desktop. Use the
+Control Center to manage pets, integrations, plugins, and settings.
+
+If the app starts but a CLI or agent cannot reach it, run:
+
+```bash
+npx @open-pets/cli status
+```
+
+Then continue with [Troubleshooting](/troubleshooting).

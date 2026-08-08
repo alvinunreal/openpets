@@ -1,0 +1,82 @@
+---
+title: OpenPets CLI
+description: Use @open-pets/cli to configure agent integrations, run MCP, send pet reactions, scaffold plugins, and validate plugin packages.
+sidebar:
+  label: CLI
+---
+
+The OpenPets CLI is published as `@open-pets/cli`. It talks to the running
+desktop app through the local IPC client and also manages project setup for
+supported coding tools.
+
+Run it without installing globally:
+
+```bash
+npx @open-pets/cli --help
+```
+
+## Common commands
+
+| Command | Purpose |
+| --- | --- |
+| `openpets configure` | Configure Claude Code, OpenCode, or Cursor for a project. |
+| `openpets status` | Check whether the desktop app is reachable. |
+| `openpets pets` | List installed pets from the desktop app. |
+| `openpets react <reaction>` | Send a reaction to the current pet. |
+| `openpets say <message>` | Show a pet speech bubble, optionally with a reaction. |
+| `openpets mcp` | Run the MCP server wrapper for generic clients. |
+| `openpets plugin new <name>` | Scaffold an SDK v3 plugin package. |
+| `openpets plugin validate <dir>` | Validate a local plugin manifest/package boundary. |
+
+## Configure a project
+
+```bash
+npx @open-pets/cli configure
+```
+
+The configure command can set up Claude Code hooks/MCP, OpenCode project or
+global config, and Cursor MCP/rules depending on the selected target. The
+integration behavior is documented in [Agent integrations](/agent-integrations).
+
+## Run MCP directly
+
+```bash
+npx @open-pets/cli mcp
+```
+
+Use this command as the stdio MCP server command for clients that do not have a
+dedicated OpenPets integration. See [MCP](/mcp).
+
+## Send a reaction
+
+```bash
+npx @open-pets/cli react thinking
+npx @open-pets/cli say "Tests passed" --reaction success
+```
+
+The desktop app validates reaction names and routes messages through its local
+IPC lease model. See [Local IPC](/ipc).
+
+## Scaffold a plugin
+
+```bash
+npx @open-pets/cli plugin new "My Plugin" --template reminder
+```
+
+Available SDK v3 templates are:
+
+- `blank`
+- `reminder`
+- `ambient`
+- `ai-chat`
+- `tamagotchi`
+- `calendar`
+
+Validate a plugin before packaging or submitting it:
+
+```bash
+npx @open-pets/cli plugin validate ./my-plugin
+```
+
+The validator mirrors desktop install-time checks while the desktop runtime
+remains authoritative. See [Plugin SDK v3](/sdk) and [Plugin platform](/plugins).

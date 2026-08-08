@@ -1,0 +1,79 @@
+---
+title: OpenPets Documentation
+description: Install OpenPets, connect coding agents, build desktop pets, and ship SDK v3 plugins for the open-source companion platform.
+sidebar:
+  label: Overview
+  order: 0
+---
+
+OpenPets is an open-source desktop companion platform. It puts animated pets on
+your desktop, lets local coding agents update them, and gives plugin authors a
+sandboxed SDK for adding companion behavior.
+
+<Frame caption="OpenPets is built around companion pets, plugins, and local agent integrations.">
+  <img src="/openpets-logo.png" alt="OpenPets glowing paw badge logo" width="220" />
+</Frame>
+
+This documentation is built from the public OpenPets repository. The codebase is
+the source of truth, and these pages explain the current contracts around the
+desktop app, local IPC, pets, agent integrations, plugins, and SDK v3.
+
+## Start here
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" href="/quickstart" icon="rocket">
+    Install OpenPets, open the Control Center, pick a pet, and optionally
+    connect a coding assistant.
+  </Card>
+  <Card title="Install OpenPets" href="/install" icon="download">
+    Choose the right release asset for macOS, Windows, or Linux and launch the
+    desktop app.
+  </Card>
+  <Card title="Architecture" href="/architecture" icon="book-open">
+    Learn the runtime model: Electron desktop app, local IPC, npm packages,
+    pet windows, plugin host, and integration packages.
+  </Card>
+  <Card title="Desktop app" href="/desktop" icon="monitor">
+    Understand the tray app, Control Center, app state, pet windows, security,
+    logging, and update behavior.
+  </Card>
+  <Card title="Official plugins" href="/official-plugins" icon="sparkles">
+    See the reviewed companion plugins in the catalog, which ones are bundled,
+    and the behavior rules they follow.
+  </Card>
+  <Card title="Agent integrations" href="/agent-integrations" icon="terminal">
+    Connect Claude Code, OpenCode, Cursor, Pi, or any MCP-capable assistant to
+    local pet reactions.
+  </Card>
+  <Card title="Plugin SDK v3" href="/sdk" icon="code">
+    Build plugins with manifest v3, capability permissions, host-rendered UI,
+    storage, schedules, events, AI, voice, OAuth, and the test harness.
+  </Card>
+</CardGroup>
+
+## For users
+
+- Install the desktop app from the latest OpenPets release.
+- Choose or install pets from the built-in gallery.
+- Enable official plugins for focus, reminders, virtual pet state, mood checks,
+  water reminders, small games, and launcher shortcuts.
+- Optionally connect an AI coding assistant through MCP or a dedicated
+  integration.
+
+## For developers
+
+- Use `@open-pets/cli` to configure projects, check desktop connectivity, send
+  reactions, run the MCP server, and scaffold plugins.
+- Use `@open-pets/plugin-sdk` for SDK v3 types and the deterministic plugin test
+  harness.
+- Keep behavior changes and docs changes together so the public documentation
+  stays aligned with the code.
+
+## Source of truth
+
+The most authoritative files are still the package and app sources:
+
+- `packages/sdk/src/index.ts` defines the public SDK v3 type contract.
+- `packages/cli/src/index.ts` defines CLI command routing.
+- `apps/desktop/src/` implements the Electron app and plugin host.
+- `plugins/official/` contains first-party SDK v3 plugin examples.

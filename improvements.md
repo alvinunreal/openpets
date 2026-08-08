@@ -11,47 +11,32 @@ recent pass.
 
 ---
 
-## Documentation pass — 2026-06-13
+## Documentation pass — 2026-08-08
 
-Context: rebuilt the `docs/` set from empty and rewired `AGENTS.md`. Findings
-surfaced while reading the codemaps, scripts, and catalogs.
+Context: moved the public docs source of truth into the root `docs/` tree and
+rebuilt it as a Blume documentation site. Findings surfaced while reading the
+codemaps, scripts, catalogs, and old website notes.
 
 ### Documentation & references
 
 - 🔴 **`AGENTS.md` referenced docs that did not exist.** It pointed at
-  `docs/plugins.md` and `docs/superplugins.md` as required reading before plugin
+  `docs/plugins.md` and `docs/official-plugins.md` as required reading before plugin
   work, but `docs/` was empty. Any agent following `AGENTS.md` hit a dead end.
   *Fixed in this pass* — both docs now exist. Keep this from regressing: if a
   doc is referenced as required reading, it must exist.
 
-- 🟠 **Stale official-plugin lineup in `web/docs/plugin-publishing.md`.** That
-  runbook lists `ambient-companion`, `break-buddy`, `pet-pal`,
-  `github-notifications` as the official set and references
-  `public/plugins/catalog.v1.json` as the active catalog. Reality (verified
-  2026-06-13): the active catalog is `catalog.v2.json`, v1 is an empty compat
-  shim, and `plugins/official/` actually contains `day-routine`, `focus-buddy`,
-  `fortune-cookie`, `launch-buddy`, `magic-8-ball`, `mood-check-in`,
-  `reminders`, `virtual-pet`, `water-reminder`. The runbook's QA checklist and
-  catalog-version assertions are now wrong. Recommend updating
-  `web/docs/plugin-publishing.md` to match, or folding it into the new
-  `docs/plugins.md` publishing section and leaving a pointer.
-
-- 🟠 **Two codemaps disagreed on the plugin lineup.** `plugins/official/codemap.md`
-  lists the current 9 plugins; `web/docs/plugin-publishing.md` lists the old 5.
-  The codemap is correct. Single-source the lineup (catalog generator output is
-  the real source of truth) to stop this drift.
-
-- 🟡 **`web/docs/plugin-publishing.md` "as of the companion-first launch"** is
-  undated and frozen at a past state. Time-relative framing in docs goes stale
-  silently; prefer dated entries or generated content.
+- 🟢 **Old plugin publishing notes were replaced by the Blume docs path.** The
+  public docs now describe the current official/community plugin lineup in
+  `docs/official-plugins.md`, the platform/runtime contract in
+  `docs/plugins.md`, and the release gates in `docs/testing-and-validation.md`
+  plus `docs/release.md`. Keep plugin lineup copy tied to generated catalog
+  output so it does not drift again.
 
 ### Project structure / organization
 
-- 🟡 **Root `docs/` vs `web/docs/` overlap.** `web/docs/` holds genuinely useful
-  publishing runbooks (`pet_publishing.md`, `plugin-publishing.md`,
-  `pet-import-process.md`). The new root `docs/` is the conceptual layer. Worth a
-  one-line cross-link from each side so contributors find the runbooks (the new
-  `docs/catalog.md` and `docs/plugins.md` point into `web/docs/`).
+- 🟢 **Docs platform split is now explicit.** `docs/` is the public
+  documentation source for Blume. The Nuxt site remains the product/marketing
+  site and redirects old docs URLs to the dedicated docs domain.
 
 - 🟡 **Top-level `DESIGN.md`** exists alongside `codemap.md` and now `docs/`.
   Confirm it is still current or fold its still-true parts into
@@ -73,4 +58,3 @@ surfaced while reading the codemaps, scripts, and catalogs.
 ---
 
 *Append new dated sections above this line as work continues.*
-</content>

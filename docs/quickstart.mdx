@@ -1,0 +1,90 @@
+---
+title: Quickstart
+description: Install OpenPets, choose a pet, enable useful plugins, and connect a local coding assistant when you want agent-driven reactions.
+sidebar:
+  label: Quickstart
+  order: 1
+---
+
+OpenPets works as a normal desktop companion first. You can install it, pick a
+pet, and use the official plugin catalog without connecting any AI tools.
+
+## 1. Install the desktop app
+
+Download the latest release from GitHub:
+
+```bash
+open https://github.com/alvinunreal/openpets/releases/latest
+```
+
+Choose the asset for your system:
+
+| Platform | Asset |
+| --- | --- |
+| macOS Apple Silicon | `OpenPets-*-mac-arm64.dmg` |
+| macOS Intel | `OpenPets-*-mac-x64.dmg` |
+| Windows | `OpenPets-*-win-x64-setup.exe` |
+| Linux | `OpenPets-*-linux-x86_64.AppImage` |
+
+See [Install OpenPets](/install) for platform notes.
+
+## 2. Launch OpenPets
+
+When the app starts, a pet appears on your desktop and OpenPets adds a tray/menu
+bar icon. From there you can open the Control Center, switch pets, configure
+integrations, and manage plugins.
+
+## 3. Pick or install a pet
+
+Open the Control Center and go to the pet gallery. Pets are packaged assets with
+metadata, spritesheets, reactions, and optional speech. The current pet model is
+documented in [Pets](/pets), and package details are in [Pet format](/pet-format).
+
+## 4. Enable official plugins
+
+Open the Plugins section in the Control Center and enable the official plugins
+you want. OpenPets includes companion features such as focus sessions,
+reminders, mood check-ins, hydration nudges, virtual-pet state, launcher
+shortcuts, and small games.
+
+Plugins are optional and permissioned. The host validates manifests, enforces
+permissions, owns rendering, and keeps plugin state/config separate from plugin
+code. See [Plugin platform](/plugins).
+
+## 5. Connect a coding assistant
+
+Agent integrations are optional. When connected, an assistant can make the pet
+react locally while work is happening. Prompts, code, paths, logs, and secrets
+are not shown in pet bubbles by default.
+
+Use the CLI when you want project setup:
+
+```bash
+npx @open-pets/cli configure
+```
+
+For a generic MCP client, configure it to run:
+
+```bash
+npx @open-pets/cli mcp
+```
+
+See [Agent integrations](/agent-integrations), [MCP](/mcp), and [CLI](/cli) for
+the details.
+
+## 6. Check connectivity
+
+If an integration is not reacting, first check whether the desktop app is
+reachable:
+
+```bash
+npx @open-pets/cli status
+```
+
+Then run the integration doctor:
+
+```bash
+npx @open-pets/cli doctor
+```
+
+More recovery paths are in [Troubleshooting](/troubleshooting).

@@ -1,6 +1,15 @@
-# OpenPets Desktop Release Guide
+---
+description: Run OpenPets desktop, catalog, Windows signing, Linux package, Microsoft Store, GitHub Release, and npm release procedures.
+---
 
-This guide is for an AI agent creating a new OpenPets desktop release. The release flow builds the macOS and Linux artifact set locally from macOS, then has GitHub Actions build and SignPath-sign the Windows x64 installer before downloading it into the final verified GitHub Release artifacts. The local flow does not build a disposable Windows x64 NSIS installer.
+# Release guide
+
+This maintainer runbook covers OpenPets desktop releases, npm package releases,
+and the plugin/catalog publishing steps that often ship beside a desktop build.
+The desktop release flow builds macOS and Linux artifacts locally from macOS,
+then uses GitHub Actions and SignPath to build and sign the Windows x64
+installer before collecting the final verified GitHub Release artifacts. The
+local flow does not build a disposable Windows x64 NSIS installer.
 
 ## Repository and app
 
@@ -11,54 +20,23 @@ This guide is for an AI agent creating a new OpenPets desktop release. The relea
 - SignPath Windows workflow: `.github/workflows/signpath-windows.yml`
 - Update checker expects GitHub release tags like `v2.0.0`.
 
-## Current SDK v3, translations, and plugin release plan
+## Release surfaces
 
-The next end-user release is a **desktop + web plugin catalog + npm SDK release**. The baseline local release tag before this work is `v2.5.1`; changes since then include the new plugin SDK v3 package, a much larger desktop plugin host surface, manifest v3 plugins, plugin/app translations, and catalog packaging changes.
+Most OpenPets releases touch one or more of these surfaces:
 
-This is not a small patch release. Treat it as a major plugin-platform release unless product direction says otherwise.
+- **Desktop app** - Electron host, bundled official plugins, pet rendering,
+  integrations, catalog consumers, and update checks.
+- **npm packages** - CLI, MCP server, client, SDK, and integration packages.
+- **Plugin catalog** - generated catalog JSON, reviewed plugin ZIPs, provenance,
+  and R2-hosted downloads.
+- **Website catalog data** - app-facing JSON and static assets under `web/public`.
 
-Release goals:
+Keep each release scoped. A desktop-only fix does not require npm publishing.
+An SDK or CLI contract change usually does.
 
-1. Ship desktop plugin platform v3: SDK bridge, manifest v3 support, capability/permission enforcement, quotas, storage/state, events, bus, routes, UI panels, audio, notifications, diagnostics, and conformance checks.
-2. Publish `@open-pets/plugin-sdk` so plugin authors can depend on the SDK v3 types and `./testing` harness.
-3. Publish the plugin catalog with the current first-party official lineup plus
-   reviewed community plugins:
-   - Day Routine (`openpets.day-routine`)
-   - Focus Buddy (`openpets.focus-buddy`)
-   - Fortune Cookie (`openpets.fortune-cookie`)
-   - Launch Buddy (`openpets.launch-buddy`)
-   - Magic 8 Ball (`openpets.magic-8-ball`)
-   - Mood Check-in (`openpets.mood-check-in`)
-   - Reminders (`openpets.reminders`)
-   - Virtual Pet (`openpets.virtual-pet`)
-   - Water Reminder (`openpets.water-reminder`)
-   - Community: Walkabout (`openpets.walkabout`)
-4. Ship app/plugin translations and locale validation.
-5. Remove or keep hidden the old plugin lineup from public discovery unless it has been migrated to manifest v3 and intentionally retained.
-6. Keep older catalog endpoints available only as compatibility boundaries for old app versions; do not optimize current runtime behavior for legacy catalog/plugin paths.
-7. Release desktop artifacts through GitHub Releases so app update checks see the new version.
+## Desktop release checklist
 
-Recommended versioning for this release:
-
-- If publishing the SDK v3 package to npm, align **all publishable npm packages** to one shared version because `scripts/release-npm.mjs` enforces a single version across the publish order. For the SDK v3 launch, `3.0.0` is the natural version unless a different release decision is made.
-- Bump `apps/desktop/package.json` to the same release version when shipping the desktop host/runtime that implements SDK v3. The current tagged desktop baseline is `v2.5.1`, so the next GitHub Release tag must be a new version.
-- Do not leave `packages/sdk/package.json` at `3.0.0` while other publishable packages remain at `2.1.1` if running `pnpm release:npm`; the release script will reject mixed publishable package versions.
-
-## Release workstreams for the SDK v3/plugin release
-
-### A. Desktop app release
-
-Desktop release includes:
-
-- SDK v3 runtime bridge and `@open-pets/plugin-sdk` conformance alignment.
-- Manifest v3/catalog support for translated official and community plugins.
-- Expanded plugin host capabilities: permissions, storage/state, schedules, commands, events, bus, routes, UI panels, audio, notifications, quotas, diagnostics, and security validation.
-- Plugin SDK preload and panel preload packaging contracts.
-- Official/community plugin install/update/uninstall support.
-- Plugins hub/configuration UI with translated plugin metadata/config fields.
-- Local dev plugin workflow cleanup and plugin diagnostics.
-
-Required validation before desktop release:
+Required validation before a desktop release:
 
 ```bash
 pnpm --filter @open-pets/desktop check
@@ -71,9 +49,12 @@ Manual desktop QA:
 
 1. Run normal desktop dev startup or a packaged app (`pnpm dev:desktop` or the output from `pnpm --filter @open-pets/desktop package:dir`) so bundled seeding runs.
 2. Open tray → Plugins.
-3. Confirm the current official manifest v3 plugins appear in dev mode: Day Routine, Focus Buddy, Fortune Cookie, Launch Buddy, Magic 8 Ball, Mood Check-in, Reminders, Virtual Pet, and Water Reminder.
-4. Confirm community plugins appear separately/labeled as community when present; currently Walkabout should be a community catalog plugin, not official or bundled.
-5. Confirm old sample/legacy plugins do not appear unless they were intentionally migrated and listed in the release plan.
+3. Confirm the bundled official plugins appear with translated names and
+   descriptions. See [Official plugins](/official-plugins) for the current
+   bundled/default-enabled set.
+4. Confirm community plugins appear separately/labeled as community when present.
+5. Confirm stale sample/legacy plugins do not appear unless intentionally
+   migrated and listed in the current catalog.
 6. Confirm plugin names, descriptions, config labels, command labels, and pet messages resolve through translations rather than raw `$t:` keys.
 7. Exercise the SDK v3 surfaces used by official/community plugins: schedule, storage/state, commands, status, audio, notifications, pet reactions/interactions, movement, and any panel UI.
 8. Configure Reminders, Water Reminder, Focus Buddy, Launch Buddy, Day Routine, Walkabout, and other config-heavy plugins with form controls, not JSON.
@@ -83,15 +64,16 @@ Manual desktop QA:
 
 For explicit local plugin development, run `pnpm dev:desktop:plugins` separately and confirm official plugins are loaded as local dev plugins and start disabled; this mode intentionally skips bundled seeding.
 
-### B. Web plugin catalog release
+## Plugin catalog release checklist
 
-Web release includes:
+Plugin catalog release includes:
 
-- `plugins/official/**` and `plugins/community/**` source plugins.
+- `plugins/official/**` and reviewed community plugin source.
 - `web/public/plugins/catalog.v2.json`, regenerated from the current manifest v3 official and community plugin sources. Catalog entries include `publisherType: "official" | "community"`; desktop treats missing `publisherType` as official for older catalogs. The desktop runtime currently reads the v2 catalog endpoint even when the contained plugins use manifest v3 / SDK v3.
 - `web/public/plugins/catalog.v1.json` retained as an empty compatibility catalog for old desktop versions.
 - Removal or hiding of legacy sample plugin manifests from current public discovery.
-- Updated `web/docs/plugin-publishing.md`.
+- Updated public docs when lineup, permissions, commands, provenance, or
+  publishing behavior changes.
 
 Required validation from the repository root:
 
@@ -112,7 +94,7 @@ Publishing sequence:
    pnpm plugins:check
    pnpm plugins:package
    ```
-2. Confirm `pnpm plugins:package` regenerated `web/public/plugins/catalog.v2.json` from the current official and community manifest v3 plugin lineup. Do not release if the checked-in v2 catalog still lists the old ambient/break/pet-pal/wander/quick-reminders/github lineup.
+2. Confirm `pnpm plugins:package` regenerated `web/public/plugins/catalog.v2.json` from the current official and community manifest v3 plugin lineup. Do not release if the checked-in v2 catalog still lists deprecated sample plugins instead of the current catalog.
 3. Confirm `web/public/plugins/catalog.v1.json` has `plugins: []` and does not expose stale legacy plugins.
 4. Upload plugin ZIPs to R2 and regenerate catalogs:
    ```bash
@@ -135,7 +117,7 @@ Publishing sequence:
    - `https://openpets.dev/plugins/catalog.v1.json`
    - each `https://zip.openpets.dev/plugins/<plugin-id>.zip`
 
-### C. GitHub Release notes
+## GitHub Release notes
 
 The release script generates notes from the Git commit range between the previous
 desktop tag and the release commit. Do not keep static release-note text in the
@@ -146,9 +128,7 @@ risky. After publishing, verify the GitHub Release body matches the actual commi
 range and artifact set. If it does not, edit the release body immediately with
 `gh release edit v<version> --notes-file <file>`.
 
-### D. NPM release decision
-
-Default decision for this SDK v3 release: **publish npm packages** after versions are aligned.
+## NPM release decision
 
 NPM publishing is required if any of these are true:
 
@@ -156,7 +136,9 @@ NPM publishing is required if any of these are true:
 - CLI/MCP/client packages changed and users need the published package update.
 - Existing published packages are incompatible with the desktop release in a way that affects normal use.
 
-Before running `pnpm release:npm`, align every publishable package in `scripts/release-npm.mjs` to one shared version. The script currently publishes the SDK first and rejects mixed versions.
+Before running `pnpm release:npm`, align every publishable package in
+`scripts/release-npm.mjs` to one shared version. The release script rejects mixed
+publishable package versions.
 
 ## What the release script does
 
@@ -282,10 +264,10 @@ These setup values are already configured. If the SignPath project or GitHub rep
 5. Create a SignPath project for OpenPets and note its project slug.
 6. Create or identify a signing policy slug. Start with the self-signed test certificate policy; switch to the production certificate policy after SignPath reviews the setup.
 7. Add this GitHub repository secret:
-   - `SIGNPATH_API_TOKEN` — API token for a SignPath user with submitter permission for the project/signing policy.
+   - `SIGNPATH_API_TOKEN` - API token for a SignPath user with submitter permission for the project/signing policy.
 8. Add these GitHub repository variables:
-   - `SIGNPATH_ORGANIZATION_ID` — SignPath organization ID.
-   - `SIGNPATH_PROJECT_SLUG` — SignPath OpenPets project slug.
+   - `SIGNPATH_ORGANIZATION_ID` - SignPath organization ID.
+   - `SIGNPATH_PROJECT_SLUG` - SignPath OpenPets project slug.
 
 ### SignPath artifact configurations
 
@@ -623,10 +605,10 @@ apps/desktop/dist-electron/
 ## Linux DEB/RPM fallback via VMware
 
 Use this flow when the local macOS release host cannot produce valid Linux DEB
-or RPM artifacts. This happened for `v3.2.0`: RPM failed under macOS
-`fpm`/`rpmbuild`, and the generated DEB was a 96-byte invalid archive. Building
-the Linux package targets inside the Ubuntu VMware guest produced valid x64
-artifacts.
+or RPM artifacts. A common macOS failure mode is RPM failing under
+`fpm`/`rpmbuild`, or Electron Builder producing a tiny invalid DEB archive.
+Building the Linux package targets inside the Ubuntu VMware guest should produce
+valid x64 artifacts.
 
 The VM is documented in `/Volumes/external/repos/vagrants.md`:
 
@@ -759,17 +741,8 @@ If Electron Builder creates the AppX staging folder but fails only at the final 
 2. Rewrite `dist-electron/__appx-x64/mapping.txt` paths from `\\Mac\\Host\\Users\\<user>` to `C:\\Mac\\Home`.
 3. Run `makeappx.exe pack` from the Windows VM against the rewritten mapping file.
 
-Known-good local workaround path from the May 2026 Store packaging session:
-
-```txt
-/Users/alvin/Downloads/openpets-msix-build/apps/desktop/dist-electron/OpenPets-2.5.0-win-x64.appx
-```
-
-Known-good corrected `2.5.0` AppX after rebuilding with Store identity values:
-
-```txt
-SHA256 4cc451a94d4be146b18ac59eb011ef3e89ff46e4e0836c8de0f36e68ad9b4a25
-```
+Keep session-specific workaround paths and checksums in the release issue or PR
+notes for that version, not in this evergreen guide.
 
 Verify the final AppX contains OpenPets tile assets, not Electron Builder sample defaults:
 
@@ -876,7 +849,7 @@ npm view install-pet@<version> version
 npx -y @open-pets/cli@<version> --help
 ```
 
-## Important notes for future agents
+## Important notes for future maintainers
 
 - Do not publish from an uncommitted local state.
 - Do not use `--skip-checks` with `--yes`; the script rejects this.

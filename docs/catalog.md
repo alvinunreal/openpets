@@ -1,15 +1,19 @@
-# Catalogs & App-Facing Web Data
+---
+description: Reference the OpenPets pet and plugin catalogs, generated artifacts, ZIP hosting, sidecars, validation gates, and desktop fetch behavior.
+---
+
+# Catalogs
 
 The app discovers and installs pets and plugins from versioned JSON **catalogs**
 served at `openpets.dev`, with ZIPs hosted on R2 behind `zip.openpets.dev`. This
 doc describes those catalogs as **contracts** and how the desktop **consumes**
-them. It is intentionally scoped to the app-facing data of `web/` — catalogs,
-ZIP hosting, pet/plugin metadata — and not the marketing site/frontend.
+them. It is intentionally scoped to the app-facing data of `web/` - catalogs,
+ZIP hosting, pet/plugin metadata - and not the marketing site/frontend.
 
-The **publishing runbooks** (how content is generated and uploaded) live in
-`web/docs/`: `pet_publishing.md`, `plugin-publishing.md`, `pet-import-process.md`.
-This doc is the consumer-and-contract view; it points into those for the
-producer view.
+This doc is the consumer-and-contract view. Producer commands and release gates
+are covered in [Testing and validation](/testing-and-validation) and the package
+scripts they reference; do not treat older website-local notes as authoritative
+when they disagree with the generated catalog.
 
 ## Direction (read this first)
 
@@ -46,16 +50,15 @@ v3 is **paginated** to keep each runtime fetch small. The flow the app follows:
 3. Use **search pages** for lightweight lookup: `id`, `displayName`,
    `searchText`, `category`, `catalogPage`, `featured`, `original`.
 
-Only pets with a valid `category` (`western` or `asian`) appear in v3 — the
+Only pets with a valid `category` (`western` or `asian`) appear in v3 - the
 generator drops the rest and logs a warning. To keep the app UI clean, the
 Control Center browsing/search indexes surface only "curated" (original or
 featured) pets. However, explicit lookup/installation by ID allows installing
 any valid v3 catalog pet. The validators on the app side live
 in `catalog-validation.ts` (`validateCatalogV3Index`, `validateCatalogV3Page`,
 `validateCatalogV3SearchIndex`, `validateCatalogV3SearchPage`, plus
-`validateCatalogV2`). The canonical field list is maintained in
-`web/docs/pet_publishing.md` — treat the generator + validator as the contract,
-not any hand-written copy.
+`validateCatalogV2`). Treat the generator output plus those validators as the
+contract, not any hand-written copy.
 
 ### Fetch fallback chain
 
@@ -87,8 +90,8 @@ web/public/pets/
 
 Regenerating artifacts from the manifest is `generate:catalog-artifacts`;
 verifying them is the `verify:catalog*` family (see
-[testing-and-validation.md](testing-and-validation.md)). The web build also emits
-`app/lib/pets.generated.js` / `pets.preview.js` for the site — out of scope here.
+[Testing and validation](/testing-and-validation)). The web build also emits
+`app/lib/pets.generated.js` / `pets.preview.js` for the site - out of scope here.
 
 ## Plugin catalog contract
 
@@ -128,7 +131,7 @@ they must not appear in the installable catalog until promoted into
 The desktop fetch (`plugin-catalog.ts`) is hardened: timeout, redirect
 rejection, response-size cap, and caching with refresh. Install/verification of
 the downloaded ZIP (SHA-256, host/path allowlist, entry restrictions, manifest
-↔ catalog consistency) is `plugin-package.ts`. See [plugins.md](plugins.md).
+↔ catalog consistency) is `plugin-package.ts`. See [Plugin platform](/plugins).
 
 ## ZIP hosting (R2)
 
@@ -142,18 +145,16 @@ testing only.
 
 - **Browsing**: the Pets page in the Control Center pages through v3 and uses the
   search index for filtering.
-- **Installing**: see the install flow in [pets.md](pets.md) — catalog lookup (which allows installing any valid v3 catalog pet by ID, even if not original or featured) →
+- **Installing**: see the install flow in [Pets](/pets) - catalog lookup (which allows installing any valid v3 catalog pet by ID, even if not original or featured) →
   ZIP download → validated extraction → state update → tray refresh. (Control Center UI surfaces only curated original/featured pets, but explicit install by ID allows any valid v3 pet).
 - **Plugins**: the Plugins page lists catalog v2 entries filtered by app version
   and install state; install downloads + verifies the plugin ZIP. See
-  [plugins.md](plugins.md).
+  [Plugin platform](/plugins).
 
-## Pointers
+## Related docs
 
-- Producer/runbook detail: `web/docs/pet_publishing.md`,
-  `web/docs/plugin-publishing.md`, `web/docs/pet-import-process.md`.
-- Verification gates: [testing-and-validation.md](testing-and-validation.md).
-- Note: as of 2026-06-13, `web/docs/plugin-publishing.md` lists a stale official
-  lineup (see root `improvements.md`); trust the catalog generator + the live
-  `plugins/official/` folder.
-</content>
+- [Official plugins](/official-plugins) lists the current plugin catalog lineup
+  and bundling defaults.
+- [Plugin platform](/plugins) explains plugin packaging and publishing behavior.
+- [Testing and validation](/testing-and-validation) lists the catalog and plugin
+  release gates.

@@ -1,6 +1,7 @@
 v1
 node_modules
 dist
+.blume
 web
 remotion
 dist-electron
@@ -18,4 +19,3 @@ third-parties/
 # BEGIN oh-my-opencode-slim clonedeps
 .slim/clonedeps/repos/
 # END oh-my-opencode-slim clonedeps
-

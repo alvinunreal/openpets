@@ -1,0 +1,54 @@
+---
+title: Pet format
+description: Understand how OpenPets pet packages describe metadata, sprites, reactions, speech, and installable companion assets.
+sidebar:
+  label: Pet format
+---
+
+An OpenPets pet is an installable asset package. The desktop app reads metadata,
+loads sprites, maps reactions to animations, and renders the selected companion
+in a pet window.
+
+The conceptual pet pipeline is covered in [Pets](/pets). This page is the quick
+author-facing reference.
+
+## Package responsibilities
+
+A pet package should describe:
+
+- identity and display metadata
+- spritesheet or animation assets
+- available animation states
+- reaction-to-animation mapping
+- optional localized speech text
+- preview/catalog assets when published
+
+The desktop app validates package metadata before installing or rendering a pet.
+Catalog publishing additionally verifies generated artifacts, hashes, thumbnails,
+spritesheets, pagination, and search data. See [Catalogs](/catalog).
+
+## Reactions
+
+Reactions are the shared language between integrations, plugins, and pets. An
+agent or plugin asks for a reaction such as thinking, success, error, idle, or
+similar state. The pet package maps that request to a concrete animation if it
+supports it, and the desktop app falls back when necessary.
+
+## Installation paths
+
+Pets can come from:
+
+- built-in assets
+- downloaded catalog ZIPs
+- local development packages
+- Codex-compatible pet packages during development workflows
+
+The desktop app owns installation, path safety, image protocol handling, and
+rendering. Pet packages should describe assets; they should not require
+arbitrary code execution.
+
+## Related docs
+
+- [Pets](/pets) explains rendering, reactions, motion, and installation.
+- [Catalogs](/catalog) explains the app-facing catalog contract.
+- [Development](/development) explains local workspace and release workflows.

@@ -1,8 +1,12 @@
-# Developer Experience (DX)
+---
+description: Set up the OpenPets repository, run the desktop app, use plugin development commands, test across platforms, and follow contributor conventions.
+---
+
+# Development
 
 How to set up, build, run, and release the workspace. This doc is the practical
 "how do I work in this repo" companion; testing and production-validity gates get
-their own doc, [testing-and-validation.md](testing-and-validation.md).
+their own doc, [Testing and validation](/testing-and-validation).
 
 ## Layout & toolchain
 
@@ -10,11 +14,12 @@ their own doc, [testing-and-validation.md](testing-and-validation.md).
   `packages/*`. Package manager pinned to `pnpm@11.x`; Node `>=20`.
 - **ESM + TypeScript everywhere**: every package is `"type": "module"` with dual
   type exports; internal links use `workspace:*`.
-- **`web/` uses Bun + Nuxt** and is a separate toolchain — its commands run from
+- **`web/` uses Bun + Nuxt** and is a separate toolchain - its commands run from
   `web/` with `bun`, not pnpm. Only its data/catalog side is in scope here (see
-  [catalog.md](catalog.md)).
+  [Catalogs](/catalog)).
 - **Versioning**: packages align around SDK v3 / `manifestVersion 3`. The
-  workspace version is in the root `package.json` (`3.1.0` at time of writing).
+  workspace version is owned by the root `package.json`; do not duplicate a
+  frozen version number in docs.
 
 The authoritative structural map is the root `codemap.md` plus per-folder
 `codemap.md` files; read those before editing a subsystem.
@@ -52,8 +57,8 @@ All from the repo root unless noted (full list in root `package.json`):
 | `pnpm plugins:validate-live` | Post-deploy live check |
 | `pnpm plugins:deploy` | Deploy the web catalog |
 
-See [plugins.md](plugins.md) for the authoring workflow and
-[testing-and-validation.md](testing-and-validation.md) for what the validators
+See [Plugin platform](/plugins) for the authoring workflow and
+[Testing and validation](/testing-and-validation) for what the validators
 catch.
 
 ## Running the desktop app
@@ -80,7 +85,7 @@ Any renderer-visible URL scheme, image source, dev endpoint, or internal
 protocol must be added to the CSP in **both** `apps/desktop/vite.config.ts` and
 `apps/desktop/src/renderer/index.html`. Symptom of forgetting: images fall back
 to the default pet even though install/render logic is correct. See
-[desktop.md](desktop.md).
+[Desktop app](/desktop).
 
 ## Logging-as-DX
 
@@ -115,13 +120,14 @@ a draft release, and refuses a published release. SignPath may pause for manual
 approval in its dashboard while the release script visibly waits.
 `electron-builder` handles cross-platform packaging; bundled mode unpacks the
 integration CLIs and bundles `plugins/official` as extra resources (verified by
-the packaging contract — see [testing-and-validation.md](testing-and-validation.md)).
+the packaging contract - see [Testing and validation](/testing-and-validation)).
 
 ### Web catalog
 
 Pet and plugin catalog deploys run from `web/` with Bun (`bun run deploy`,
-`pnpm plugins:deploy`). Catalog generation/verification is in [catalog.md](catalog.md)
-and the runbooks under `web/docs/`.
+`pnpm plugins:deploy`). Catalog generation/verification is in [Catalogs](/catalog)
+and the release gates are in [Testing and validation](/testing-and-validation)
+and [Release guide](/release).
 
 ## Cross-platform & Linux testing
 
@@ -133,12 +139,12 @@ and the runbooks under `web/docs/`.
 - Use the VM to validate Linux/Wayland renderer, tray, pet-window drag, IPC,
   plugin, and packaging behavior.
 - **WSL** cross-platform IPC (WSL client → Windows host over private TCP) is part
-  of the protocol — see [ipc.md](ipc.md).
+  of the protocol - see [IPC and remote control](/ipc).
 
 ## Code intelligence
 
 This repo has a **CodeGraph** index (`.codegraph/`) and an MCP server
-(`codegraph_*` tools) — a tree-sitter knowledge graph of every symbol/edge/file.
+(`codegraph_*` tools) - a tree-sitter knowledge graph of every symbol/edge/file.
 Prefer it for structural questions (who calls X, what breaks if I change Y, where
 is Z defined) over grep. Read-only dependency clones for inspecting Electron /
 KWin behavior live under `.slim/clonedeps/repos/` (do not edit). Both are
@@ -152,4 +158,3 @@ described in `AGENTS.md`.
 - Validate at boundaries; atomic writes; reject path traversal/symlinks.
 - For plugin/catalog/i18n changes, follow the explicit "update docs / run
   validators" rules in `AGENTS.md`.
-</content>
