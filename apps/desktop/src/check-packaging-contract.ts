@@ -216,7 +216,7 @@ assert.doesNotMatch(windowsSource, /openpets:set-desktop-analytics-consent/, "se
 assert.match(controlCenterPreloadSource, /checkForUpdates/, "Control Center preload must expose update checks.");
 assert.doesNotMatch(controlCenterPreloadSource, /setDesktopAnalyticsConsent/, "Control Center preload must not expose desktop analytics consent updates.");
 assert.match(controlCenterPreloadSource, /getReactionAnimationSettings/, "Control Center preload must expose reaction animation settings metadata.");
-assert.match(controlCenterRendererSource, /function SettingsView\(\)/, "Control Center must include the settings page.");
+assert.match(controlCenterRendererSource, /function SettingsView\(/, "Control Center must include the settings page.");
 assert.match(controlCenterRendererSource, /getPetsState/, "Control Center must include the pets page data bridge.");
 assert.match(controlCenterRendererSource, /function IntegrationsView\(\)/, "Control Center must include the integrations page.");
 assert.match(petWindowSource, /max-width:\s*min\(220px/, "very long message bubbles must stay capped within the tight pet window.");
