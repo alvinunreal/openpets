@@ -418,9 +418,13 @@ function loadState(head) {
 
   const state = { ...fresh, stages: raw.stages && typeof raw.stages === "object" ? raw.stages : {} };
   if (raw.signPath) state.signPath = raw.signPath;
-  if (JSON.stringify(raw.options || {}) !== JSON.stringify(state.options)) {
-    console.log("Build options changed since the last checkpoint; the output directory will be cleaned and every build stage re-run.");
-    delete state.stages.clean;
+
+  const previousOptions = raw.options || {};
+  if (JSON.stringify(previousOptions) !== JSON.stringify(state.options)) {
+    console.log("Build options changed since the last checkpoint. Artifacts already built for unchanged targets are kept:");
+    console.log(`  previous: includeExperimentalArm=${Boolean(previousOptions.includeExperimentalArm)}, linuxPackageDir=${previousOptions.linuxPackageDir || "none"}`);
+    console.log(`  current:  includeExperimentalArm=${includeExperimentalArm}, linuxPackageDir=${linuxPackageDir || "none"}`);
+    console.log("Dropping a target can leave its artifact behind; verify:local rejects any unexpected artifact, and --reset forces a full rebuild.");
   }
   return state;
 }

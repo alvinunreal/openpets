@@ -204,9 +204,15 @@ Two things make the resume trustworthy rather than merely fast:
   during download or upload never re-triggers signing or a second approval.
 
 A checkpoint is discarded automatically when `HEAD` moves or the desktop version
-changes, because the built artifacts no longer match the release. Changing
-`--include-experimental-arm` or `--linux-package-dir` forces a clean rebuild of
-the build stages.
+changes, because the built artifacts no longer match the release. This is why a
+commit made to fix a failing release — even a docs-only one — costs a rebuild:
+the script will not publish artifacts built from a different commit than the tag.
+
+Changing `--include-experimental-arm` or `--linux-package-dir` does **not**
+discard anything. The stages that are still in the plan keep their artifacts, and
+only the stages the options actually changed are re-run. Dropping a target can
+leave its artifact behind in `dist-electron`; `verify:local` rejects any
+unexpected artifact, so use `--reset` if you want a guaranteed clean rebuild.
 
 ### Inspecting and controlling stages
 
@@ -289,8 +295,9 @@ not publish a partial release. Build valid DEB/RPM replacements inside the Ubunt
 VMware guest, place them in an external staging directory, and re-run with
 `--linux-package-dir`. The script then skips the failing local DEB/RPM targets,
 copies and validates the staged files into `dist-electron`, and continues only
-with the complete final artifact set. Adding `--linux-package-dir` changes the
-build options, which forces a clean rebuild of the build stages. See
+with the complete final artifact set. Adding `--linux-package-dir` on a resume
+keeps the macOS and AppImage artifacts that already built; only the DEB/RPM
+stages are replaced. See
 [Linux DEB/RPM fallback via VMware](#linux-debrpm-fallback-via-vmware).
 
 `--include-experimental-arm` builds Windows ARM64 and Linux ARM64 locally. Only the Windows x64 installer is handed off to SignPath; the locally built unsigned Windows ARM64 installer remains disposable and is not uploaded. Only use this flag if the additional Linux artifact can be tested.
@@ -700,6 +707,21 @@ or RPM artifacts. A common macOS failure mode is RPM failing under
 Building the Linux package targets inside the Ubuntu VMware guest should produce
 valid x64 artifacts.
 
+The DEB failure is silent: Electron Builder logs `building target=deb` and exits
+successfully, but writes a ~96 byte file. That file is a macOS `ar` stub rather
+than a Debian package, which you can confirm from its header:
+
+```bash
+xxd apps/desktop/dist-electron/OpenPets-<version>-linux-amd64.deb | head -4
+# !<arch> ... __.SYMDEF SORTED   <- macOS static library, not a .deb
+```
+
+It happens because Apple's BSD `ar` is used when `dpkg`/`dpkg-deb`/`fpm` are not
+installed on the host. The `build:linux-deb` stage now rejects any package under
+1 MiB, so this stops the release at that stage instead of reaching artifact
+validation. Do not try to fix it by installing packaging tools on macOS; use the
+Ubuntu guest, which is the validated path.
+
 The VM is documented in `/Volumes/external/repos/vagrants.md`:
 
 ```txt
@@ -743,10 +765,11 @@ a dry run:
 pnpm release:desktop -- --yes --linux-package-dir "$STAGING_DIR"
 ```
 
-Passing `--linux-package-dir` changes the recorded build options, so the script
-cleans `dist-electron` and re-runs every build stage. Keep the flag on every
-subsequent resume of the same release; dropping it changes the options back and
-forces another full rebuild.
+This is normally a resume: the macOS, AppImage, and tar.gz artifacts built before
+the DEB/RPM failure are kept, and only the `stage:linux-packages` copy replaces
+the failed local package builds. Keep the flag on every subsequent resume of the
+same release, since dropping it puts the failing local DEB/RPM stages back into
+the plan.
 
 The option requires exactly these two files, rejects symlinks and packages
 smaller than 1 MiB, skips only the local DEB/RPM builds, and copies the files under
