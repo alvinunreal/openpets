@@ -11,6 +11,12 @@ then uses GitHub Actions and SignPath to build and sign the Windows x64
 installer before collecting the final verified GitHub Release artifacts. The
 local flow does not build a disposable Windows x64 NSIS installer.
 
+The desktop release runs as a sequence of **checkpointed stages**, not as one
+long all-or-nothing command. Every stage that succeeds is recorded, so a failure
+in the middle of a two-hour release is recovered by re-running the exact same
+command: finished work is skipped and the release resumes at the stage that
+failed. See [Staged desktop releases](#staged-desktop-releases).
+
 ## Repository and app
 
 - GitHub repo: `alvinunreal/openpets`
@@ -123,9 +129,10 @@ The release script generates notes from the Git commit range between the previou
 desktop tag and the release commit. Do not keep static release-note text in the
 script or this guide; stale notes are worse than short generated notes.
 
-Before publishing, inspect the generated notes in a dry run if the release is
-risky. After publishing, verify the GitHub Release body matches the actual commit
-range and artifact set. If it does not, edit the release body immediately with
+The notes are written when the draft release is created, before publication, so
+a risky release can be inspected on the draft rather than in a dry run. After
+publishing, verify the GitHub Release body matches the actual commit range and
+artifact set. If it does not, edit the release body immediately with
 `gh release edit v<version> --notes-file <file>`.
 
 ## NPM release decision
@@ -140,29 +147,94 @@ Before running `pnpm release:npm`, align every publishable package in
 `scripts/release-npm.mjs` to one shared version. The release script rejects mixed
 publishable package versions.
 
-## What the release script does
+## Staged desktop releases
 
-`pnpm release:desktop -- --yes` performs these checks/actions:
+`pnpm release:desktop -- --yes` runs preflight once, then executes an ordered
+stage plan. After each stage succeeds, the script appends it to a checkpoint
+file:
 
-1. Requires macOS.
-2. Requires `pnpm` and `gh`.
-3. Requires GitHub CLI auth for `github.com`.
-4. Requires `origin` to point to `alvinunreal/openpets`.
-5. Requires a clean git working tree.
-6. Requires the current branch to have an upstream.
-7. Requires local `HEAD` to match the upstream branch.
-8. Requires desktop version to be stable semver and not `0.0.0`.
-9. Requires tag/release `v<version>` to not already exist.
-10. Captures the previous release tag before creating the new tag.
-11. Runs build/checks and builds the complete local pre-signing artifact plan while `v<version>` does not exist; this local plan has no Windows x64 installer.
-12. Creates and pushes an annotated `v<version>` tag at `HEAD`.
-13. Dispatches `.github/workflows/signpath-windows.yml` against that tag with the production signing inputs.
-14. Finds and waits for the matching workflow run, including any required manual SignPath approval.
-15. Downloads `signed-openpets-windows-x64` outside the repository, requires the exact signed installer and handoff checksum, and adds the signed Windows x64 installer to the final artifact directory.
-16. Generates the release-wide `SHA256SUMS` only after the signed installer is in place.
-17. Creates a **draft** GitHub Release, uploads only the final artifacts and `SHA256SUMS`, verifies the exact remote asset set, and publishes it.
+```txt
+apps/desktop/.release-state/v<version>.json
+```
 
-`--resume` is available only with `--yes`. It requires local and origin `v<version>` tags to point to `HEAD`, refuses a published release, rebuilds and re-runs SignPath, and re-uploads draft assets with `--clobber` before repeating final verification and publication.
+The checkpoint is gitignored and belongs to one version at one `HEAD` commit.
+
+### Stage plan
+
+| Stage | What it does |
+| --- | --- |
+| `checks` | `pnpm build` and `pnpm --filter @open-pets/desktop check` |
+| `clean` | cleans `apps/desktop/dist-electron` (runs only once per checkpoint) |
+| `build:mac-dmg` | macOS DMG x64 + arm64 |
+| `build:mac-zip` | macOS ZIP x64 + arm64 |
+| `build:linux-appimage` | Linux AppImage x64 |
+| `build:linux-deb` | Linux DEB x64, rejected if under 1 MiB |
+| `build:linux-rpm` | Linux RPM x64, rejected if under 1 MiB |
+| `build:linux-targz` | Linux tar.gz x64 |
+| `stage:linux-packages` | only with `--linux-package-dir`; copies validated Ubuntu DEB/RPM |
+| `verify:local` | working-tree check plus the complete pre-signing artifact set |
+| `tag` | creates and pushes the annotated `v<version>` tag at `HEAD` |
+| `sign:dispatch` | dispatches the SignPath workflow and records its run id |
+| `sign:collect` | waits for that recorded run, downloads and verifies the signed installer |
+| `verify:final` | validates the signed artifact set and writes `SHA256SUMS` |
+| `release:draft` | creates or refreshes the **draft** GitHub Release |
+| `release:upload` | uploads only the assets GitHub is missing, then verifies the exact asset set |
+| `release:publish` | publishes the verified draft |
+
+Preflight still enforces macOS, `pnpm`/`gh` availability, GitHub CLI auth, an
+`origin` pointing at `alvinunreal/openpets`, a clean working tree, an upstream
+branch, `HEAD` matching upstream, and stable non-zero semver. It refuses an
+existing tag or release unless the checkpoint says this release already reached
+the `tag` stage at this `HEAD`.
+
+### Resuming after a failure
+
+Re-run the identical command. Completed stages are skipped:
+
+```bash
+pnpm release:desktop -- --yes
+```
+
+Two things make the resume trustworthy rather than merely fast:
+
+- Each build stage records the size of the artifacts it produced. If an artifact
+  was deleted or changed, that stage re-runs even though it is checkpointed.
+- `sign:dispatch` stores the SignPath workflow run id. A resume re-attaches to
+  that same run instead of dispatching a second signing request, so a failure
+  during download or upload never re-triggers signing or a second approval.
+
+A checkpoint is discarded automatically when `HEAD` moves or the desktop version
+changes, because the built artifacts no longer match the release. Changing
+`--include-experimental-arm` or `--linux-package-dir` forces a clean rebuild of
+the build stages.
+
+### Inspecting and controlling stages
+
+```bash
+pnpm release:desktop -- --yes --status
+```
+
+Prints the stage plan with `done`, `stale`, `pending`, or `always` for each
+stage, plus the recorded SignPath run.
+
+Force a stage and everything after it to re-run:
+
+```bash
+pnpm release:desktop -- --yes --from build:linux-rpm
+pnpm release:desktop -- --yes --from sign:dispatch
+```
+
+Use `--from sign:dispatch` when the recorded SignPath run itself failed and a
+fresh signing run is required. Discard the whole checkpoint with:
+
+```bash
+pnpm release:desktop -- --reset
+```
+
+`--resume` remains as a legacy flag for resuming a tagged `HEAD` when no
+checkpoint exists (for example after the checkpoint file was deleted). It
+requires local and origin `v<version>` tags to point to `HEAD` and refuses a
+published release. Normal recovery no longer needs it.
 
 Published releases are visible to the app update checker.
 
@@ -210,13 +282,16 @@ pnpm release:desktop -- --yes --include-experimental-arm
 ```
 
 On Apple Silicon macOS, Linux RPM packaging can fail in `fpm`/`rpmbuild`, and
-Electron Builder can produce an invalid tiny DEB archive. If that happens, do
-not publish a partial release. Build valid DEB/RPM replacements inside the
-Ubuntu VMware guest, place them in an external staging directory, and use
-`--linux-package-dir` for both the dry run and production command. The script
-then skips the failing local DEB/RPM targets, copies and validates the staged
-files into `dist-electron`, and continues only with the complete final artifact
-set. See [Linux DEB/RPM fallback via VMware](#linux-debrpm-fallback-via-vmware).
+Electron Builder can produce an invalid tiny DEB archive. The `build:linux-deb`
+and `build:linux-rpm` stages reject a package smaller than 1 MiB, so this failure
+stops the release at that stage instead of producing a partial artifact set. Do
+not publish a partial release. Build valid DEB/RPM replacements inside the Ubuntu
+VMware guest, place them in an external staging directory, and re-run with
+`--linux-package-dir`. The script then skips the failing local DEB/RPM targets,
+copies and validates the staged files into `dist-electron`, and continues only
+with the complete final artifact set. Adding `--linux-package-dir` changes the
+build options, which forces a clean rebuild of the build stages. See
+[Linux DEB/RPM fallback via VMware](#linux-debrpm-fallback-via-vmware).
 
 `--include-experimental-arm` builds Windows ARM64 and Linux ARM64 locally. Only the Windows x64 installer is handed off to SignPath; the locally built unsigned Windows ARM64 installer remains disposable and is not uploaded. Only use this flag if the additional Linux artifact can be tested.
 
@@ -312,13 +387,19 @@ After the workflow succeeds, the script downloads its `signed-openpets-windows-x
 
 ### Recovery when the automated handoff is interrupted
 
-If the initial signing step fails after the tag was pushed, do not delete the tag. Retry the complete build/sign/upload flow with:
+If the initial signing step fails after the tag was pushed, do not delete the tag. Re-run the same command:
+
+```bash
+pnpm release:desktop -- --yes
+```
+
+The checkpoint keeps the `tag` stage, so preflight accepts the existing tag, and the release resumes at the failed signing stage. If the SignPath run itself failed, the recorded run id is no longer usable and the script says so; dispatch a fresh signing run with `--from sign:dispatch`. If the tag push itself failed, push that existing local tag to origin first. The script never deletes tags automatically.
+
+When no checkpoint exists — for example the checkpoint file was deleted, or the release was started from another machine — use the legacy flag, which requires both local and origin `v<version>` tags to point to `HEAD`, accepts no release or a draft release, and refuses a published release:
 
 ```bash
 pnpm release:desktop -- --yes --resume
 ```
-
-`--resume` requires both local and origin `v<version>` tags to point to `HEAD`, accepts no release or a draft release, refuses a published release, and replaces draft assets with `--clobber` only after a fresh successful signing handoff. If the tag push itself failed, push that existing local tag to origin first. The script never deletes tags automatically.
 
 For a narrowly scoped manual recovery when the script cannot dispatch the workflow, use the production dispatch shown above, download the named final artifact with `gh run download`, and use only its signed installer when repairing a draft release. Never upload the workflow's `SHA256SUMS.windows.txt` as a release asset, never upload a locally built unsigned Windows installer (including the optional ARM64 installer), and regenerate the release-wide `SHA256SUMS` after any replacement.
 
@@ -424,23 +505,25 @@ If not authenticated:
 gh auth login
 ```
 
-### 7. Optional dry run
+### 7. Do not dry run
 
-Run:
+**Do not run `pnpm release:desktop -- --dry-run` as a warm-up.** A dry run builds
+the full macOS and Linux artifact set, which is the slowest part of a release,
+and then stops without tagging or publishing. Since the dry run and the real
+release are separate invocations of the same build stages, the time is spent
+twice for no additional safety.
 
-```bash
-pnpm release:desktop -- --dry-run
-```
+The staged checkpoint already provides what a dry run used to provide: preflight
+runs before anything is built, and any failure is resumable without repeating
+finished work. Go straight to `--yes`.
 
-This should pass preflight, build the local macOS/Linux pre-signing artifacts,
-generate `SHA256SUMS.local-preview` for them, and stop before creating a tag,
-dispatching SignPath, or changing GitHub. The Windows x64 installer is not built
-during a dry run; it is produced only by the GitHub Actions/SignPath workflow
-and is therefore absent from the local preview. A dry run is recommended for
-risky releases, but it can be skipped when the current release has already been
-validated and the user explicitly approves publishing directly.
+The `--dry-run` flag still exists for the rare case where you want local
+artifacts and `SHA256SUMS.local-preview` without any GitHub interaction at all.
+It shares the build-stage checkpoint with a real release, so a dry run
+immediately followed by `--yes` at the same `HEAD` will not rebuild. It is still
+not part of the normal release path.
 
-If it fails because the tree is dirty, inspect:
+If preflight fails because the tree is dirty, inspect:
 
 ```bash
 git status --short
@@ -456,12 +539,12 @@ For the standard full-artifact desktop release:
 pnpm release:desktop -- --yes
 ```
 
-The script builds locally while the tag does not exist, creates and pushes an
-annotated tag, automatically dispatches the production SignPath workflow, and
-waits for its final signed artifact. It then downloads and adds the signed
-Windows x64 installer to the final artifacts, calculates `SHA256SUMS`, creates a
-**draft** release, uploads only the final artifacts and `SHA256SUMS`, verifies
-the exact remote asset names, and publishes the release named/tagged:
+The script works through the stage plan: it builds locally while the tag does not
+exist, creates and pushes an annotated tag, dispatches the production SignPath
+workflow and records its run id, waits for that run's signed artifact, adds the
+signed Windows x64 installer to the final artifacts, calculates `SHA256SUMS`,
+creates a **draft** release, uploads the assets GitHub is missing, verifies the
+exact remote asset names, and publishes the release named/tagged:
 
 ```txt
 v<version>
@@ -475,13 +558,16 @@ v2.0.1
 
 If SignPath pauses for approval, approve the request in the SignPath dashboard;
 the script continues waiting and fails if the workflow does not succeed. If a
-signing or upload failure leaves the tag pushed, recover with:
+signing or upload failure leaves the tag pushed, recover by re-running the same
+command:
 
 ```bash
-pnpm release:desktop -- --yes --resume
+pnpm release:desktop -- --yes
 ```
 
-`--resume` is only for the same tagged `HEAD` and refuses a published release.
+The checkpoint skips the finished stages and resumes at the failed one. Inspect
+what will run first with `--status`, and use `--from <stage>` when a completed
+stage must be redone.
 
 ### 9. Smoke test after publishing
 
@@ -558,19 +644,23 @@ git push
 ### Tag or release already exists
 
 For a normal release, use a new version after inspecting GitHub. If this is a
-failed release attempt and local/origin `v<version>` both point to `HEAD`, use
-`pnpm release:desktop -- --yes --resume`; do not delete tags automatically.
+failed release attempt, re-run `pnpm release:desktop -- --yes`; the checkpoint
+recognises the tag it created. If the checkpoint is gone and local/origin
+`v<version>` both point to `HEAD`, use `pnpm release:desktop -- --yes --resume`.
+Do not delete tags automatically.
 
 ### Partial GitHub upload failure or replacing an existing release's assets
 
 The script keeps the release draft until the complete final asset set is
-uploaded and verified. If an upload fails:
+uploaded and verified. Assets are uploaded one at a time, and an asset already
+present on the draft with a matching size is skipped, so a re-run only transfers
+what is actually missing. If an upload fails:
 
 1. Inspect the release on GitHub.
-2. Re-run the complete tagged flow:
+2. Re-run the same command:
 
 ```bash
-pnpm release:desktop -- --yes --resume
+pnpm release:desktop -- --yes
 ```
 
 3. Re-check the release asset list; do not trust a wrapper's success summary if
@@ -646,19 +736,23 @@ cp /Volumes/external/vmware/ubuntu24/OpenPets-<version>-linux-amd64.deb "$STAGIN
 cp /Volumes/external/vmware/ubuntu24/OpenPets-<version>-linux-x86_64.rpm "$STAGING_DIR/"
 ```
 
-Run the complete release flow with the same staging directory for the dry run
-and production command:
+Run the complete release flow with the staging directory. Do not precede it with
+a dry run:
 
 ```bash
-pnpm release:desktop -- --dry-run --linux-package-dir "$STAGING_DIR"
 pnpm release:desktop -- --yes --linux-package-dir "$STAGING_DIR"
 ```
+
+Passing `--linux-package-dir` changes the recorded build options, so the script
+cleans `dist-electron` and re-runs every build stage. Keep the flag on every
+subsequent resume of the same release; dropping it changes the options back and
+forces another full rebuild.
 
 The option requires exactly these two files, rejects symlinks and packages
 smaller than 1 MiB, skips only the local DEB/RPM builds, and copies the files under
 `dist-electron` before strict artifact validation. This remains a full release:
 do not publish a partial set or upload the staged files directly. If using
-`--include-experimental-arm`, add it to both commands; the unsigned Windows
+`--include-experimental-arm`, keep it on every run too; the unsigned Windows
 ARM installer remains disposable and is not published.
 
 ## Microsoft Store package quick actions
@@ -853,8 +947,11 @@ npx -y @open-pets/cli@<version> --help
 
 - Do not publish from an uncommitted local state.
 - Do not use `--skip-checks` with `--yes`; the script rejects this.
+- Do not dry run before a release. It doubles the build time and the staged checkpoint already makes retries cheap.
+- Recover from any failed release by re-running the same `--yes` command; reach for `--from <stage>` only when a completed stage must be redone.
 - `--dry-run` is local only; it does not create tags, dispatch SignPath, or change GitHub.
-- Use `--resume` only with `--yes` after a failed tagged attempt; it refuses published releases.
+- `--resume` is a legacy fallback for a tagged `HEAD` with no checkpoint; it refuses published releases.
+- The checkpoint under `apps/desktop/.release-state/` is disposable local state. Delete it with `--reset` if a release is abandoned.
 - Do not upload the entire `dist-electron` directory manually. Upload only final top-level artifacts and `SHA256SUMS`.
 - Do not upload `SHA256SUMS.windows.txt` or a locally built unsigned Windows installer, including the optional ARM64 installer.
 - Keep the tag format as `v<version>`.

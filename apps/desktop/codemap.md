@@ -94,7 +94,7 @@ OpenPets desktop companion application. Tray-first Electron app providing animat
 - `reaction-messages.ts`: Message pools for each reaction type
 - `control-center-preload.cjs`/`pet-preload.cjs`/`plugin-sdk-preload.cjs`: Narrow contextBridge APIs for the Control Center, pet windows, and plugin SDK host; the legacy `preload.cjs` task-window bridge and `plugins-window.ts` UI have been removed
 - `electron-builder.yml`: Packaging configuration
-- `scripts/release-local.mjs`: macOS-local release automation with GitHub draft creation
+- `scripts/release-local.mjs`: macOS-local release automation as resumable checkpointed stages, with GitHub draft creation
 - `contracts/catalog-fixture.contract.ts`: Catalog V2 validation contract tests against fixture data
 - `contracts/local-ipc-protocol.contract.ts`: IPC protocol validation contract tests for request/response parsing
 - `contracts/plugin-manifest.contract.ts`: Plugin manifest boundary contract for v1 schema, config references, permissions, deferred features, and action validation

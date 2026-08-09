@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { copyFileSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,11 +10,14 @@ const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const desktopDir = resolve(scriptsDir, "..");
 const repoRoot = resolve(desktopDir, "../..");
 const outputDir = join(desktopDir, "dist-electron");
+const stateDir = join(desktopDir, ".release-state");
+const stateSchema = 1;
 const repository = "alvinunreal/openpets";
 const signPathWorkflow = "signpath-windows.yml";
 const signedWindowsArtifact = "signed-openpets-windows-x64";
 const signedWindowsChecksum = "SHA256SUMS.windows.txt";
 const signPathPollIntervalMs = 10_000;
+const signPathDiscoveryTimeoutMs = 10 * 60 * 1_000;
 const signPathTimeoutMs = 2 * 60 * 60 * 1_000;
 const minimumLinuxPackageBytes = 1 * 1024 * 1024;
 
@@ -24,11 +27,14 @@ const allowedArgs = new Set([
   "--resume",
   "--include-experimental-arm",
   "--skip-checks",
+  "--status",
+  "--reset",
   "--help",
 ]);
 const rawArgs = process.argv.slice(2);
 const args = new Set();
 let linuxPackageDir = null;
+let fromStage = null;
 for (let index = 0; index < rawArgs.length; index += 1) {
   const arg = rawArgs[index];
   if (arg === "--") continue;
@@ -41,6 +47,14 @@ for (let index = 0; index < rawArgs.length; index += 1) {
     if (arg === "--linux-package-dir") index += 1;
     continue;
   }
+  if (arg === "--from" || arg.startsWith("--from=")) {
+    if (fromStage !== null) throw new Error("Duplicate --from option.");
+    const value = arg === "--from" ? rawArgs[index + 1] : arg.slice("--from=".length);
+    if (!value || value === "--" || value.startsWith("--")) throw new Error("--from requires a stage id. Run --status to list stage ids.");
+    fromStage = value;
+    if (arg === "--from") index += 1;
+    continue;
+  }
   if (!allowedArgs.has(arg)) throw new Error(`Unknown release option or positional value: ${arg}`);
   args.add(arg);
 }
@@ -49,6 +63,8 @@ const yes = args.has("--yes");
 const resume = args.has("--resume");
 const includeExperimentalArm = args.has("--include-experimental-arm");
 const skipChecks = args.has("--skip-checks");
+const showStatus = args.has("--status");
+const resetState = args.has("--reset");
 
 if (args.has("--help")) {
   printHelp();
@@ -62,6 +78,7 @@ if (dryRun && yes) throw new Error("--dry-run cannot be combined with --yes; it 
 const desktopPackageJson = readJson(join(desktopDir, "package.json"));
 const version = desktopPackageJson.version;
 const tag = `v${version}`;
+const statePath = join(stateDir, `${tag}.json`);
 const expectedWindowsInstaller = `OpenPets-${version}-win-x64-setup.exe`;
 const requiredPreSigningArtifactNames = new Set([
   `OpenPets-${version}-mac-x64.dmg`,
@@ -79,81 +96,391 @@ const optionalExperimentalArtifactNames = new Set([`OpenPets-${version}-linux-ar
 main();
 
 function main() {
-  preflight();
-  const target = commandOutput("git", ["rev-parse", "HEAD"], { cwd: repoRoot }).trim();
-  const previousTag = findPreviousReleaseTag(target, resume);
-  if (!skipChecks) {
-    run("pnpm", ["build"], { cwd: repoRoot });
-    run("pnpm", ["--filter", "@open-pets/desktop", "check"], { cwd: repoRoot });
+  if (resetState) {
+    clearState();
+    return;
   }
 
-  run("node", ["scripts/clean-package-output.cjs"], { cwd: desktopDir });
-  mkdirSync(outputDir, { recursive: true });
+  const head = commandOutput("git", ["rev-parse", "HEAD"], { cwd: repoRoot }).trim();
+  const state = loadState(head);
+  const context = { head, previousTag: "", uploadArtifacts: [] };
+  const stages = createStagePlan(context, state);
 
-  for (const build of createBuildPlan()) {
-    run("pnpm", ["exec", "electron-builder", ...build.args, "--publish", "never"], { cwd: desktopDir });
+  if (fromStage) invalidateFromStage(stages, state, fromStage);
+  if (showStatus) {
+    printStatus(stages, state);
+    return;
   }
-  copyLinuxPackageArtifacts();
 
-  const postBuildStatus = getGitStatusIgnoringPackageOutput();
-  if (postBuildStatus) throw new Error(`Build/checks changed tracked or source files. Commit or revert them before releasing.\n${postBuildStatus}`);
+  preflight(state);
+  context.previousTag = findPreviousReleaseTag(head, resume || isStageComplete(state, "tag"));
 
-  const localArtifacts = collectArtifacts(outputDir);
-  validateArtifactSet(localArtifacts, "local pre-signing build", requiredPreSigningArtifactNames);
+  console.log(`\nStaged release plan for ${tag} (${stages.length} stages):`);
+  for (const [index, stage] of stages.entries()) {
+    const done = !stage.alwaysRun && isStageComplete(state, stage.id) && outputsIntact(state.stages[stage.id]);
+    console.log(`  ${String(index + 1).padStart(2, " ")}. ${done ? "done   " : "pending"} ${stage.id} — ${stage.title}`);
+  }
+  console.log(`\nCheckpoint file: ${relative(repoRoot, statePath)}`);
 
-  console.log("\nLocal pre-signing artifacts (the Windows installer is deliberately supplied only by SignPath):");
-  for (const artifact of localArtifacts) console.log(`- ${relative(repoRoot, artifact)}`);
+  runStages(stages, state);
 
   if (dryRun) {
-    const checksumsPath = writeChecksums(localArtifacts, "SHA256SUMS.local-preview");
-    console.log(`- ${relative(repoRoot, checksumsPath)}`);
     console.log(`\nDry run complete. No tag, SignPath signing, GitHub release, or publication was performed for ${tag}.`);
     console.log("SignPath's Windows installer is deliberately absent from this local preview and was not exposed publicly.");
     return;
   }
   if (!yes) {
-    throw new Error("Re-run with --yes to create the draft GitHub release after reviewing the artifact list.");
+    console.log("\nLocal pre-signing artifacts are built and checkpointed.");
+    console.log("Re-run the same command with --yes to tag, sign, and publish; completed stages will be skipped.");
+    return;
   }
-
-  if (!resume) {
-    createAndPushTag(target);
-  }
-
-  const priorSignPathRunIds = new Set(listSignPathRuns()
-    .filter((runInfo) => runInfo.event === "workflow_dispatch" && runInfo.headSha === target && (!runInfo.headBranch || runInfo.headBranch === tag))
-    .map((runInfo) => String(runInfo.databaseId)));
-  const dispatchedAt = Date.now();
-  dispatchSignPathWorkflow(tag);
-  const signingRun = waitForSignPathRun(target, tag, dispatchedAt, priorSignPathRunIds);
-  const signedArtifactDir = mkdtempSync(join(tmpdir(), `openpets-signpath-${version}-`));
-  try {
-    downloadSignedWindowsArtifact(signingRun.databaseId, signedArtifactDir);
-    installSignedWindowsInstaller(signedArtifactDir);
-  } finally {
-    rmSync(signedArtifactDir, { recursive: true, force: true });
-  }
-
-  const finalArtifacts = collectArtifacts(outputDir);
-  validateArtifactSet(finalArtifacts, "signed release", requiredFinalArtifactNames);
-  requireFile(join(outputDir, expectedWindowsInstaller), "signed Windows NSIS installer");
-  const checksumsPath = writeChecksums(finalArtifacts);
-  const uploadArtifacts = [...finalArtifacts, checksumsPath];
-
-  console.log("\nFinal release artifacts:");
-  for (const artifact of uploadArtifacts) console.log(`- ${relative(repoRoot, artifact)}`);
-
-  ensureDraftRelease(target, previousTag);
-  removeUnexpectedDraftAssets(uploadArtifacts);
-  run("gh", ["release", "upload", tag, "--repo", repository, ...uploadArtifacts, "--clobber"], { cwd: repoRoot });
-  verifyReleaseAssets(uploadArtifacts);
-  run("gh", ["release", "edit", tag, "--repo", repository, "--draft=false"], { cwd: repoRoot });
-  const publishedRelease = getReleaseDetails();
-  if (!publishedRelease || publishedRelease.isDraft) throw new Error(`GitHub release ${tag} was not published after asset verification.`);
   console.log(`\nPublished release created: https://github.com/${repository}/releases/tag/${tag}`);
   console.log("Published releases are visible to the app update checker.");
+  console.log(`Checkpoint retained at ${relative(repoRoot, statePath)}; remove it with --reset once the release is verified.`);
 }
 
-function preflight() {
+function createStagePlan(context, state) {
+  const stages = [];
+  const artifactPath = (name) => join(outputDir, name);
+
+  if (!skipChecks) {
+    stages.push({
+      id: "checks",
+      title: "Workspace build and desktop checks",
+      run: () => {
+        run("pnpm", ["build"], { cwd: repoRoot });
+        run("pnpm", ["--filter", "@open-pets/desktop", "check"], { cwd: repoRoot });
+        return [];
+      },
+    });
+  }
+
+  stages.push({
+    id: "clean",
+    title: "Clean apps/desktop/dist-electron",
+    run: () => {
+      run("node", ["scripts/clean-package-output.cjs"], { cwd: desktopDir });
+      mkdirSync(outputDir, { recursive: true });
+      return [];
+    },
+  });
+
+  for (const build of createBuildPlan()) {
+    stages.push({
+      id: build.id,
+      title: build.name,
+      run: () => {
+        run("pnpm", ["exec", "electron-builder", ...build.args, "--publish", "never"], { cwd: desktopDir });
+        const outputs = build.outputs.map(artifactPath);
+        for (const output of outputs) requireBuiltArtifact(output, build.name, build.minimumBytes);
+        return outputs;
+      },
+    });
+  }
+
+  if (linuxPackageDir) {
+    stages.push({
+      id: "stage:linux-packages",
+      title: `Copy validated Linux DEB/RPM from ${linuxPackageDir}`,
+      run: () => copyLinuxPackageArtifacts(),
+    });
+  }
+
+  stages.push({
+    id: "verify:local",
+    title: "Verify the working tree and the local pre-signing artifact set",
+    alwaysRun: true,
+    run: () => {
+      const postBuildStatus = getGitStatusIgnoringPackageOutput();
+      if (postBuildStatus) throw new Error(`Build/checks changed tracked or source files. Commit or revert them before releasing.\n${postBuildStatus}`);
+      const localArtifacts = collectArtifacts(outputDir);
+      validateArtifactSet(localArtifacts, "local pre-signing build", requiredPreSigningArtifactNames);
+      console.log("\nLocal pre-signing artifacts (the Windows installer is deliberately supplied only by SignPath):");
+      for (const artifact of localArtifacts) console.log(`- ${relative(repoRoot, artifact)}`);
+      return [];
+    },
+  });
+
+  if (dryRun) {
+    stages.push({
+      id: "preview:checksums",
+      title: "Write SHA256SUMS.local-preview for the local artifacts",
+      alwaysRun: true,
+      run: () => {
+        const checksumsPath = writeChecksums(collectArtifacts(outputDir), "SHA256SUMS.local-preview");
+        console.log(`- ${relative(repoRoot, checksumsPath)}`);
+        return [];
+      },
+    });
+    return stages;
+  }
+
+  if (!yes) return stages;
+
+  stages.push({
+    id: "tag",
+    title: `Create and push the annotated tag ${tag}`,
+    run: () => {
+      createAndPushTag(context.head);
+      return [];
+    },
+  });
+
+  stages.push({
+    id: "sign:dispatch",
+    title: "Dispatch the SignPath Windows workflow and record its run id",
+    run: () => {
+      const priorRunIds = new Set(
+        listSignPathRuns()
+          .filter((runInfo) => runInfo.event === "workflow_dispatch" && runInfo.headSha === context.head && (!runInfo.headBranch || runInfo.headBranch === tag))
+          .map((runInfo) => String(runInfo.databaseId)),
+      );
+      const dispatchedAt = Date.now();
+      dispatchSignPathWorkflow(tag);
+      const runInfo = findDispatchedSignPathRun(context.head, tag, dispatchedAt, priorRunIds);
+      state.signPath = { runId: String(runInfo.databaseId), url: runInfo.url || "", headSha: context.head };
+      console.log(`\nSignPath workflow run ${state.signPath.runId} dispatched${state.signPath.url ? ` (${state.signPath.url})` : ""}.`);
+      console.log("This run id is checkpointed; a later resume re-attaches to it instead of dispatching a second signing run.");
+      return [];
+    },
+  });
+
+  stages.push({
+    id: "sign:collect",
+    title: "Wait for SignPath and collect the signed Windows installer",
+    run: () => {
+      const signPath = state.signPath;
+      if (!signPath || !signPath.runId) {
+        throw new Error("No dispatched SignPath run is recorded in the checkpoint. Re-run with --from sign:dispatch.");
+      }
+      if (signPath.headSha !== context.head) {
+        throw new Error(`The checkpointed SignPath run was dispatched for ${signPath.headSha}, not HEAD ${context.head}. Re-run with --from sign:dispatch.`);
+      }
+      waitForSignPathRunCompletion(signPath.runId, context.head);
+      const signedArtifactDir = mkdtempSync(join(tmpdir(), `openpets-signpath-${version}-`));
+      try {
+        downloadSignedWindowsArtifact(signPath.runId, signedArtifactDir);
+        installSignedWindowsInstaller(signedArtifactDir);
+      } finally {
+        rmSync(signedArtifactDir, { recursive: true, force: true });
+      }
+      return [join(outputDir, expectedWindowsInstaller)];
+    },
+  });
+
+  stages.push({
+    id: "verify:final",
+    title: "Validate the signed artifact set and write SHA256SUMS",
+    alwaysRun: true,
+    run: () => {
+      const finalArtifacts = collectArtifacts(outputDir);
+      validateArtifactSet(finalArtifacts, "signed release", requiredFinalArtifactNames);
+      requireFile(join(outputDir, expectedWindowsInstaller), "signed Windows NSIS installer");
+      const checksumsPath = writeChecksums(finalArtifacts);
+      context.uploadArtifacts = [...finalArtifacts, checksumsPath];
+      console.log("\nFinal release artifacts:");
+      for (const artifact of context.uploadArtifacts) console.log(`- ${relative(repoRoot, artifact)}`);
+      return [];
+    },
+  });
+
+  stages.push({
+    id: "release:draft",
+    title: `Create or refresh the draft GitHub release ${tag}`,
+    run: () => {
+      ensureDraftRelease(context.head, context.previousTag);
+      return [];
+    },
+  });
+
+  stages.push({
+    id: "release:upload",
+    title: "Upload missing release assets and verify the exact remote asset set",
+    alwaysRun: true,
+    run: () => {
+      uploadReleaseAssets(context.uploadArtifacts);
+      return [];
+    },
+  });
+
+  stages.push({
+    id: "release:publish",
+    title: `Publish the GitHub release ${tag}`,
+    run: () => {
+      run("gh", ["release", "edit", tag, "--repo", repository, "--draft=false"], { cwd: repoRoot });
+      const publishedRelease = getReleaseDetails();
+      if (!publishedRelease || publishedRelease.isDraft) throw new Error(`GitHub release ${tag} was not published after asset verification.`);
+      return [];
+    },
+  });
+
+  return stages;
+}
+
+function runStages(stages, state) {
+  const total = stages.length;
+  for (const [index, stage] of stages.entries()) {
+    const label = `[stage ${index + 1}/${total}] ${stage.id}`;
+    const record = state.stages[stage.id];
+    const reusable = !stage.alwaysRun && Boolean(record);
+
+    if (reusable && outputsIntact(record)) {
+      console.log(`\n${label} — already completed at ${record.completedAt}; skipping.`);
+      continue;
+    }
+    if (reusable) {
+      console.log(`\n${label} — checkpointed outputs are missing or changed; re-running.`);
+    }
+    console.log(`\n${label} — ${stage.title}`);
+
+    let outputs;
+    try {
+      outputs = stage.run() || [];
+    } catch (error) {
+      reportStageFailure(stage, error);
+      throw error;
+    }
+
+    state.stages[stage.id] = { completedAt: new Date().toISOString(), outputs: describeOutputs(outputs) };
+    saveState(state);
+  }
+}
+
+function reportStageFailure(stage, error) {
+  console.error(`\nRelease stage "${stage.id}" failed: ${error.message}`);
+  console.error(`Earlier stages stay checkpointed in ${relative(repoRoot, statePath)}.`);
+  console.error("Fix the cause, then re-run the same command; the release resumes at this stage.");
+  console.error(`To force this stage and everything after it to re-run anyway, add --from ${stage.id}.`);
+}
+
+function printStatus(stages, state) {
+  console.log(`Release checkpoint for ${tag}`);
+  console.log(`  file: ${relative(repoRoot, statePath)}`);
+  console.log(`  head: ${state.head}`);
+  console.log(`  options: includeExperimentalArm=${state.options.includeExperimentalArm}, linuxPackageDir=${state.options.linuxPackageDir || "none"}`);
+  if (state.signPath) console.log(`  signPath run: ${state.signPath.runId}${state.signPath.url ? ` (${state.signPath.url})` : ""}`);
+  console.log("\nStages:");
+  for (const [index, stage] of stages.entries()) {
+    const record = state.stages[stage.id];
+    let status = "pending";
+    if (stage.alwaysRun) status = "always";
+    else if (record && outputsIntact(record)) status = "done";
+    else if (record) status = "stale";
+    const when = record ? ` (${record.completedAt})` : "";
+    console.log(`  ${String(index + 1).padStart(2, " ")}. ${status.padEnd(7, " ")} ${stage.id} — ${stage.title}${when}`);
+  }
+  const unknown = Object.keys(state.stages).filter((id) => !stages.some((stage) => stage.id === id));
+  if (unknown.length > 0) console.log(`\nCheckpointed stages outside the current plan: ${unknown.join(", ")}`);
+}
+
+function invalidateFromStage(stages, state, requestedStage) {
+  const startIndex = stages.findIndex((stage) => stage.id === requestedStage);
+  if (startIndex === -1) {
+    throw new Error(`Unknown stage id for --from: ${requestedStage}. Known stages: ${stages.map((stage) => stage.id).join(", ")}`);
+  }
+  const invalidated = stages.slice(startIndex).map((stage) => stage.id);
+  let changed = false;
+  for (const id of invalidated) {
+    if (state.stages[id]) {
+      delete state.stages[id];
+      changed = true;
+    }
+  }
+  if (invalidated.includes("sign:dispatch") && state.signPath) {
+    delete state.signPath;
+    changed = true;
+  }
+  if (changed) {
+    saveState(state);
+    console.log(`Invalidated checkpointed stages from ${requestedStage} onward: ${invalidated.join(", ")}`);
+  } else {
+    console.log(`No checkpointed stages to invalidate from ${requestedStage} onward.`);
+  }
+}
+
+function loadState(head) {
+  const fresh = { schema: stateSchema, version, tag, head, options: currentOptions(), stages: {} };
+  let raw = null;
+  try {
+    raw = JSON.parse(readFileSync(statePath, "utf8"));
+  } catch {
+    return fresh;
+  }
+
+  if (raw.schema !== stateSchema || raw.version !== version) {
+    console.log(`Existing release checkpoint is for a different version or format; starting a new checkpoint for ${tag}.`);
+    return fresh;
+  }
+  if (raw.head !== head) {
+    console.log(`HEAD moved since the last checkpoint (${String(raw.head).slice(0, 7)} -> ${head.slice(0, 7)}); starting a new checkpoint for ${tag}.`);
+    return fresh;
+  }
+
+  const state = { ...fresh, stages: raw.stages && typeof raw.stages === "object" ? raw.stages : {} };
+  if (raw.signPath) state.signPath = raw.signPath;
+  if (JSON.stringify(raw.options || {}) !== JSON.stringify(state.options)) {
+    console.log("Build options changed since the last checkpoint; the output directory will be cleaned and every build stage re-run.");
+    delete state.stages.clean;
+  }
+  return state;
+}
+
+function currentOptions() {
+  return { includeExperimentalArm, linuxPackageDir };
+}
+
+function saveState(state) {
+  mkdirSync(stateDir, { recursive: true });
+  writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+}
+
+function clearState() {
+  try {
+    unlinkSync(statePath);
+  } catch {
+    console.log(`No release checkpoint to remove for ${tag}.`);
+    return;
+  }
+  console.log(`Removed release checkpoint ${relative(repoRoot, statePath)}. The next run rebuilds every stage.`);
+}
+
+function isStageComplete(state, stageId) {
+  const record = state.stages[stageId];
+  return Boolean(record) && outputsIntact(record);
+}
+
+function describeOutputs(outputs) {
+  return outputs.map((filePath) => ({ name: relative(repoRoot, filePath), size: statSync(filePath).size }));
+}
+
+function outputsIntact(record) {
+  if (!record) return false;
+  for (const output of record.outputs || []) {
+    let stat;
+    try {
+      stat = statSync(join(repoRoot, output.name));
+    } catch {
+      return false;
+    }
+    if (!stat.isFile() || stat.size !== output.size) return false;
+  }
+  return true;
+}
+
+function requireBuiltArtifact(filePath, stageName, minimumBytes) {
+  let stat;
+  try {
+    stat = statSync(filePath);
+  } catch {
+    throw new Error(`${stageName} did not produce ${basename(filePath)} in ${relative(repoRoot, outputDir)}.`);
+  }
+  if (!stat.isFile()) throw new Error(`${stageName} produced a non-file at ${filePath}.`);
+  if (minimumBytes && stat.size < minimumBytes) {
+    throw new Error(`${stageName} produced an implausibly small ${basename(filePath)} (${stat.size} bytes; minimum ${minimumBytes}). See the Linux DEB/RPM fallback in docs/release.md.`);
+  }
+}
+
+function preflight(state) {
   if (process.platform !== "darwin") throw new Error("This local release script is intended to run from macOS.");
   if (!isStableSemver(version) || version === "0.0.0") {
     throw new Error(`Desktop package version must be a stable non-zero semver version. Current: ${version}`);
@@ -180,12 +507,14 @@ function preflight() {
   const localTagExists = commandSucceeds("git", ["rev-parse", "--verify", `refs/tags/${tag}`], { cwd: repoRoot });
   const remoteTagCommit = getRemoteTagCommit();
   const release = getReleaseDetails();
-  if (resume) {
+  const tagAlreadyCreated = resume || isStageComplete(state, "tag");
+
+  if (tagAlreadyCreated) {
     if (!localTagExists || !remoteTagCommit) {
-      throw new Error(`--resume requires both local and origin ${tag} tags. If tag pushing failed, push it manually, then retry.`);
+      throw new Error(`Resuming a tagged release requires both local and origin ${tag} tags. If tag pushing failed, push it manually, then retry.`);
     }
     assertTagAtHead(localTagExists, remoteTagCommit);
-    if (release && !release.isDraft) throw new Error(`GitHub release ${tag} is already published; --resume refuses to modify published releases.`);
+    if (release && !release.isDraft) throw new Error(`GitHub release ${tag} is already published; the release script refuses to modify published releases.`);
     return;
   }
 
@@ -295,15 +624,19 @@ function listSignPathRuns() {
   );
 }
 
-function waitForSignPathRun(target, ref, dispatchedAt, priorRunIds) {
-  const deadline = Date.now() + signPathTimeoutMs;
+function getSignPathRun(runId) {
+  return JSON.parse(
+    commandOutput("gh", ["run", "view", String(runId), "--repo", repository, "--json", "databaseId,headSha,status,conclusion,url"], { cwd: repoRoot }),
+  );
+}
+
+function findDispatchedSignPathRun(target, ref, dispatchedAt, priorRunIds) {
+  const deadline = Date.now() + signPathDiscoveryTimeoutMs;
   let lastError = "the run list was not available";
-  console.log(`\nWaiting for the SignPath workflow run for ${ref} at ${target}. Manual approval may be required in SignPath.`);
 
   while (Date.now() < deadline) {
     try {
-      const runs = listSignPathRuns();
-      const candidates = runs
+      const candidates = listSignPathRuns()
         .filter((runInfo) => {
           const createdAt = Date.parse(runInfo.createdAt || "");
           return (
@@ -316,29 +649,46 @@ function waitForSignPathRun(target, ref, dispatchedAt, priorRunIds) {
           );
         })
         .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-
-      const runInfo = candidates[0];
-      if (runInfo) {
-        const status = runInfo.status || "unknown";
-        const url = runInfo.url ? ` (${runInfo.url})` : "";
-        if (status === "completed") {
-          if (runInfo.conclusion === "success") return runInfo;
-          throw new Error(`SignPath workflow run ${runInfo.databaseId} failed with conclusion ${runInfo.conclusion || "unknown"}${url}.`);
-        }
-        console.log(`SignPath workflow run ${runInfo.databaseId} is ${status}; still waiting${url}.`);
-      } else {
-        console.log("The dispatched SignPath workflow run is not visible yet; waiting...");
-      }
+      if (candidates[0]) return candidates[0];
+      console.log("The dispatched SignPath workflow run is not visible yet; waiting...");
     } catch (error) {
       lastError = error.message;
-      if (error.message.startsWith("SignPath workflow run ")) throw error;
-      console.log(`Could not inspect the SignPath workflow run yet: ${error.message}`);
+      console.log(`Could not inspect the SignPath workflow run list yet: ${error.message}`);
     }
-
     sleepSync(Math.min(signPathPollIntervalMs, Math.max(0, deadline - Date.now())));
   }
 
-  throw new Error(`Timed out waiting for the SignPath workflow run for ${ref}. Last error: ${lastError}`);
+  throw new Error(`Timed out locating the dispatched SignPath workflow run for ${ref}. Last error: ${lastError}`);
+}
+
+function waitForSignPathRunCompletion(runId, target) {
+  const deadline = Date.now() + signPathTimeoutMs;
+  let lastError = "the run was not available";
+  console.log(`\nWaiting for SignPath workflow run ${runId}. Manual approval may be required in the SignPath dashboard.`);
+
+  while (Date.now() < deadline) {
+    try {
+      const runInfo = getSignPathRun(runId);
+      if (runInfo.headSha !== target) {
+        throw new Error(`SignPath workflow run ${runId} was built from ${runInfo.headSha}, not HEAD ${target}. Re-run with --from sign:dispatch.`);
+      }
+      const url = runInfo.url ? ` (${runInfo.url})` : "";
+      if (runInfo.status === "completed") {
+        if (runInfo.conclusion === "success") return runInfo;
+        throw new Error(
+          `SignPath workflow run ${runId} finished with conclusion ${runInfo.conclusion || "unknown"}${url}. Fix the cause, then re-run with --from sign:dispatch to start a fresh signing run.`,
+        );
+      }
+      console.log(`SignPath workflow run ${runId} is ${runInfo.status || "unknown"}; still waiting${url}.`);
+    } catch (error) {
+      if (error.message.startsWith("SignPath workflow run ")) throw error;
+      lastError = error.message;
+      console.log(`Could not inspect SignPath workflow run ${runId} yet: ${error.message}`);
+    }
+    sleepSync(Math.min(signPathPollIntervalMs, Math.max(0, deadline - Date.now())));
+  }
+
+  throw new Error(`Timed out waiting for SignPath workflow run ${runId}. Last error: ${lastError}`);
 }
 
 function downloadSignedWindowsArtifact(runId, destination) {
@@ -403,15 +753,34 @@ function ensureDraftRelease(target, previousTag) {
   }
 }
 
-function removeUnexpectedDraftAssets(uploadArtifacts) {
-  const expectedNames = new Set(uploadArtifacts.map((artifact) => basename(artifact)));
+function uploadReleaseAssets(uploadArtifacts) {
+  if (uploadArtifacts.length === 0) throw new Error("No release artifacts were prepared for upload.");
   const release = getReleaseDetails();
   if (!release || !release.isDraft) throw new Error(`Expected a draft GitHub release ${tag} before uploading assets.`);
+
+  const expectedNames = new Set(uploadArtifacts.map((artifact) => basename(artifact)));
   for (const asset of release.assets || []) {
     if (!expectedNames.has(asset.name)) {
       run("gh", ["release", "delete-asset", tag, asset.name, "--repo", repository, "--yes"], { cwd: repoRoot });
     }
   }
+
+  const remoteAssets = new Map((release.assets || []).map((asset) => [asset.name, asset]));
+  const pending = uploadArtifacts.filter((artifact) => {
+    const asset = remoteAssets.get(basename(artifact));
+    if (!asset || asset.state !== "uploaded") return true;
+    if (Number(asset.size) !== statSync(artifact).size) return true;
+    console.log(`- ${basename(artifact)} is already uploaded (${asset.size} bytes); skipping.`);
+    return false;
+  });
+
+  if (pending.length === 0) console.log("Every release asset is already uploaded; only verification remains.");
+  for (const [index, artifact] of pending.entries()) {
+    console.log(`\nUploading asset ${index + 1}/${pending.length}: ${basename(artifact)}`);
+    run("gh", ["release", "upload", tag, "--repo", repository, artifact, "--clobber"], { cwd: repoRoot });
+  }
+
+  verifyReleaseAssets(uploadArtifacts);
 }
 
 function verifyReleaseAssets(uploadArtifacts) {
@@ -422,30 +791,42 @@ function verifyReleaseAssets(uploadArtifacts) {
   if (expectedNames.length !== actualNames.length || expectedNames.some((name, index) => name !== actualNames[index])) {
     throw new Error(`GitHub release ${tag} asset mismatch. Expected exactly [${expectedNames.join(", ")}], found [${actualNames.join(", ")}].`);
   }
+  const incomplete = (release.assets || []).filter((asset) => asset.state !== "uploaded").map((asset) => asset.name);
+  if (incomplete.length > 0) throw new Error(`GitHub release ${tag} has assets that are not fully uploaded: ${incomplete.join(", ")}.`);
 }
 
 function createBuildPlan() {
   const plan = [
-    { name: "mac dmg x64+arm64", args: ["--mac", "dmg", "--x64", "--arm64"] },
-    { name: "mac zip x64+arm64", args: ["--mac", "zip", "--x64", "--arm64"] },
-    { name: "linux AppImage x64", args: ["--linux", "AppImage", "--x64"] },
+    { id: "build:mac-dmg", name: "macOS DMG x64 + arm64", args: ["--mac", "dmg", "--x64", "--arm64"], outputs: [`OpenPets-${version}-mac-x64.dmg`, `OpenPets-${version}-mac-arm64.dmg`] },
+    { id: "build:mac-zip", name: "macOS ZIP x64 + arm64", args: ["--mac", "zip", "--x64", "--arm64"], outputs: [`OpenPets-${version}-mac-x64.zip`, `OpenPets-${version}-mac-arm64.zip`] },
+    { id: "build:linux-appimage", name: "Linux AppImage x64", args: ["--linux", "AppImage", "--x64"], outputs: [`OpenPets-${version}-linux-x86_64.AppImage`] },
   ];
   if (!linuxPackageDir) {
-    plan.push({ name: "linux deb x64", args: ["--linux", "deb", "--x64"] });
-    plan.push({ name: "linux rpm x64", args: ["--linux", "rpm", "--x64"] });
+    plan.push({
+      id: "build:linux-deb",
+      name: "Linux DEB x64",
+      args: ["--linux", "deb", "--x64"],
+      outputs: [`OpenPets-${version}-linux-amd64.deb`],
+      minimumBytes: minimumLinuxPackageBytes,
+    });
+    plan.push({
+      id: "build:linux-rpm",
+      name: "Linux RPM x64",
+      args: ["--linux", "rpm", "--x64"],
+      outputs: [`OpenPets-${version}-linux-x86_64.rpm`],
+      minimumBytes: minimumLinuxPackageBytes,
+    });
   }
-  plan.push({ name: "linux tar.gz x64", args: ["--linux", "tar.gz", "--x64"] });
+  plan.push({ id: "build:linux-targz", name: "Linux tar.gz x64", args: ["--linux", "tar.gz", "--x64"], outputs: [`OpenPets-${version}-linux-x64.tar.gz`] });
   if (includeExperimentalArm) {
-    plan.push({ name: "windows nsis arm64", args: ["--win", "nsis", "--arm64"] });
-    plan.push({ name: "linux AppImage arm64", args: ["--linux", "AppImage", "--arm64"] });
+    plan.push({ id: "build:arm-win-nsis", name: "Windows NSIS arm64 (disposable, never published)", args: ["--win", "nsis", "--arm64"], outputs: [] });
+    plan.push({ id: "build:arm-linux-appimage", name: "Linux AppImage arm64 (experimental)", args: ["--linux", "AppImage", "--arm64"], outputs: [`OpenPets-${version}-linux-arm64.AppImage`] });
   }
-  console.log("Build plan:");
-  for (const build of plan) console.log(`- ${build.name}`);
   return plan;
 }
 
 function copyLinuxPackageArtifacts() {
-  if (!linuxPackageDir) return;
+  if (!linuxPackageDir) return [];
 
   let directoryStat;
   try {
@@ -457,6 +838,7 @@ function copyLinuxPackageArtifacts() {
     throw new Error(`Linux package staging path must be a real directory: ${linuxPackageDir}`);
   }
 
+  const copied = [];
   for (const name of [`OpenPets-${version}-linux-amd64.deb`, `OpenPets-${version}-linux-x86_64.rpm`]) {
     const sourcePath = join(linuxPackageDir, name);
     let sourceStat;
@@ -471,8 +853,11 @@ function copyLinuxPackageArtifacts() {
     if (sourceStat.size < minimumLinuxPackageBytes) {
       throw new Error(`Linux package artifact is too small to be valid (${sourceStat.size} bytes; minimum ${minimumLinuxPackageBytes}): ${sourcePath}`);
     }
-    copyFileSync(sourcePath, join(outputDir, name));
+    const destinationPath = join(outputDir, name);
+    copyFileSync(sourcePath, destinationPath);
+    copied.push(destinationPath);
   }
+  return copied;
 }
 
 function collectArtifacts(dir) {
@@ -530,7 +915,7 @@ function readJson(path) {
 function getGitStatusIgnoringPackageOutput() {
   return commandOutput("git", ["status", "--porcelain"], { cwd: repoRoot })
     .split("\n")
-    .filter((line) => line.trim() && !line.includes("apps/desktop/dist-electron/"))
+    .filter((line) => line.trim() && !line.includes("apps/desktop/dist-electron/") && !line.includes("apps/desktop/.release-state/"))
     .join("\n");
 }
 
@@ -582,5 +967,47 @@ function defaultReleaseNotes(previousTag) {
 }
 
 function printHelp() {
-  console.log(`Usage: pnpm release:desktop -- --yes\n\nBuilds local pre-signing artifacts, obtains the only public Windows installer from SignPath, then creates and publishes a verified GitHub release.\n\nDefault local targets:\n  - macOS dmg x64+arm64\n  - macOS zip x64+arm64\n  - Linux AppImage x64\n  - Linux deb x64\n  - Linux rpm x64\n  - Linux tar.gz x64\n\nThe Windows x64 installer is never built locally; it is produced by the SignPath workflow.\n\nOptions:\n  --yes                       tag, sign, create a draft release, verify assets, and publish\n  --resume                    with --yes, rebuild/re-sign a tagged HEAD and clobber draft assets\n  --dry-run                   build/check locally without tagging, signing, or changing GitHub\n  --linux-package-dir <dir>  use validated Ubuntu-built DEB/RPM files from an absolute staging directory\n  --skip-checks               skip pnpm build and desktop check (incompatible with --yes)\n  --include-experimental-arm  also build optional Windows/Linux ARM64 targets; Windows ARM is never published\n`);
+  console.log(`Usage: pnpm release:desktop -- --yes
+
+Runs the desktop release as a sequence of checkpointed stages. Each stage that
+succeeds is recorded in apps/desktop/.release-state/v<version>.json, so a failed
+run is retried by re-running the same command: completed stages are skipped and
+work resumes at the stage that failed.
+
+Stages (default plan):
+  checks                  pnpm build + desktop check
+  clean                   clean apps/desktop/dist-electron
+  build:mac-dmg           macOS DMG x64 + arm64
+  build:mac-zip           macOS ZIP x64 + arm64
+  build:linux-appimage    Linux AppImage x64
+  build:linux-deb         Linux DEB x64
+  build:linux-rpm         Linux RPM x64
+  build:linux-targz       Linux tar.gz x64
+  verify:local            working-tree check + pre-signing artifact set
+  tag                     create and push the annotated v<version> tag
+  sign:dispatch           dispatch the SignPath workflow, record its run id
+  sign:collect            wait for that run, download and verify the signed installer
+  verify:final            validate the signed artifact set, write SHA256SUMS
+  release:draft           create or refresh the draft GitHub release
+  release:upload          upload only the assets GitHub is missing, then verify
+  release:publish         publish the verified draft
+
+The Windows x64 installer is never built locally; it is produced by SignPath.
+
+Options:
+  --yes                       run the full staged release: build, tag, sign, publish
+  --status                    print the stage plan and checkpoint state, then exit
+  --from <stage>              force <stage> and every later stage to re-run
+  --reset                     delete the checkpoint for this version, then exit
+  --resume                    legacy alias for resuming a tagged HEAD without a checkpoint
+  --linux-package-dir <dir>   use validated Ubuntu-built DEB/RPM files from an absolute staging directory
+  --skip-checks               skip pnpm build and desktop check (incompatible with --yes)
+  --include-experimental-arm  also build optional Windows/Linux ARM64 targets; Windows ARM is never published
+  --dry-run                   discouraged: builds everything locally, then throws the work away
+                              without tagging or publishing. The staged checkpoint already
+                              gives you safe retries, so run --yes directly instead.
+
+Without --yes or --dry-run, the script runs the build stages only and stops
+before tagging, so you can inspect artifacts and then re-run with --yes.
+`);
 }

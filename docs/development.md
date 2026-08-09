@@ -112,12 +112,16 @@ only then creates a draft GitHub release, verifies its complete asset set, and
 publishes it. The local Windows installer is disposable; macOS and Linux
 artifacts remain unsigned.
 
-Use `pnpm release:desktop -- --dry-run` for a local artifact preview; it does
-not tag, dispatch SignPath, or mutate GitHub. If a tagged attempt is interrupted
-before publication, recover with `pnpm release:desktop -- --yes --resume`. Resume
-requires local and origin `v<version>` tags at `HEAD`, accepts only no release or
-a draft release, and refuses a published release. SignPath may pause for manual
-approval in its dashboard while the release script visibly waits.
+The release runs as checkpointed stages recorded in
+`apps/desktop/.release-state/v<version>.json`. If an attempt is interrupted,
+re-run the identical command: finished stages are skipped and the release
+resumes where it failed, including re-attaching to the SignPath run that was
+already dispatched. Inspect the plan with `--status`, force a redo with
+`--from <stage>`, and discard the checkpoint with `--reset`. Do not warm up with
+`pnpm release:desktop -- --dry-run`; it rebuilds the whole artifact set and
+throws it away, and the checkpoint already makes retries cheap. SignPath may
+pause for manual approval in its dashboard while the release script visibly
+waits.
 `electron-builder` handles cross-platform packaging; bundled mode unpacks the
 integration CLIs and bundles `plugins/official` as extra resources (verified by
 the packaging contract - see [Testing and validation](/testing-and-validation)).
