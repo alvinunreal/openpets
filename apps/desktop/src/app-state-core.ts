@@ -19,6 +19,14 @@ export const waitingAnimationDurationOptions = [
 export type WaitingAnimationDurationMs = typeof waitingAnimationDurationOptions[number]["value"];
 export const defaultWaitingAnimationDurationMs: WaitingAnimationDurationMs = waitingAnimationDurationOptions[0].value;
 
+export const appearanceThemeOptions = ["system", "light", "dark"] as const;
+export type AppearanceTheme = typeof appearanceThemeOptions[number];
+export const defaultAppearanceTheme: AppearanceTheme = "system";
+
+export function normalizeAppearanceTheme(value: unknown): AppearanceTheme {
+  return appearanceThemeOptions.find((option) => option === value) ?? defaultAppearanceTheme;
+}
+
 export function normalizeWaitingAnimationDurationMs(value: unknown): WaitingAnimationDurationMs {
   return waitingAnimationDurationOptions.find((option) => option.value === value)?.value ?? defaultWaitingAnimationDurationMs;
 }

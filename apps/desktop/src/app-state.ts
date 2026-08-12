@@ -3,7 +3,7 @@ import { dirname, isAbsolute, join } from "node:path";
 
 import { app } from "electron";
 
-import { defaultPetScale, defaultWaitingAnimationDurationMs, markOnboardingCompleted, normalizeOnboardingCompleted, normalizePetConfinementEnabled, normalizePetCrossDisplayEnabled, normalizePetGravityEnabled, normalizePetScale, normalizeWaitingAnimationDurationMs, petScaleOptions, waitingAnimationDurationOptions, type PetScaleValue, type WaitingAnimationDurationMs } from "./app-state-core.js";
+import { defaultAppearanceTheme, defaultPetScale, defaultWaitingAnimationDurationMs, markOnboardingCompleted, normalizeAppearanceTheme, normalizeOnboardingCompleted, normalizePetConfinementEnabled, normalizePetCrossDisplayEnabled, normalizePetGravityEnabled, normalizePetScale, normalizeWaitingAnimationDurationMs, petScaleOptions, waitingAnimationDurationOptions, type AppearanceTheme, type PetScaleValue, type WaitingAnimationDurationMs } from "./app-state-core.js";
 import { builtInPet } from "./built-in-pet.js";
 import type { Point } from "./display.js";
 import { isSupportedLocale, type LocalePreference } from "./i18n/catalog.js";
@@ -41,6 +41,7 @@ export interface OpenPetsStateV1 {
     readonly defaultPetId: string;
     readonly openDefaultPetOnLaunch: boolean;
     readonly locale: LocalePreference;
+    readonly appearanceTheme: AppearanceTheme;
     readonly speechBubblesEnabled: boolean;
     readonly petScale: number;
     readonly waitingAnimationDurationMs: WaitingAnimationDurationMs;
@@ -100,7 +101,7 @@ export type OpenPetsActivityRecord =
   | { readonly kind: "say"; readonly reaction?: OpenPetsReaction; readonly petId?: string; readonly surface?: "default" | "agent" }
   | { readonly kind: "react"; readonly reaction: OpenPetsReaction; readonly petId?: string; readonly surface?: "default" | "agent" };
 
-export { defaultPetScale, defaultWaitingAnimationDurationMs, normalizePetScale, normalizeWaitingAnimationDurationMs, petScaleOptions, waitingAnimationDurationOptions, type PetScaleValue, type WaitingAnimationDurationMs };
+export { defaultAppearanceTheme, defaultPetScale, defaultWaitingAnimationDurationMs, normalizeAppearanceTheme, normalizePetScale, normalizeWaitingAnimationDurationMs, petScaleOptions, waitingAnimationDurationOptions, type AppearanceTheme, type PetScaleValue, type WaitingAnimationDurationMs };
 
 const stateFileName = "openpets-state.json";
 const directInstallLockName = ".install-pet.lock";
@@ -518,6 +519,7 @@ function normalizePreferences(value: Partial<OpenPetsStateV1["preferences"]>): O
       ? value.openDefaultPetOnLaunch
       : defaultState.preferences.openDefaultPetOnLaunch,
     locale: normalizeLocalePreference(value.locale),
+    appearanceTheme: normalizeAppearanceTheme(value.appearanceTheme),
     speechBubblesEnabled: true,
     petScale: normalizePetScale(value.petScale),
     waitingAnimationDurationMs: normalizeWaitingAnimationDurationMs(value.waitingAnimationDurationMs),
@@ -599,6 +601,7 @@ function createDefaultState(): OpenPetsStateV1 {
       defaultPetId: builtInPet.id,
       openDefaultPetOnLaunch: true,
       locale: "system",
+      appearanceTheme: defaultAppearanceTheme,
       speechBubblesEnabled: true,
       petScale: defaultPetScale,
       waitingAnimationDurationMs: defaultWaitingAnimationDurationMs,
