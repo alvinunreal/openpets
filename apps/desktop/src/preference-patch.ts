@@ -5,13 +5,14 @@
  * without an Electron process context.
  */
 
-import { normalizePetScale, normalizeWaitingAnimationDurationMs, type WaitingAnimationDurationMs } from "./app-state-core.js";
+import { normalizeAppearanceTheme, normalizePetScale, normalizeWaitingAnimationDurationMs, type AppearanceTheme, type WaitingAnimationDurationMs } from "./app-state-core.js";
 import { isSupportedLocale, type LocalePreference } from "./i18n/index.js";
 import { validateReactionAnimationOverrides } from "./reaction-animation-mapping.js";
 
 export type PreferencePatch = {
   openDefaultPetOnLaunch?: boolean;
   locale?: LocalePreference;
+  appearanceTheme?: AppearanceTheme;
   petScale?: number;
   waitingAnimationDurationMs?: WaitingAnimationDurationMs;
   reactionAnimationOverrides?: ReturnType<typeof validateReactionAnimationOverrides>;
@@ -65,6 +66,12 @@ export function validatePreferencePatch(value: unknown): PreferencePatch {
   if ("locale" in value) {
     if (value.locale !== "system" && !isSupportedLocale(value.locale)) throw new Error("Invalid locale value.");
     patch.locale = value.locale as LocalePreference;
+  }
+
+  if ("appearanceTheme" in value) {
+    const theme = normalizeAppearanceTheme(value.appearanceTheme);
+    if (theme !== value.appearanceTheme) throw new Error("Invalid appearance theme value.");
+    patch.appearanceTheme = theme;
   }
 
   if ("petScale" in value) {

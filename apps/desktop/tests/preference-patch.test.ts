@@ -3,6 +3,7 @@
  *
  * Covers:
  *   - The waitingAnimationDurationMs preference accepts only 1010 and 2200.
+ *   - The appearanceTheme preference accepts system, light, and dark.
  *   - All four boolean preference keys: petPoolEnabled, petConfinementEnabled,
  *     petGravityEnabled, petCrossDisplayEnabled (the key added in FIX H1).
  *   - Each accepts true and false and lands in the returned patch.
@@ -43,6 +44,25 @@ import { validatePreferencePatch } from "../src/preference-patch.js";
   const patch = validatePreferencePatch({ unknownKey: true, anotherKey: 123 });
   assert.deepEqual(patch, {}, "unknown keys must be silently ignored");
   console.log("validatePreferencePatch: unknown keys ignored — PASS");
+}
+
+// ---------------------------------------------------------------------------
+// Appearance theme — supports system default plus explicit light/dark modes
+// ---------------------------------------------------------------------------
+{
+  assert.equal(validatePreferencePatch({ appearanceTheme: "system" }).appearanceTheme, "system");
+  assert.equal(validatePreferencePatch({ appearanceTheme: "light" }).appearanceTheme, "light");
+  assert.equal(validatePreferencePatch({ appearanceTheme: "dark" }).appearanceTheme, "dark");
+
+  for (const value of [undefined, null, "auto", "midnight", true, 1]) {
+    assert.throws(
+      () => validatePreferencePatch({ appearanceTheme: value }),
+      /Invalid appearance theme value\./,
+      `appearanceTheme must reject ${String(value)}`,
+    );
+  }
+
+  console.log("validatePreferencePatch: appearanceTheme validation — PASS");
 }
 
 // ---------------------------------------------------------------------------

@@ -24,7 +24,8 @@ type PetScaleOption = { label: string; value: number };
 type UserSelectableAnimationState = "idle" | "review" | "running" | "waiting" | "waving" | "jumping" | "failed";
 type ReactionAnimationOverrides = Record<string, UserSelectableAnimationState>;
 type PetPoolCandidate = { id: string; displayName: string };
-type SettingsState = { preferences: { openDefaultPetOnLaunch: boolean; locale?: "system" | string; petScale: number; waitingAnimationDurationMs: number; reactionAnimationOverrides?: ReactionAnimationOverrides; petPoolEnabled: boolean; petPoolOrder?: readonly string[]; petConfinementEnabled: boolean; petCrossDisplayEnabled: boolean; petGravityEnabled: boolean }; petScaleOptions: PetScaleOption[]; petPoolCandidates: ReadonlyArray<PetPoolCandidate> };
+type AppearanceTheme = "system" | "light" | "dark";
+type SettingsState = { preferences: { openDefaultPetOnLaunch: boolean; appearanceTheme: AppearanceTheme; locale?: "system" | string; petScale: number; waitingAnimationDurationMs: number; reactionAnimationOverrides?: ReactionAnimationOverrides; petPoolEnabled: boolean; petPoolOrder?: readonly string[]; petConfinementEnabled: boolean; petCrossDisplayEnabled: boolean; petGravityEnabled: boolean }; petScaleOptions: PetScaleOption[]; petPoolCandidates: ReadonlyArray<PetPoolCandidate> };
 type LaunchAtLoginState = { supported: boolean; enabled: boolean };
 type LanTopologyIssue = { code: "self_reference" | "missing_reverse"; host: string; edge: "left" | "right" | "up" | "down"; neighbor: string };
 type LanStatusSnapshot = { mode: "off" | "server" | "client"; localHost: string; serverUrl: string; port: number; auth: "token" | "none"; authSource: "env" | "stored" | "generated" | "none"; authInsecure: boolean; tokenHint: string | null; topologyHosts: number; topologyLinks: number; topologyIssues: LanTopologyIssue[]; currentHost: string | null; clients: Array<{ host: string; lastSeen: number; position?: { x: number; y: number } }>; updatedAt: number; persistedCurrentHost: string | null; persistedUpdatedAt: number | null };
@@ -140,6 +141,19 @@ type AgentSetupSnapshot = { selectedPetId?: string; commandMode: "published" | "
 type StatusTone = keyof typeof statusPillToneClass;
 
 const api = (window as unknown as { openPetsControlCenter: ControlCenterApi }).openPetsControlCenter;
+
+function resolveAppearanceTheme(theme: AppearanceTheme): "light" | "dark" {
+  if (theme === "dark" || theme === "light") return theme;
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function applyAppearanceTheme(theme: AppearanceTheme) {
+  const resolved = resolveAppearanceTheme(theme);
+  document.documentElement.dataset.appearanceTheme = theme;
+  document.body.classList.toggle("theme-dark", resolved === "dark");
+  document.body.classList.toggle("theme-light", resolved === "light");
+  document.body.style.colorScheme = resolved;
+}
 
 
 // Inline SVG Icons for actions, pagination, and filters
@@ -1053,7 +1067,7 @@ function ReactionPreviewSprite({ settings, state }: { settings: ReactionAnimatio
   );
 }
 
-function SettingsView({ onTokenHandoff }: { onTokenHandoff: (result: RemotePairingResult, endpoint: string | null) => void }) {
+function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanceThemeChange: (theme: AppearanceTheme) => void; onTokenHandoff: (result: RemotePairingResult, endpoint: string | null) => void }) {
   const { t, localePreference, availableLocales, reload: reloadI18n } = useI18n();
   const [settings, setSettings] = useState<SettingsState | null>(null);
   const [reactionSettings, setReactionSettings] = useState<ReactionAnimationSettings | null>(null);
@@ -1083,6 +1097,7 @@ function SettingsView({ onTokenHandoff }: { onTokenHandoff: (result: RemotePairi
       api.getPluginsSnapshot().catch(() => null),
     ]);
     setSettings(nextSettings);
+    onAppearanceThemeChange(nextSettings.preferences.appearanceTheme);
     setReactionSettings(nextReactions);
     setLaunchAtLogin(nextLaunch);
     setUpdateStatus(nextUpdate);
@@ -1117,6 +1132,7 @@ function SettingsView({ onTokenHandoff }: { onTokenHandoff: (result: RemotePairi
     void run(t("settings.busy.saving"), async () => {
       const next = await api.updatePreferences(patch);
       setSettings(next);
+      if ("appearanceTheme" in patch) onAppearanceThemeChange(next.preferences.appearanceTheme);
       if ("reactionAnimationOverrides" in patch) {
         setReactionSettings((current) => current ? { ...current, overrides: next.preferences.reactionAnimationOverrides ?? {} } : current);
       }
@@ -1238,6 +1254,17 @@ function SettingsView({ onTokenHandoff }: { onTokenHandoff: (result: RemotePairi
                   <select className="settings-select" value={localePreference} disabled={!!busy} onChange={(event) => changeLocale(event.target.value)}>
                     <option value="system">{t("settings.language.system")}</option>
                     {availableLocales.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                </div>
+                <div className="settings-row">
+                  <div className="settings-row-info">
+                    <strong>{t("settings.appearance.title")}</strong>
+                    <small>{t("settings.appearance.description")}</small>
+                  </div>
+                  <select className="settings-select" value={settings?.preferences.appearanceTheme ?? "system"} disabled={!settings || !!busy} onChange={(event) => patchPreferences({ appearanceTheme: event.target.value as AppearanceTheme }, t("settings.toast.appearanceSaved"))}>
+                    <option value="system">{t("settings.appearance.system")}</option>
+                    <option value="light">{t("settings.appearance.light")}</option>
+                    <option value="dark">{t("settings.appearance.dark")}</option>
                   </select>
                 </div>
               </div>
@@ -3566,7 +3593,7 @@ function PluginsView() {
   );
 }
 
-function ControlCenter() {
+function ControlCenter({ onAppearanceThemeChange }: { onAppearanceThemeChange: (theme: AppearanceTheme) => void }) {
   const { t } = useI18n();
   const [currentRoute, setCurrentRoute] = useState<Route>(() => initialControlCenterRoute());
   const [remoteTokenHandoff, setRemoteTokenHandoff] = useState<RemoteTokenHandoffState>(null);
@@ -3833,7 +3860,7 @@ function ControlCenter() {
       {currentRoute === "dashboard" ? (
         <DashboardView onNavigate={setCurrentRoute} />
       ) : currentRoute === "settings" ? (
-        <SettingsView onTokenHandoff={(result, endpoint) => setRemoteTokenHandoff({ result, endpoint })} />
+        <SettingsView onAppearanceThemeChange={onAppearanceThemeChange} onTokenHandoff={(result, endpoint) => setRemoteTokenHandoff({ result, endpoint })} />
       ) : currentRoute === "plugins" ? (
         <PluginsView />
       ) : currentRoute === "integrations" ? (
@@ -4110,6 +4137,7 @@ function ControlCenter() {
 
 function App() {
   const [i18n, setI18n] = useState<I18nSnapshot | null>(null);
+  const [appearanceTheme, setAppearanceTheme] = useState<AppearanceTheme>("system");
 
   const reloadI18n = React.useCallback(() => {
     void api.getI18n().then((snapshot) => {
@@ -4118,10 +4146,26 @@ function App() {
     }).catch(() => undefined);
   }, []);
   useEffect(() => { reloadI18n(); }, [reloadI18n]);
+  useEffect(() => {
+    void api.getSettingsState().then((snapshot) => setAppearanceTheme(snapshot.preferences.appearanceTheme)).catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    applyAppearanceTheme(appearanceTheme);
+    if (appearanceTheme !== "system") return;
+    const media = window.matchMedia?.("(prefers-color-scheme: dark)");
+    if (!media) return;
+    const handleChange = () => applyAppearanceTheme("system");
+    media.addEventListener("change", handleChange);
+    return () => media.removeEventListener("change", handleChange);
+  }, [appearanceTheme]);
+  const updateAppearanceTheme = React.useCallback((theme: AppearanceTheme) => {
+    setAppearanceTheme(theme);
+    applyAppearanceTheme(theme);
+  }, []);
 
   return (
     <I18nProvider snapshot={i18n} onReload={reloadI18n}>
-      <ControlCenter />
+      <ControlCenter onAppearanceThemeChange={updateAppearanceTheme} />
     </I18nProvider>
   );
 }

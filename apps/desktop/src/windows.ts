@@ -74,7 +74,7 @@ function getPetsStateSnapshot(): { preferences: { defaultPetId: string }; pets: 
 }
 
 function getSettingsStateSnapshot(): {
-  preferences: Pick<ReturnType<typeof getAppStateSnapshot>["preferences"], "openDefaultPetOnLaunch" | "petScale" | "waitingAnimationDurationMs" | "reactionAnimationOverrides" | "petPoolOrder" | "petPoolEnabled" | "petConfinementEnabled" | "petCrossDisplayEnabled" | "petGravityEnabled">;
+  preferences: Pick<ReturnType<typeof getAppStateSnapshot>["preferences"], "openDefaultPetOnLaunch" | "appearanceTheme" | "petScale" | "waitingAnimationDurationMs" | "reactionAnimationOverrides" | "petPoolOrder" | "petPoolEnabled" | "petConfinementEnabled" | "petCrossDisplayEnabled" | "petGravityEnabled">;
   petScaleOptions: typeof petScaleOptions;
   /** Non-broken, non-built-in installed pets available for pool selection. */
   petPoolCandidates: ReadonlyArray<{ readonly id: string; readonly displayName: string }>;
@@ -83,6 +83,7 @@ function getSettingsStateSnapshot(): {
   return {
     preferences: {
       openDefaultPetOnLaunch: state.preferences.openDefaultPetOnLaunch,
+      appearanceTheme: state.preferences.appearanceTheme,
       petScale: state.preferences.petScale,
       waitingAnimationDurationMs: state.preferences.waitingAnimationDurationMs,
       reactionAnimationOverrides: state.preferences.reactionAnimationOverrides,
