@@ -1479,7 +1479,7 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
                   <strong>{t("settings.plugins.aiProvider.title")}</strong>
                   <small>{t("settings.plugins.aiProvider.description")}</small>
                 </div>
-                <select className="settings-select" value={platformSettings?.ai.provider ?? "none"} disabled={!platformSettings || !!busy} onChange={(event) => patchPlatformSettings({ ai: { ...(platformSettings?.ai ?? { model: "" }), provider: event.target.value as PluginPlatformSettings["ai"]["provider"] } }, t("settings.toast.aiProviderSaved"))}>
+                <select className="settings-select" value={platformSettings?.ai.provider ?? "none"} disabled={!platformSettings || !!busy} onChange={(event) => patchPlatformSettings({ ai: { provider: event.target.value as PluginPlatformSettings["ai"]["provider"], model: "", baseUrl: undefined } }, t("settings.toast.aiProviderSaved"))}>
                   <option value="none">{t("settings.plugins.aiProvider.disabled")}</option>
                   <option value="anthropic">{t("settings.plugins.aiProvider.anthropic")}</option>
                   <option value="openai">{t("settings.plugins.aiProvider.openai")}</option>
@@ -1492,8 +1492,23 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
                   <strong>{t("settings.plugins.model.title")}</strong>
                   <small>{t("settings.plugins.model.description")}</small>
                 </div>
-                <input type="text" className="settings-select" placeholder={t("settings.plugins.model.placeholder")} defaultValue={platformSettings?.ai.model ?? ""} disabled={!platformSettings || !!busy} onBlur={(event) => { if (event.target.value !== (platformSettings?.ai.model ?? "")) patchPlatformSettings({ ai: { ...(platformSettings?.ai ?? { provider: "none" }), model: event.target.value } as PluginPlatformSettings["ai"] }, t("settings.toast.aiModelSaved")); }} />
+                <input key={platformSettings?.ai.provider ?? "none"} type="text" className="settings-select" list={platformSettings?.ai.provider === "minimax" ? "minimax-model-options" : undefined} placeholder={t("settings.plugins.model.placeholder")} defaultValue={platformSettings?.ai.model ?? ""} disabled={!platformSettings || !!busy} onBlur={(event) => { if (event.target.value !== (platformSettings?.ai.model ?? "")) patchPlatformSettings({ ai: { ...(platformSettings?.ai ?? { provider: "none" }), model: event.target.value } as PluginPlatformSettings["ai"] }, t("settings.toast.aiModelSaved")); }} />
+                {platformSettings?.ai.provider === "minimax" && <datalist id="minimax-model-options">
+                  <option value="MiniMax-M3" />
+                  <option value="MiniMax-M2.7" />
+                </datalist>}
               </div>
+              {platformSettings?.ai.provider === "minimax" && <div className="settings-row">
+                <div className="settings-row-info">
+                  <strong>{t("settings.plugins.minimaxEndpoint.title")}</strong>
+                  <small>{t("settings.plugins.minimaxEndpoint.description")}</small>
+                </div>
+                <select className="settings-select" value={platformSettings.ai.baseUrl ?? "https://api.minimax.io/v1"} disabled={!!busy} onChange={(event) => patchPlatformSettings({ ai: { ...platformSettings.ai, baseUrl: event.target.value } }, t("settings.toast.aiProviderSaved"))}>
+                  <option value="https://api.minimax.io/v1">{t("settings.plugins.minimaxEndpoint.global")}</option>
+                  <option value="https://api.minimaxi.com/v1">{t("settings.plugins.minimaxEndpoint.china")}</option>
+                  {platformSettings.ai.baseUrl && !["https://api.minimax.io/v1", "https://api.minimaxi.com/v1"].includes(platformSettings.ai.baseUrl) && <option value={platformSettings.ai.baseUrl}>{t("settings.plugins.minimaxEndpoint.custom")}</option>}
+                </select>
+              </div>}
               <div className="settings-row">
                 <div className="settings-row-info">
                   <strong>{t("settings.plugins.apiKey.title")}</strong>

@@ -36,6 +36,13 @@ try {
   const requestBody = JSON.parse(String(completeCall.init?.body)) as { model?: string };
   assert.equal(requestBody.model, "MiniMax-M3");
 
+  updatePluginPlatformSettings({ ai: { provider: "minimax", model: "MiniMax-M2.7", baseUrl: "https://api.minimaxi.com/v1" } });
+  fetchCalls.length = 0;
+  await gateway.complete({ messages: [{ role: "user", content: "Say hello from China." }] });
+  assert.equal(String(fetchCalls[0]?.input), "https://api.minimaxi.com/v1/chat/completions");
+  const chinaRequestBody = JSON.parse(String(fetchCalls[0]?.init?.body)) as { model?: string };
+  assert.equal(chinaRequestBody.model, "MiniMax-M2.7");
+
   fetchCalls.length = 0;
   await assert.rejects(
     () => gateway.transcribe(new Uint8Array([1, 2, 3]), "audio/webm"),
@@ -48,7 +55,7 @@ try {
   );
   assert.equal(fetchCalls.length, 0);
 
-  updatePluginPlatformSettings({ ai: { provider: "openai", model: "" } });
+  updatePluginPlatformSettings({ ai: { provider: "openai", model: "", baseUrl: undefined } });
   fetchCalls.length = 0;
   const controller = new AbortController();
   assert.equal(await gateway.transcribe(new Uint8Array([1, 2, 3]), "audio/webm", controller.signal), "transcribed");

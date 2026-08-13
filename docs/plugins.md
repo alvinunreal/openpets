@@ -152,6 +152,11 @@ so it cannot be used for `voice.listen`. Anthropic is not transcription-capable
 through this path. MiniMax supports OpenAI-compatible chat completions and
 streaming; choose OpenAI or Ollama when a plugin needs `voice.listen`.
 
+For MiniMax chat, the model field suggests both `MiniMax-M3` (the default) and
+`MiniMax-M2.7` while still accepting another model ID. The endpoint selector
+supports the global `https://api.minimax.io/v1` endpoint and the China
+`https://api.minimaxi.com/v1` endpoint.
+
 `voice.listen` is one-shot push-to-talk, never ambient. The host captures in a
 hidden, isolated microphone window and displays **OpenPets is listening** only after
 microphone acquisition succeeds. It accepts only one active capture, clamps the
