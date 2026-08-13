@@ -1,9 +1,11 @@
 // Focus Buddy (openpets.focus-buddy) — SDK v3 Pomodoro-style timer.
 
 export const SCHEDULE_ID = "focus-buddy-session-end";
+export const DISPLAY_REFRESH_SCHEDULE_ID = "focus-buddy-display-refresh";
 export const STORAGE_KEY = "session";
 export const SHORT_BREAK_MS = 5 * 60_000;
 export const LONG_BREAK_MS = 15 * 60_000;
+const DISPLAY_REFRESH_INTERVAL_MS = 60_000;
 
 const pinnedBubbles = new WeakMap();
 
@@ -70,6 +72,26 @@ async function scheduleEnd(ctx, session) {
   }
 }
 
+async function refreshDisplay(ctx) {
+  const session = await getSession(ctx);
+  if (!active(session) || session.pausedRemainingMs) {
+    await ctx.schedule.cancel(DISPLAY_REFRESH_SCHEDULE_ID);
+    await updateStatus(ctx, session);
+    await updatePinned(ctx, session);
+    return;
+  }
+  await updateStatus(ctx, session);
+  await updatePinned(ctx, session);
+  await scheduleDisplayRefresh(ctx, session);
+}
+
+async function scheduleDisplayRefresh(ctx, session) {
+  await ctx.schedule.cancel(DISPLAY_REFRESH_SCHEDULE_ID);
+  if (active(session) && !session.pausedRemainingMs) {
+    await ctx.schedule.once(DISPLAY_REFRESH_SCHEDULE_ID, DISPLAY_REFRESH_INTERVAL_MS, () => refreshDisplay(ctx));
+  }
+}
+
 async function updatePinned(ctx, session) {
   const pinnedBubble = getPinnedBubble(ctx);
   if (!active(session)) {
@@ -114,6 +136,7 @@ async function startMode(ctx, mode, durationMs, completedFocusCount) {
   const session = await saveSession(ctx, { mode, startedAt: now, endsAt: now + durationMs, pausedRemainingMs: null, completedFocusCount });
   await scheduleEnd(ctx, session);
   await updatePinned(ctx, session);
+  await scheduleDisplayRefresh(ctx, session);
   return session;
 }
 
@@ -129,6 +152,7 @@ export async function startBreak(ctx, completedFocusCount) {
 export async function pauseOrResume(ctx) {
   const session = await getSession(ctx);
   if (!active(session)) return startFocus(ctx);
+  await ctx.schedule.cancel(DISPLAY_REFRESH_SCHEDULE_ID);
   if (session.pausedRemainingMs) {
     session.endsAt = Date.now() + session.pausedRemainingMs;
     session.pausedRemainingMs = null;
@@ -139,11 +163,13 @@ export async function pauseOrResume(ctx) {
   await saveSession(ctx, session);
   await scheduleEnd(ctx, session);
   await updatePinned(ctx, session);
+  await scheduleDisplayRefresh(ctx, session);
   return session;
 }
 
 export async function endSession(ctx) {
   await ctx.schedule.cancel(SCHEDULE_ID);
+  await ctx.schedule.cancel(DISPLAY_REFRESH_SCHEDULE_ID);
   await saveSession(ctx, null);
   await updatePinned(ctx, null);
 }
@@ -187,6 +213,7 @@ async function breakComplete(ctx, session) {
 
 export async function completeSession(ctx) {
   await ctx.schedule.cancel(SCHEDULE_ID);
+  await ctx.schedule.cancel(DISPLAY_REFRESH_SCHEDULE_ID);
   const session = await getSession(ctx);
   if (!active(session)) return;
   if (session.mode === "focus") await focusComplete(ctx, session);
@@ -195,11 +222,13 @@ export async function completeSession(ctx) {
 
 export async function reconcile(ctx) {
   await ctx.schedule.cancel(SCHEDULE_ID);
+  await ctx.schedule.cancel(DISPLAY_REFRESH_SCHEDULE_ID);
   const session = await getSession(ctx);
   if (!active(session)) return updateStatus(ctx, null);
   if (session.pausedRemainingMs || session.endsAt > Date.now()) {
     await scheduleEnd(ctx, session);
     await updatePinned(ctx, session);
+    await scheduleDisplayRefresh(ctx, session);
     return;
   }
   if (session.mode === "focus") await focusComplete(ctx, session);
@@ -233,6 +262,9 @@ export function register(OpenPetsPlugin) {
       await ctx.commands.register({ id: "skip-to-break", title: "$t:command.skipToBreak.title", description: "$t:command.skipToBreak.description", icon: focusIcon }, () => skipToBreak(ctx));
       await ctx.commands.register({ id: "show-status", title: "$t:command.showStatus.title", description: "$t:command.showStatus.description", icon: focusIcon }, () => showStatus(ctx));
     },
-    async stop() {},
+    async stop(ctx) {
+      await ctx.schedule.cancel(SCHEDULE_ID);
+      await ctx.schedule.cancel(DISPLAY_REFRESH_SCHEDULE_ID);
+    },
   });
 }
