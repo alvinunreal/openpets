@@ -19,6 +19,7 @@ let scheduleWallBase = null;
 let scheduleProgressBase = null;
 let spotifyAccessToken = null;
 let spotifyExpiresAt = 0;
+let stopSpotify = async () => {};
 
 // ─── Text helpers ─────────────────────────────────────────────────────────────
 
@@ -292,6 +293,7 @@ function parseSyncedLyrics(syncedStr) {
 export function register(OpenPetsPlugin) {
   OpenPetsPlugin.register({
     async start(ctx) {
+      await stopSpotify();
 
       await ctx.commands.register(
         { id: "spotify-login", title: "Login to Spotify", description: "Connect your Spotify account." },
@@ -338,10 +340,12 @@ export function register(OpenPetsPlugin) {
 
       await scheduleNext(ctx);
       void checkNow(ctx, false).catch((e) => ctx.log?.warn?.("Initial check failed", e?.message));
+      stopSpotify = async () => { await cancelLyricSchedules(ctx); };
     },
 
-    async stop(ctx) {
-      if (ctx) await cancelLyricSchedules(ctx);
+    async stop() {
+      await stopSpotify();
+      stopSpotify = async () => {};
     },
   });
 }

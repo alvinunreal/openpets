@@ -997,7 +997,7 @@ export interface OpenPetsPluginDefinition {
   /** Runs when the plugin is enabled or the app launches. */
   start(ctx: OpenPetsContext): void | Promise<void>;
   /** Optional cleanup. Schedules, commands, bubbles, and subscriptions are torn down for you. */
-  stop?(ctx?: OpenPetsContext): void | Promise<void>;
+  stop?(): void | Promise<void>;
 }
 
 /** The injected global used to register a plugin. */

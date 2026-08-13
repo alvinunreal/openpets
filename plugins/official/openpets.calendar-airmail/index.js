@@ -207,6 +207,6 @@ export function register(OpenPetsPlugin) {
       const state = await read(ctx); await updateCommands(ctx, state.connected); if (state.connected) { await status(ctx, "status.connected", undefined, "success"); void sync(ctx); } else await status(ctx, "status.disconnected");
       ctx.config.onChange(() => rebuild(ctx));
     },
-    async stop(ctx) { await ctx.schedule.cancel(NEXT_SCHEDULE); }
+    async stop() {}
   });
 }

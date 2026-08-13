@@ -46,6 +46,28 @@ const LOCALES = { en: JSON.parse(await readFile(new URL("./locales/en.json", imp
   h.expectNoErrors();
 }
 
+// 1b) Host stop is invoked without a context; the host owns schedule cleanup.
+{
+  const h = createTestHarness(register, { permissions: PERMISSIONS, locales: LOCALES, config: { focusLength: "25", breakStyle: "normal" }, nowMs: 1_500_000 });
+  await h.start();
+  await h.runCommand("start-focus");
+  await h.stop();
+  assert.equal(h.calls.schedules.size, 0, "host stop should clean up schedules");
+  h.expectNoErrors();
+}
+
+// 1c) The harness follows the host's zero-argument stop contract.
+{
+  let stopArgumentCount = -1;
+  const h = createTestHarness({
+    async start() {},
+    stop() { stopArgumentCount = arguments.length; },
+  }, { permissions: [] });
+  await h.start();
+  await h.stop();
+  assert.equal(stopArgumentCount, 0, "plugin stop must receive no context argument");
+}
+
 // 2) Pause, resume, and end keep storage/schedule coherent.
 {
   const h = createTestHarness(register, { permissions: PERMISSIONS, locales: LOCALES, nowMs: 2_000_000 });
@@ -78,6 +100,45 @@ const LOCALES = { en: JSON.parse(await readFile(new URL("./locales/en.json", imp
   assert.equal(h.calls.schedules.get(DISPLAY_REFRESH_SCHEDULE_ID)?.type, "once", "display refresh should re-arm as one one-shot schedule");
   assert.match(bubble.spec.text, /Focus · \d+ min left/);
   assert.match(h.calls.status.at(-1)?.text ?? "", /Focus · \d+ min left/);
+  h.expectNoErrors();
+}
+
+// 3b) A stale refresh that is already reading storage cannot replace the resumed refresh.
+{
+  const h = createTestHarness(register, { permissions: PERMISSIONS, locales: LOCALES, config: { focusLength: "25", breakStyle: "normal" }, nowMs: 2_750_000 });
+  await h.start();
+  await h.runCommand("start-focus");
+  const bubble = h.calls.bubbles.at(-1);
+  const refreshHandler = h.calls.schedules.get(DISPLAY_REFRESH_SCHEDULE_ID)?.handler;
+  assert.ok(refreshHandler, "expected a display refresh handler");
+
+  let beginRead;
+  let releaseRead;
+  const readStarted = new Promise((resolve) => { beginRead = resolve; });
+  const blockedRead = new Promise((resolve) => { releaseRead = resolve; });
+  const originalGet = h.ctx.storage.get;
+  let blockNextRead = true;
+  h.ctx.storage.get = async (key) => {
+    if (key === "session" && blockNextRead) {
+      blockNextRead = false;
+      beginRead();
+      await blockedRead;
+    }
+    return originalGet(key);
+  };
+
+  const staleRefresh = refreshHandler();
+  await readStarted;
+  await h.runCommand("pause-resume");
+  await h.runCommand("pause-resume");
+  const resumedSchedule = h.calls.schedules.get(DISPLAY_REFRESH_SCHEDULE_ID);
+  assert.ok(resumedSchedule, "resume should create a fresh display refresh schedule");
+  assert.match(bubble.spec.text, /Focus · \d+ min left/, "resume should restore the active timer UI");
+
+  releaseRead();
+  await staleRefresh;
+  assert.equal(h.calls.schedules.get(DISPLAY_REFRESH_SCHEDULE_ID), resumedSchedule, "stale refresh must not replace the resumed schedule");
+  assert.match(bubble.spec.text, /Focus · \d+ min left/, "stale refresh must not restore stale UI");
   h.expectNoErrors();
 }
 
