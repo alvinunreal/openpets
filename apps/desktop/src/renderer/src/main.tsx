@@ -45,7 +45,7 @@ type PluginPlatformSettings = {
   allowPluginVoice: boolean;
   allowMicrophone: boolean;
   quietHours: { enabled: boolean; start: string; end: string };
-  ai: { provider: "none" | "anthropic" | "openai" | "ollama" | "minimax"; model: string; baseUrl?: string };
+  ai: { provider: "none" | "anthropic" | "openai" | "ollama" | "minimax"; model: string; speechModel?: string; baseUrl?: string };
 };
 type PluginInspectorState = { schedules: Array<{ id: string; type: string; nextRunMs: number }>; commands: PluginCommand[]; menuItems: Array<{ id: string; title: string }>; status?: PluginStatus; activeBubbles: number; activePanels: number; eventSubscriptions: number; lastError?: string; quotaCounters: Record<string, number> };
 type PluginIconName = "plugin" | "bell" | "timer" | "github" | "heart" | "sparkles" | "coffee" | "focus" | "droplet";
@@ -1507,6 +1507,15 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
                   <option value="https://api.minimax.io/v1">{t("settings.plugins.minimaxEndpoint.global")}</option>
                   <option value="https://api.minimaxi.com/v1">{t("settings.plugins.minimaxEndpoint.china")}</option>
                   {platformSettings.ai.baseUrl && !["https://api.minimax.io/v1", "https://api.minimaxi.com/v1"].includes(platformSettings.ai.baseUrl) && <option value={platformSettings.ai.baseUrl}>{t("settings.plugins.minimaxEndpoint.custom")}</option>}
+                </select>
+              </div>}
+              {platformSettings?.ai.provider === "minimax" && <div className="settings-row">
+                <div className="settings-row-info">
+                  <strong>{t("settings.plugins.speechModel.title")}</strong>
+                  <small>{t("settings.plugins.speechModel.description")}</small>
+                </div>
+                <select className="settings-select" value={platformSettings.ai.speechModel ?? "speech-2.8-hd"} disabled={!!busy} onChange={(event) => patchPlatformSettings({ ai: { ...platformSettings.ai, speechModel: event.target.value } }, t("settings.toast.speechModelSaved"))}>
+                  {["speech-2.8-hd", "speech-2.8-turbo", "speech-2.6-hd", "speech-2.6-turbo", "speech-02-hd", "speech-02-turbo", "speech-01-hd", "speech-01-turbo"].map((model) => <option key={model} value={model}>{model}</option>)}
                 </select>
               </div>}
               <div className="settings-row">

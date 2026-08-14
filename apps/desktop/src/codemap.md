@@ -125,7 +125,7 @@ main.ts → initializePluginService(userData, defaultPluginPetApi, appVersion, E
 │   ├── declarative runtime schedules timer triggers
 │   ├── plugin-js-host.ts starts hidden sandboxed BrowserWindow hosts for JavaScript plugins
 │   └── plugin-sdk-bridge.ts dispatches namespaced SDK routes
-│       ├── plugin-sdk-audio.ts/plugin-voice.ts → renderer/OS playback and one-shot voice surfaces
+│       ├── plugin-sdk-audio.ts/plugin-voice.ts → renderer/OS playback, MiniMax speech synthesis, and one-shot voice surfaces
 │       │   ├── voice-capture.ts/voice-capture-electron.ts → bounded microphone ownership and cleanup
 │       │   ├── voice-capture-cancellation.ts → idempotent renderer-cancel/window-destroy ordering
 │       │   ├── voice-listening-service.ts → transcription timeout, cancellation, and empty-text guard

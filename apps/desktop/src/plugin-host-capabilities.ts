@@ -207,7 +207,7 @@ export function createElectronPluginHostCapabilities(userDataPath: string): Elec
       stream: async (req, onToken) => { const started = Date.now(); try { return await aiGateway.stream(req, onToken); } catch (error) { warn("plugin", "ai stream failed", { durationMs: Date.now() - started, reason: error instanceof Error ? error.message : "unknown", errorCode: classifyPluginError(error) }); throw error; } },
     },
     voice: {
-      speak: async (text, opts) => { try { await pluginVoiceSpeak(text, opts); } catch (error) { warn("plugin", "voice speak failed", { reason: error instanceof Error ? error.message : "unknown", errorCode: classifyPluginError(error) }); throw error; } },
+      speak: async (text, opts) => { try { await pluginVoiceSpeak(aiGateway, text, opts); } catch (error) { warn("plugin", "voice speak failed", { reason: error instanceof Error ? error.message : "unknown", errorCode: classifyPluginError(error) }); throw error; } },
       listen: async (opts) => { try { return await pluginVoiceListen(aiGateway, { timeoutMs: opts.timeoutMs ?? 10_000, pluginId: opts.pluginId }); } catch (error) { warn("plugin", "voice listen failed", { reason: error instanceof Error ? error.message : "unknown", errorCode: classifyPluginError(error) }); throw error; } },
     },
     auth: {
