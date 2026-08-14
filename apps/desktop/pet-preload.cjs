@@ -341,6 +341,25 @@ ipcRenderer.on("openpets:tts-stop", () => {
   try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch { /* noop */ }
 });
 
+let activeTtsAudio = null;
+
+ipcRenderer.on("openpets:tts-audio", (_event, payload) => {
+  try {
+    if (!payload || typeof payload.dataUrl !== "string" || !payload.dataUrl.startsWith("data:audio/")) return;
+    if (activeTtsAudio) activeTtsAudio.pause();
+    const element = new Audio(payload.dataUrl);
+    activeTtsAudio = element;
+    element.addEventListener("ended", () => { if (activeTtsAudio === element) activeTtsAudio = null; });
+    element.addEventListener("error", () => { if (activeTtsAudio === element) activeTtsAudio = null; });
+    void element.play().catch(() => { if (activeTtsAudio === element) activeTtsAudio = null; });
+  } catch { /* tts is best-effort */ }
+});
+
+ipcRenderer.on("openpets:tts-audio-stop", () => {
+  try { if (activeTtsAudio) activeTtsAudio.pause(); } catch { /* noop */ }
+  activeTtsAudio = null;
+});
+
 const installMouseInterop = () => {
   lastInteractiveHit = null;
   dragging = false;

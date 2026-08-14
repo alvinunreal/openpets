@@ -445,6 +445,8 @@ export const en = {
   "settings.plugins.minimaxEndpoint.global": "Global",
   "settings.plugins.minimaxEndpoint.china": "China",
   "settings.plugins.minimaxEndpoint.custom": "Custom",
+  "settings.plugins.speechModel.title": "MiniMax speech model",
+  "settings.plugins.speechModel.description": "Model used for plugin voice synthesis.",
   "settings.plugins.apiKey.title": "API key",
   "settings.plugins.apiKey.stored": "A key is stored (encrypted).",
   "settings.plugins.apiKey.none": "No key stored. Ollama needs no key.",
@@ -459,6 +461,7 @@ export const en = {
   "settings.toast.quietHoursSaved": "Quiet hours saved.",
   "settings.toast.aiProviderSaved": "AI provider saved.",
   "settings.toast.aiModelSaved": "AI model saved.",
+  "settings.toast.speechModelSaved": "Speech model saved.",
   "settings.toast.aiKeySaved": "AI key saved.",
   "settings.toast.aiKeyRemoved": "AI key removed.",
 

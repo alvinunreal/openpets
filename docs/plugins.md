@@ -150,7 +150,12 @@ OpenAI-compatible transcription path. OpenAI and Ollama support that path, while
 MiniMax's configured OpenAI-compatible API does not accept audio input/transcription,
 so it cannot be used for `voice.listen`. Anthropic is not transcription-capable
 through this path. MiniMax supports OpenAI-compatible chat completions and
-streaming; choose OpenAI or Ollama when a plugin needs `voice.listen`.
+streaming, plus plugin voice output through its synchronous speech endpoint.
+Choose the speech model in Settings; returned hexadecimal MP3 audio is decoded
+and played by the pet window. When no voice is supplied, the host uses MiniMax's
+`English_expressive_narrator` system voice. If MiniMax is not configured, plugin
+voice output continues to use the system speech voice. Choose OpenAI or Ollama
+when a plugin needs `voice.listen`.
 
 For MiniMax chat, the model field suggests both `MiniMax-M3` (the default) and
 `MiniMax-M2.7` while still accepting another model ID. The endpoint selector

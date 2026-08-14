@@ -1,5 +1,5 @@
 import { getDefaultPetWindowForPlugins } from "./default-pet-controller.js";
-import { speakPetWindowTts, stopPetWindowTts } from "./pet-window.js";
+import { playPetWindowTtsAudio, speakPetWindowTts, stopPetWindowTts, stopPetWindowTtsAudio } from "./pet-window.js";
 import type { PluginAiGateway } from "./plugin-ai-gateway.js";
 import { VoiceCaptureService } from "./voice-capture.js";
 import { createElectronVoiceCaptureFactory } from "./voice-capture-electron.js";
@@ -8,22 +8,38 @@ import { VoiceListeningService } from "./voice-listening-service.js";
 import { VoiceOperationState, type VoiceOperationSnapshot } from "./voice-operation-state.js";
 
 /**
- * Plugin voice (§13.5). TTS speaks through the pet window's renderer
- * speechSynthesis (the OS voice). STT is strictly one-shot push-to-talk: a
+ * Plugin voice (§13.5). TTS uses configured MiniMax speech synthesis when
+ * available, with the renderer's OS voice as a fallback. STT is strictly
+ * one-shot push-to-talk: a
  * dedicated capture window records a bounded clip in its own session (the only
  * session granted microphone permission), and the clip is transcribed through
  * the user's configured AI provider. Never ambient.
  */
 
-export async function pluginVoiceSpeak(text: string, opts: { voice?: string; rate?: number }): Promise<void> {
+let ttsRequestGeneration = 0;
+
+export async function pluginVoiceSpeak(gateway: PluginAiGateway, text: string, opts: { voice?: string; rate?: number }): Promise<void> {
   const window = getDefaultPetWindowForPlugins();
   if (!window) throw new Error("No pet window is available for speech.");
+  const requestGeneration = ++ttsRequestGeneration;
+  const speech = await gateway.synthesizeSpeech(text, opts);
+  if (requestGeneration !== ttsRequestGeneration) return;
+  if (speech) {
+    stopPetWindowTts(window);
+    playPetWindowTtsAudio(window, `data:${speech.mimeType};base64,${Buffer.from(speech.bytes).toString("base64")}`);
+    return;
+  }
+  stopPetWindowTtsAudio(window);
   speakPetWindowTts(window, text, opts);
 }
 
 export function pluginVoiceStop(): void {
+  ttsRequestGeneration++;
   const window = getDefaultPetWindowForPlugins();
-  if (window) stopPetWindowTts(window);
+  if (window) {
+    stopPetWindowTts(window);
+    stopPetWindowTtsAudio(window);
+  }
 }
 
 let activeListeningService: VoiceListeningService | null = null;

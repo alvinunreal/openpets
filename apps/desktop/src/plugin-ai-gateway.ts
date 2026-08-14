@@ -19,6 +19,21 @@ const defaultModels: Record<string, string> = {
   minimax: "MiniMax-M3",
 };
 
+export const minimaxSpeechModels = [
+  "speech-2.8-hd",
+  "speech-2.8-turbo",
+  "speech-2.6-hd",
+  "speech-2.6-turbo",
+  "speech-02-hd",
+  "speech-02-turbo",
+  "speech-01-hd",
+  "speech-01-turbo",
+] as const;
+
+export const defaultMinimaxSpeechVoiceId = "English_expressive_narrator";
+
+export type SynthesizedSpeech = { readonly bytes: Uint8Array; readonly mimeType: "audio/mpeg" };
+
 export class PluginAiGateway {
   readonly #secrets: PluginSecretsStore;
 
@@ -58,6 +73,43 @@ export class PluginAiGateway {
     if (!response.ok) throw new Error(`Transcription failed with HTTP ${response.status}.`);
     const parsed = await response.json() as { text?: string };
     return typeof parsed.text === "string" ? parsed.text : "";
+  }
+
+  /** Synthesize plugin speech when MiniMax is the configured provider. */
+  async synthesizeSpeech(text: string, opts: { voice?: string; rate?: number }): Promise<SynthesizedSpeech | null> {
+    const settings = getPluginPlatformSettings().ai;
+    if (settings.provider !== "minimax") return null;
+    const { baseUrl, apiKey } = await this.#resolveProvider();
+    const configuredModel = settings.speechModel;
+    const model = configuredModel && minimaxSpeechModels.includes(configuredModel as typeof minimaxSpeechModels[number])
+      ? configuredModel
+      : minimaxSpeechModels[0];
+    const voiceSetting = {
+      voice_id: opts.voice || defaultMinimaxSpeechVoiceId,
+      ...(opts.rate === undefined ? {} : { speed: opts.rate }),
+    };
+    const response = await fetch(`${openAiBase(baseUrl, "minimax")}/t2a_v2`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${apiKey ?? ""}` },
+      body: JSON.stringify({
+        model,
+        text,
+        stream: false,
+        output_format: "hex",
+        audio_setting: { format: "mp3" },
+        ...(voiceSetting ? { voice_setting: voiceSetting } : {}),
+      }),
+    });
+    if (!response.ok) throw new Error(`Speech synthesis failed with HTTP ${response.status}.`);
+    const parsed = await response.json() as { data?: { audio?: string; status?: number } | null; base_resp?: { status_code?: number; status_msg?: string } };
+    if (parsed.base_resp?.status_code !== undefined && parsed.base_resp.status_code !== 0) {
+      throw new Error(`Speech synthesis failed: ${parsed.base_resp.status_msg || `status ${parsed.base_resp.status_code}`}.`);
+    }
+    const hex = parsed.data?.audio;
+    if (parsed.data?.status !== 2 || typeof hex !== "string" || hex.length === 0 || hex.length > 64 * 1024 * 1024 || hex.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(hex)) {
+      throw new Error("Speech synthesis returned invalid audio data.");
+    }
+    return { bytes: Buffer.from(hex, "hex"), mimeType: "audio/mpeg" };
   }
 
   async #resolveProvider(): Promise<{ provider: "anthropic" | "openai" | "ollama" | "minimax"; model: string; baseUrl?: string; apiKey?: string }> {

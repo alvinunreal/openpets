@@ -871,6 +871,17 @@ export function stopPetWindowTts(window: BrowserWindow): void {
   window.webContents.send("openpets:tts-stop");
 }
 
+/** Play synthesized speech without sharing the plugin sound playback channel. */
+export function playPetWindowTtsAudio(window: BrowserWindow, dataUrl: string): void {
+  if (window.isDestroyed()) return;
+  window.webContents.send("openpets:tts-audio", { dataUrl });
+}
+
+export function stopPetWindowTtsAudio(window: BrowserWindow): void {
+  if (window.isDestroyed()) return;
+  window.webContents.send("openpets:tts-audio-stop");
+}
+
 function tryUpdateLoadedPetContent(window: BrowserWindow, render: PetContentRender, name: string, sequence: number): boolean {
   if (window.isDestroyed() || window.webContents.isDestroyed()) return false;
   if (petWindowRenderCache.get(window) !== render.cacheKey) return false;

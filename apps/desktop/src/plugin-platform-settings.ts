@@ -16,7 +16,7 @@ export type PluginPlatformSettings = {
   readonly allowPluginVoice: boolean;
   readonly allowMicrophone: boolean;
   readonly quietHours: { readonly enabled: boolean; readonly start: string; readonly end: string };
-  readonly ai: { readonly provider: PluginAiProviderKind; readonly model: string; readonly baseUrl?: string };
+  readonly ai: { readonly provider: PluginAiProviderKind; readonly model: string; readonly speechModel?: string; readonly baseUrl?: string };
 };
 
 export const defaultPluginPlatformSettings: PluginPlatformSettings = {
@@ -86,6 +86,7 @@ function normalizeSettings(value: unknown): PluginPlatformSettings {
     ai: {
       provider,
       model: typeof ai.model === "string" ? ai.model.slice(0, 120) : "",
+      speechModel: typeof ai.speechModel === "string" ? ai.speechModel.slice(0, 120) : undefined,
       baseUrl: typeof ai.baseUrl === "string" && /^https?:\/\//.test(ai.baseUrl) ? ai.baseUrl.slice(0, 300) : undefined,
     },
   };
