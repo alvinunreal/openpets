@@ -303,6 +303,7 @@ export function createMockContext(optionsOrConfig: MockContextOptions | Record<s
   ctx: OpenPetsContext;
   calls: MockCalls;
   harness: MockHarnessCore;
+  cleanup(): Promise<void>;
 } {
   const options: MockContextOptions = isMockOptions(optionsOrConfig) ? optionsOrConfig : { config: optionsOrConfig as Record<string, unknown> };
   const approved = options.permissions === undefined ? null : new Set(options.permissions);
@@ -319,6 +320,7 @@ export function createMockContext(optionsOrConfig: MockContextOptions | Record<s
   const busSubscribers = new Map<string, Set<(payload: unknown) => void>>();
   const configListeners = new Set<(value: Record<string, unknown>) => void | Promise<void>>();
   const panelToPluginHandlers = new Set<(msg: unknown) => void>();
+  const panelClosers = new Set<() => Promise<void>>();
   const netMocks: Array<{ urlPrefix: string; response: { status?: number; json?: unknown; text?: string; chunks?: string[] } }> = [];
   let aiResponder: ((req: { system?: string; messages: Array<{ role: string; content: string }> }) => string) | null = null;
   let pickableFiles: Array<{ name: string; text?: string; bytes?: Uint8Array }> = [];
@@ -486,14 +488,16 @@ export function createMockContext(optionsOrConfig: MockContextOptions | Record<s
       panel: async () => {
         requirePermission("ui:panel");
         const id = newId("panel");
-        return {
+        const panel = {
           id,
           show: async () => undefined,
           hide: async () => undefined,
-          postMessage: async (msg) => { calls.panelMessages.push(msg); },
-          onMessage: (handler) => { panelToPluginHandlers.add(handler); },
+          postMessage: async (msg: unknown) => { calls.panelMessages.push(msg); },
+          onMessage: (handler: (msg: unknown) => void) => { panelToPluginHandlers.add(handler); },
           close: async () => undefined,
         };
+        panelClosers.add(panel.close);
+        return panel;
       },
       delivery: async (spec) => makeDelivery(spec),
       menu: {
@@ -692,7 +696,30 @@ export function createMockContext(optionsOrConfig: MockContextOptions | Record<s
     panel: { sendToPlugin: (msg) => { for (const handler of panelToPluginHandlers) handler(msg); } },
   };
 
-  return { ctx, calls, harness };
+  const cleanup = async (): Promise<void> => {
+    calls.schedules.clear();
+    calls.commands.clear();
+    for (const entry of bubbleCallbacks.values()) {
+      try { await entry.record.handle.dismiss(); } catch {}
+    }
+    for (const entry of deliveryCallbacks.values()) {
+      try { await dismissDelivery(entry.record.id, "plugin-stopped"); } catch {}
+    }
+    for (const close of panelClosers) {
+      try { await close(); } catch {}
+    }
+    eventSubscribers.clear();
+    storageSubscribers.clear();
+    busSubscribers.clear();
+    configListeners.clear();
+    panelToPluginHandlers.clear();
+    tickHandlers.clear();
+    bubbleCallbacks.clear();
+    deliveryCallbacks.clear();
+    panelClosers.clear();
+  };
+
+  return { ctx, calls, harness, cleanup };
 }
 
 function isMockOptions(value: MockContextOptions | Record<string, unknown>): value is MockContextOptions {
@@ -728,7 +755,7 @@ export function createTestHarness(
   plugin: OpenPetsPluginDefinition | OpenPetsPluginEntry,
   options: MockContextOptions = {},
 ): TestHarness {
-  const { ctx, calls, harness } = createMockContext(options);
+  const { ctx, calls, harness, cleanup } = createMockContext(options);
   let definition: OpenPetsPluginDefinition | null = typeof plugin === "function" ? null : plugin;
   const entry: OpenPetsPluginEntry | null = typeof plugin === "function" ? plugin : null;
 
@@ -747,7 +774,11 @@ export function createTestHarness(
       await definition!.start(ctx);
     },
     async stop() {
-      await definition?.stop?.(ctx);
+      try {
+        await definition?.stop?.();
+      } finally {
+        await cleanup();
+      }
     },
     async tick(dtMs: number) {
       // The mock pet handle records tick handlers internally; route through emit-like dispatch.

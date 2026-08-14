@@ -31,7 +31,7 @@ catalog contains ten official plugins and three community plugins.
 | --- | --- | --- |
 | Calendar Airmail | Official | Delivers Google Calendar event reminders through a selected bundled courier sprite. |
 | Morning & Evening Routine | Official | Runs morning and evening check-ins. |
-| Focus Buddy | Official | Starts focus sessions and reports timer progress through the pet. |
+| Focus Buddy | Official | Starts focus sessions and refreshes timer progress through the pet each minute. |
 | Daily Fortune Cookie | Official | Shows scheduled or command-triggered fortune messages. |
 | Launch Buddy | Official | Helps with launch/checklist moments. |
 | Magic 8-Ball | Official | Answers command-driven yes/no style questions. |

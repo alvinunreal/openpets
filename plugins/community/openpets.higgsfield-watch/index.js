@@ -185,9 +185,7 @@ export function register(OpenPetsPlugin) {
       await scheduleNext(ctx);
     },
 
-    async stop(ctx) {
-      if (ctx) await ctx.schedule.cancel(POLL_ID);
-    },
+    async stop() {},
   });
 }
 

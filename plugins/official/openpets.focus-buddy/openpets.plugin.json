@@ -3,7 +3,7 @@
   "id": "openpets.focus-buddy",
   "name": "$t:plugin.name",
   "description": "$t:plugin.description",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "runtime": "javascript",
   "icon": "timer",
   "sdkVersion": "3.0.0",

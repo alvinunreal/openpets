@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import {
   LONG_BREAK_MS,
   SHORT_BREAK_MS,
+  DISPLAY_REFRESH_SCHEDULE_ID,
   breakMs,
   focusMs,
   minutesLeft,
@@ -38,10 +39,33 @@ const LOCALES = { en: JSON.parse(await readFile(new URL("./locales/en.json", imp
     "session",
     (v) => v.mode === "focus" && v.endsAt - v.startedAt === 25 * 60_000,
   );
-  assert.equal(h.calls.schedules.size, 1, "expected focus end schedule");
+  assert.equal(h.calls.schedules.size, 2, "expected focus end and display refresh schedules");
+  assert.ok(h.calls.schedules.has(DISPLAY_REFRESH_SCHEDULE_ID), "expected distinct display refresh schedule");
   h.expectBubble({ textMatch: /Focus · 25 min left/, sticky: true });
   assert.equal(h.calls.alerts.length, 0, "start should not duplicate feedback with an alert");
   h.expectNoErrors();
+}
+
+// 1b) Host stop is invoked without a context; the host owns schedule cleanup.
+{
+  const h = createTestHarness(register, { permissions: PERMISSIONS, locales: LOCALES, config: { focusLength: "25", breakStyle: "normal" }, nowMs: 1_500_000 });
+  await h.start();
+  await h.runCommand("start-focus");
+  await h.stop();
+  assert.equal(h.calls.schedules.size, 0, "host stop should clean up schedules");
+  h.expectNoErrors();
+}
+
+// 1c) The harness follows the host's zero-argument stop contract.
+{
+  let stopArgumentCount = -1;
+  const h = createTestHarness({
+    async start() {},
+    stop() { stopArgumentCount = arguments.length; },
+  }, { permissions: [] });
+  await h.start();
+  await h.stop();
+  assert.equal(stopArgumentCount, 0, "plugin stop must receive no context argument");
 }
 
 // 2) Pause, resume, and end keep storage/schedule coherent.
@@ -55,14 +79,70 @@ const LOCALES = { en: JSON.parse(await readFile(new URL("./locales/en.json", imp
   assert.equal(h.calls.schedules.size, 0, "paused timer should not stay scheduled");
   await h.runCommand("pause-resume");
   h.expectStored("session", (v) => v.mode === "focus" && !v.pausedRemainingMs);
-  assert.equal(h.calls.schedules.size, 1, "resumed timer should be scheduled");
+  assert.equal(h.calls.schedules.size, 2, "resumed timer should have both schedules");
   await h.runCommand("end-session");
   h.expectStored("session", null);
   assert.equal(h.calls.schedules.size, 0, "ended session should cancel schedule");
   h.expectNoErrors();
 }
 
-// 3) Focus completion alerts once, with break actions and optional normal sound.
+// 3) A running timer refreshes the visible bubble and status after one minute without an action.
+{
+  const h = createTestHarness(register, { permissions: PERMISSIONS, locales: LOCALES, config: { focusLength: "25", breakStyle: "normal" }, nowMs: 2_500_000 });
+  await h.start();
+  await h.runCommand("start-focus");
+  const bubble = h.calls.bubbles[h.calls.bubbles.length - 1];
+  const statusCount = h.calls.status.length;
+  assert.equal(bubble.updates.length, 0, "start should not need a display refresh yet");
+  await h.clock.advance("1m");
+  assert.equal(bubble.updates.length, 1, "running timer should refresh its visible bubble after one minute");
+  assert.equal(h.calls.status.length, statusCount + 1, "running timer should refresh status after one minute");
+  assert.equal(h.calls.schedules.get(DISPLAY_REFRESH_SCHEDULE_ID)?.type, "once", "display refresh should re-arm as one one-shot schedule");
+  assert.match(bubble.spec.text, /Focus · \d+ min left/);
+  assert.match(h.calls.status.at(-1)?.text ?? "", /Focus · \d+ min left/);
+  h.expectNoErrors();
+}
+
+// 3b) A stale refresh that is already reading storage cannot replace the resumed refresh.
+{
+  const h = createTestHarness(register, { permissions: PERMISSIONS, locales: LOCALES, config: { focusLength: "25", breakStyle: "normal" }, nowMs: 2_750_000 });
+  await h.start();
+  await h.runCommand("start-focus");
+  const bubble = h.calls.bubbles.at(-1);
+  const refreshHandler = h.calls.schedules.get(DISPLAY_REFRESH_SCHEDULE_ID)?.handler;
+  assert.ok(refreshHandler, "expected a display refresh handler");
+
+  let beginRead;
+  let releaseRead;
+  const readStarted = new Promise((resolve) => { beginRead = resolve; });
+  const blockedRead = new Promise((resolve) => { releaseRead = resolve; });
+  const originalGet = h.ctx.storage.get;
+  let blockNextRead = true;
+  h.ctx.storage.get = async (key) => {
+    if (key === "session" && blockNextRead) {
+      blockNextRead = false;
+      beginRead();
+      await blockedRead;
+    }
+    return originalGet(key);
+  };
+
+  const staleRefresh = refreshHandler();
+  await readStarted;
+  await h.runCommand("pause-resume");
+  await h.runCommand("pause-resume");
+  const resumedSchedule = h.calls.schedules.get(DISPLAY_REFRESH_SCHEDULE_ID);
+  assert.ok(resumedSchedule, "resume should create a fresh display refresh schedule");
+  assert.match(bubble.spec.text, /Focus · \d+ min left/, "resume should restore the active timer UI");
+
+  releaseRead();
+  await staleRefresh;
+  assert.equal(h.calls.schedules.get(DISPLAY_REFRESH_SCHEDULE_ID), resumedSchedule, "stale refresh must not replace the resumed schedule");
+  assert.match(bubble.spec.text, /Focus · \d+ min left/, "stale refresh must not restore stale UI");
+  h.expectNoErrors();
+}
+
+// 4) Focus completion alerts once, with break actions and optional normal sound.
 {
   const h = createTestHarness(register, { permissions: PERMISSIONS, locales: LOCALES, config: { focusLength: "25", breakStyle: "normal", sound: "gong" }, nowMs: 3_000_000 });
   await h.start();
@@ -79,7 +159,7 @@ const LOCALES = { en: JSON.parse(await readFile(new URL("./locales/en.json", imp
   h.expectNoErrors();
 }
 
-// 4) Break completion alerts, gentle style stays silent, action can start focus.
+// 5) Break completion alerts, gentle style stays silent, action can start focus.
 {
   const h = createTestHarness(register, { permissions: PERMISSIONS, locales: LOCALES, config: { breakStyle: "gentle", sound: "gong" }, nowMs: 4_000_000 });
   const now = Date.now();
@@ -96,13 +176,13 @@ const LOCALES = { en: JSON.parse(await readFile(new URL("./locales/en.json", imp
   h.expectNoErrors();
 }
 
-// 5) Reconcile future and overdue sessions.
+// 6) Reconcile future and overdue sessions.
 {
   const future = createTestHarness(register, { permissions: PERMISSIONS, locales: LOCALES, nowMs: 5_000_000 });
   const futureNow = Date.now();
   await future.ctx.storage.set("session", { mode: "focus", startedAt: futureNow, endsAt: futureNow + 60_000, pausedRemainingMs: null, completedFocusCount: 0 });
   await future.start();
-  assert.equal(future.calls.schedules.size, 1, "future session should reschedule on start");
+  assert.equal(future.calls.schedules.size, 2, "future session should reschedule end and display refresh");
 
   const overdueFocus = createTestHarness(register, { permissions: PERMISSIONS, locales: LOCALES, nowMs: 6_000_000 });
   await overdueFocus.ctx.storage.set("session", { mode: "focus", startedAt: Date.now() - 30 * 60_000, endsAt: Date.now() - 60_000, pausedRemainingMs: null, completedFocusCount: 0 });

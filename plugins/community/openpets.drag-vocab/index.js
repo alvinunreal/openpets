@@ -1,7 +1,10 @@
 /// <reference types="@open-pets/plugin-sdk" />
 
+let stopVocab = async () => {};
+
 OpenPetsPlugin.register({
   async start(ctx) {
+    await stopVocab();
     // Deduplicate event listeners during hot-reloads
     if (globalThis.__vocabUnsubscribe) {
       globalThis.__vocabUnsubscribe();
@@ -293,19 +296,24 @@ OpenPetsPlugin.register({
         }
       }
     });
+
+    stopVocab = async () => {
+      if (globalThis.__vocabUnsubscribe) {
+        globalThis.__vocabUnsubscribe();
+        globalThis.__vocabUnsubscribe = null;
+      }
+      if (globalThis.__vocabConfigUnsubscribe) {
+        globalThis.__vocabConfigUnsubscribe();
+        globalThis.__vocabConfigUnsubscribe = null;
+      }
+      if (globalThis.__vocabBubbleHandle) {
+        try { await globalThis.__vocabBubbleHandle.dismiss(); } catch (e) {}
+        globalThis.__vocabBubbleHandle = null;
+      }
+    };
   },
-  async stop(ctx) {
-    if (globalThis.__vocabUnsubscribe) {
-      globalThis.__vocabUnsubscribe();
-      globalThis.__vocabUnsubscribe = null;
-    }
-    if (globalThis.__vocabConfigUnsubscribe) {
-      globalThis.__vocabConfigUnsubscribe();
-      globalThis.__vocabConfigUnsubscribe = null;
-    }
-    if (globalThis.__vocabBubbleHandle) {
-      try { await globalThis.__vocabBubbleHandle.dismiss(); } catch (e) {}
-      globalThis.__vocabBubbleHandle = null;
-    }
+  async stop() {
+    await stopVocab();
+    stopVocab = async () => {};
   }
 });

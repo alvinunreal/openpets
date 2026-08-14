@@ -141,6 +141,6 @@ export function register(OpenPetsPlugin) {
       const config = normalizeConfig((await ctx.config.get()) ?? {});
       if (config.enabled) await ctx.schedule.once("launch-buddy-start", Math.max(1, config.delaySeconds * 1000), () => greet(ctx));
     },
-    async stop(ctx) { await ctx.schedule.cancel("launch-buddy-start"); },
+    async stop() {},
   });
 }
