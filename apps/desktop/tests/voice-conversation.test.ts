@@ -29,6 +29,7 @@ class FakeSurface implements VoicePrivacyIndicatorSurface {
 class FakeTransport implements VoiceConversationTransport {
   readonly resources = { micTracks: 1, peerOpen: true, channelOpen: true, audioAttached: true, windowAlive: true };
   readonly muted: boolean[] = [];
+  microphoneTrackEnabled = true;
   closeCount = 0;
   readonly #context: VoiceConversationTransportContext;
   readonly #startGate = deferred<void>();
@@ -52,6 +53,8 @@ class FakeTransport implements VoiceConversationTransport {
 
   setMuted(muted: boolean): void {
     this.muted.push(muted);
+    this.#desiredMuted = muted;
+    if (this.#microphoneReady) this.microphoneTrackEnabled = !muted;
   }
 
   async close(): Promise<void> {
@@ -64,6 +67,8 @@ class FakeTransport implements VoiceConversationTransport {
   }
 
   connect(): void {
+    this.#microphoneReady = true;
+    this.microphoneTrackEnabled = this.#desiredMuted === false;
     this.#context.emit({ type: "microphone-acquired" });
     this.#context.emit({ type: "negotiating" });
     this.#context.emit({ type: "connected" });
@@ -73,6 +78,9 @@ class FakeTransport implements VoiceConversationTransport {
   emit(event: VoiceConversationEvent): void {
     this.#context.emit(event);
   }
+
+  #microphoneReady = false;
+  #desiredMuted = false;
 }
 
 class ImmediateRecording implements VoiceCaptureRecording {
@@ -223,6 +231,21 @@ for (const failure of [
   await current.service.unmute();
   assert.equal(current.service.snapshot().muted, false);
   assert.deepEqual(transport.muted, [true, false]);
+  await current.service.close();
+}
+
+{
+  const current = fixture();
+  const start = current.service.start();
+  await flush();
+  const transport = current.transports[0]!;
+  await current.service.mute();
+  assert.equal(current.service.snapshot().muted, true);
+  assert.equal(transport.microphoneTrackEnabled, true);
+  transport.connect();
+  await start;
+  assert.equal(transport.microphoneTrackEnabled, false);
+  assert.equal(current.service.snapshot().muted, true);
   await current.service.close();
 }
 

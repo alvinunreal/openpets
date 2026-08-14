@@ -44,6 +44,8 @@ class ElectronVoiceRealtimeTransport implements VoiceConversationTransport {
   #startSettled = false;
   #startCalled = false;
   #loaded = false;
+  #microphoneReady = false;
+  #desiredMuted = false;
   #closing = false;
   #closePromise: Promise<void> | null = null;
 
@@ -126,8 +128,8 @@ class ElectronVoiceRealtimeTransport implements VoiceConversationTransport {
   }
 
   setMuted(muted: boolean): void {
-    if (this.#closing || this.#window.isDestroyed()) return;
-    this.#window.webContents.send(VOICE_REALTIME_COMMAND_CHANNEL, { type: "mute", sessionId: this.#context.sessionId, muted });
+    this.#desiredMuted = muted;
+    this.#sendMuteIfReady();
   }
 
   async close(): Promise<void> {
@@ -165,6 +167,8 @@ class ElectronVoiceRealtimeTransport implements VoiceConversationTransport {
     if (event.sender !== this.#window.webContents || !isRecord(payload) || payload.sessionId !== this.#context.sessionId || this.#closing) return;
     const type = payload.type;
     if (type === "microphone-acquired") {
+      this.#microphoneReady = true;
+      this.#sendMuteIfReady();
       this.#context.emit({ type: "microphone-acquired" });
       return;
     }
@@ -231,6 +235,11 @@ class ElectronVoiceRealtimeTransport implements VoiceConversationTransport {
     if (this.#startSettled) return;
     this.#startSettled = true;
     this.#rejectStartCompletion(error);
+  }
+
+  #sendMuteIfReady(): void {
+    if (!this.#microphoneReady || this.#closing || this.#window.isDestroyed()) return;
+    this.#window.webContents.send(VOICE_REALTIME_COMMAND_CHANNEL, { type: "mute", sessionId: this.#context.sessionId, muted: this.#desiredMuted });
   }
 }
 
