@@ -160,6 +160,9 @@ assert.match(petWindowSource, /export function shouldUseWaylandNativePetDrag/, "
 assert.doesNotMatch(petWindowSource, /OPENPETS_WAYLAND_NATIVE_DRAG/, "Wayland native pet dragging must not depend on a debug experiment flag.");
 assert.match(petWindowSource, /shouldUseWaylandNativePetDrag\(\) \? "drag" : "no-drag"/, "native pet drag regions must be scoped to actual Wayland sessions.");
 assert.match(petWindowSource, /font-src file:/, "pet window CSP must allow the bundled emoji font file.");
+const petRenderCspContents = [...petWindowSource.matchAll(/<meta http-equiv="Content-Security-Policy" content="(default-src 'none'; img-src file: data:[^"]*)" \/>/g)].map((match) => match[1]);
+assert.equal(petRenderCspContents.length, 2, "built-in and installed pet renderers must each define one CSP meta tag.");
+assert.ok(petRenderCspContents.every((csp) => /(?:^|; )media-src data:;/.test(csp)), "built-in and installed pet renderer CSPs must allow only data URL media for audio playback.");
 assert.match(petWindowSource, /OpenPets Emoji/, "pet windows must use the bundled emoji font for host/plugin icon glyphs.");
 assert.match(petWindowSource, /setIgnoreMouseEvents\(true, \{ forward: true \}\)/, "transparent pet window background must use OS-level mouse passthrough.");
 assert.match(petWindowSource, /setIgnoreMouseEvents\(false\)/, "visible pet and bubble hit targets must re-enable mouse handling.");
