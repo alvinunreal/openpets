@@ -3,9 +3,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { PluginAiGateway } from "../src/plugin-ai-gateway.js";
+import {
+  PluginAiGateway,
+  VOICE_REALTIME_MAX_SDP_BYTES,
+} from "../src/plugin-ai-gateway.js";
 import { getPluginPlatformSettings, initializePluginPlatformSettings, updatePluginPlatformSettings } from "../src/plugin-platform-settings.js";
 import type { PluginSecretsStore } from "../src/plugin-secrets.js";
+import { createDefaultVoiceRealtimeSessionConfig } from "../src/voice-conversation.js";
 
 const userDataPath = mkdtempSync(join(tmpdir(), "openpets-plugin-ai-gateway-"));
 const previousSettings = getPluginPlatformSettings();
@@ -25,6 +29,9 @@ try {
     }
     if (String(input).includes("/audio/transcriptions")) {
       return new Response(JSON.stringify({ text: "transcribed" }), { status: 200 });
+    }
+    if (String(input).includes("/realtime/calls")) {
+      return new Response("v=0\r\no=test-answer", { status: 200 });
     }
     return new Response(JSON.stringify({ choices: [{ message: { content: "MiniMax says hello" } }] }), { status: 200 });
   };
@@ -109,6 +116,33 @@ try {
   assert.equal(await gateway.transcribe(new Uint8Array([1, 2, 3]), "audio/webm", controller.signal), "transcribed");
   assert.equal(fetchCalls.length, 1);
   assert.equal(fetchCalls[0]?.init?.signal, controller.signal);
+
+  fetchCalls.length = 0;
+  const session = createDefaultVoiceRealtimeSessionConfig();
+  const answer = await gateway.negotiateRealtime("v=0\r\no=test-offer", session);
+  assert.equal(answer, "v=0\r\no=test-answer");
+  const negotiationCall = fetchCalls[0];
+  assert.ok(negotiationCall);
+  assert.equal(String(negotiationCall.input), "https://api.openai.com/v1/realtime/calls");
+  assert.equal(new Headers(negotiationCall.init?.headers).get("authorization"), "Bearer minimax-test-key");
+  const negotiationBody = negotiationCall.init?.body as FormData;
+  assert.equal(negotiationBody.get("sdp"), "v=0\r\no=test-offer");
+  assert.deepEqual(JSON.parse(String(negotiationBody.get("session"))), session);
+  assert.doesNotMatch(String(negotiationBody.get("session")), /minimax-test-key/);
+
+  await assert.rejects(
+    () => gateway.negotiateRealtime(`v=0${"x".repeat(VOICE_REALTIME_MAX_SDP_BYTES)}`, session),
+    /offer is invalid/,
+  );
+
+  globalThis.fetch = async () => new Response("not an SDP answer", { status: 200 });
+  await assert.rejects(() => gateway.negotiateRealtime("v=0\r\no=test-offer", session), /answer is invalid/);
+
+  const timeoutGateway = new PluginAiGateway(secrets, { realtimeNegotiationTimeoutMs: 5 });
+  globalThis.fetch = async (_input, init) => new Promise<Response>((_resolve, reject) => {
+    init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+  });
+  await assert.rejects(() => timeoutGateway.negotiateRealtime("v=0\r\no=test-offer", session), /timed out/);
 } finally {
   globalThis.fetch = previousFetch;
   updatePluginPlatformSettings(previousSettings);

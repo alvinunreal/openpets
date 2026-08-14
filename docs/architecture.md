@@ -99,6 +99,10 @@ These are the flows worth holding in memory. Each links to the doc that details 
   a host-owned temporary session, shows the privacy indicator only after microphone
   acquisition succeeds, transcribes through the configured provider, and cleans up
   on success, cancellation, timeout, teardown, or shutdown. It is never ambient.
+- **Realtime voice foundation.** The host contains a private, one-conversation
+  WebRTC lifecycle with a shared microphone lease, generation-safe cleanup, and
+  OpenAI-only SDP negotiation. It has no UI, tray surface, plugin SDK method,
+  permission, tools, transcripts, memory, or generic TTS integration yet.
 - **Configuring an agent.** The CLI or Control Center detects the agent, writes
   MCP config + hooks/rules atomically, and installs a memory/instructions file.
   See [Agent integrations](/agent-integrations).

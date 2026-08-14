@@ -266,8 +266,10 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `plugin-secrets.ts`: Plugin-scoped encrypted secret storage backed by Electron safe storage primitives.
 - `plugin-toast.ts`: Host toast/notification routing for plugin UI events.
 - `plugin-user-sound-store.ts`: Plugin-scoped imported user sound registry that stores opaque sound refs instead of raw filesystem paths.
-- `plugin-voice.ts`: Voice/TTS and one-shot listen facade gated by settings and permissions; owns host cancellation hooks.
+- `plugin-voice.ts`: Voice/TTS and one-shot listen facade gated by settings and permissions; owns host cancellation hooks and the private realtime conversation entry points.
 - `voice-capture.ts` / `voice-capture-electron.ts`: One-active-at-a-time microphone capture with separate acquisition timeout, media-track cleanup, and temporary-session teardown.
+- `voice-microphone-arbiter.ts`: Shared lease boundary preventing one-shot and realtime microphone ownership from overlapping.
+- `voice-conversation.ts` / `voice-realtime-electron.ts`: Generation-safe host conversation lifecycle and thin hidden renderer/WebRTC adapter; intentionally not exposed through the plugin SDK.
 - `voice-capture-cancellation.ts`: Idempotent renderer-cancel/window-destroy ordering for Electron capture teardown.
 - `voice-listening-service.ts`: Transcription timeout, abort handling, whitespace-only rejection, and late-event suppression.
 - `voice-operation-state.ts`: Internal acquisition/recording/transcription state surfaced to host tray controls.
