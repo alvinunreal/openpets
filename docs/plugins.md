@@ -162,8 +162,9 @@ For MiniMax chat, the model field suggests both `MiniMax-M3` (the default) and
 supports the global `https://api.minimax.io/v1` endpoint and the China
 `https://api.minimaxi.com/v1` endpoint.
 
-`voice.listen` is one-shot push-to-talk, never ambient. The host captures in a
-hidden, isolated microphone window and displays **OpenPets is listening** only after
+The public plugin-facing `voice.listen` capability remains one-shot push-to-talk,
+never ambient. The host captures in a hidden, isolated microphone window and displays
+**OpenPets is listening** only after
 microphone acquisition succeeds. It accepts only one active capture, clamps the
 recording duration to 1-30 seconds, times microphone acquisition out after 15
 seconds, and bounds transcription separately at 30 seconds. The host can cancel
@@ -174,6 +175,16 @@ transcripts fail with `Voice transcription returned no text.`
 The host-owned tray menu provides **Stop microphone listening** during
 acquisition/recording and **Cancel transcription** while transcription is
 pending; cancellation is not a public plugin SDK method.
+
+Separately, the desktop has a Phase 1 host-private realtime conversation
+foundation. It is not exposed through Plugin SDK v3, has no plugin permission,
+and plugins cannot start it. Realtime uses a dedicated hidden sandboxed Electron
+WebRTC renderer and host-side OpenAI negotiation. One-shot capture and realtime
+conversation share an exclusive host microphone lease, so they cannot run at the
+same time; both use the host-owned microphone privacy indicator and lifecycle.
+Realtime cleanup also participates in the shared plugin voice shutdown path. UI,
+Talk-to-Pet, public SDK exposure, plugin permissions, tools, memory, transcripts,
+and wake words remain deferred.
 
 ### Display deliveries
 
@@ -234,13 +245,22 @@ mirror of all this is the SDK in [Plugin SDK v3](/sdk).
 - `plugin-platform-settings.ts` - global gates for audio, voice, speech,
   microphone, quiet hours, and AI provider choices.
 - `plugin-voice.ts` + `voice-listening-service.ts` - the plugin-facing one-shot
-  facade and host-owned transcription/cancellation lifecycle.
+  `voice.listen` facade and host-owned transcription/cancellation lifecycle,
+  plus private realtime entry points and shared shutdown wiring; realtime is not
+  an SDK capability.
 - `voice-capture.ts` + `voice-capture-electron.ts` - bounded capture state and
   the temporary Electron microphone session.
+- `voice-conversation.ts` - host-private one-conversation realtime state,
+  interruption/mute tracking, stale-session guards, and cleanup orchestration.
+- `voice-realtime-electron.ts` - the dedicated hidden sandboxed Electron WebRTC
+  transport, audio-only permission boundary, and host negotiation handoff.
+- `voice-microphone-arbiter.ts` - exclusive microphone leases shared by one-shot
+  capture and realtime conversation.
 - `voice-capture-cancellation.ts` - idempotent renderer-cancel/window-destroy
   ordering.
 - `voice-operation-state.ts` - internal tray cancellation state and phase tracking.
-- `voice-privacy-indicator-electron.ts` - the host-owned listening indicator.
+- `voice-privacy-indicator-electron.ts` - the shared host-owned microphone
+  privacy indicator used by one-shot capture and realtime conversation.
 - `plugin-user-sound-store.ts` - stores imported user sounds as opaque refs, not
   raw filesystem paths.
 - `plugin-i18n.ts` - resolves plugin locales, manifest `$t:`, and `ctx.t()`.
