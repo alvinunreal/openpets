@@ -1,4 +1,5 @@
 import type { VoicePrivacyIndicator } from "./voice-privacy-indicator.js";
+import type { VoiceMicrophoneArbiter, VoiceMicrophoneLease } from "./voice-microphone-arbiter.js";
 
 export const VOICE_ACQUISITION_TIMEOUT_MS = 15_000;
 export const VOICE_MIN_RECORDING_DURATION_MS = 1_000;
@@ -53,22 +54,26 @@ type ActiveCapture = {
   recordingTimer: NodeJS.Timeout | null;
   finishing: Promise<VoiceCaptureResult> | null;
   cleaned: boolean;
+  microphoneLease: VoiceMicrophoneLease | null;
 };
 
 export type VoiceCaptureServiceOptions = {
   readonly acquisitionTimeoutMs?: number;
+  readonly microphoneArbiter?: VoiceMicrophoneArbiter;
 };
 
 export class VoiceCaptureService {
   readonly #factory: VoiceCaptureFactory;
   readonly #indicator: VoicePrivacyIndicator;
   readonly #acquisitionTimeoutMs: number;
+  readonly #microphoneArbiter?: VoiceMicrophoneArbiter;
   #active: ActiveCapture | null = null;
 
   constructor(factory: VoiceCaptureFactory, indicator: VoicePrivacyIndicator, options: VoiceCaptureServiceOptions = {}) {
     this.#factory = factory;
     this.#indicator = indicator;
     this.#acquisitionTimeoutMs = options.acquisitionTimeoutMs ?? VOICE_ACQUISITION_TIMEOUT_MS;
+    this.#microphoneArbiter = options.microphoneArbiter;
   }
 
   async start(timeoutMs: number): Promise<{
@@ -96,9 +101,11 @@ export class VoiceCaptureService {
       recordingTimer: null,
       finishing: null,
       cleaned: false,
+      microphoneLease: null,
     };
 
     try {
+      active.microphoneLease = this.#microphoneArbiter?.acquire("listen") ?? null;
       active.attempt = this.#factory(durationMs, () => {
         if (active.cancelled || this.#active !== active) return false;
         active.indicatorLive = true;
@@ -106,6 +113,8 @@ export class VoiceCaptureService {
         return true;
       });
     } catch (error) {
+      active.microphoneLease?.release();
+      active.microphoneLease = null;
       done.resolve(undefined);
       throw normalizeError(error);
     }
@@ -238,6 +247,8 @@ export class VoiceCaptureService {
         this.#indicator.trackStopped();
       }
       if (this.#active === active) this.#active = null;
+      active.microphoneLease?.release();
+      active.microphoneLease = null;
       active.done.resolve(undefined);
     }
   }

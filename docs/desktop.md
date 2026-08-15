@@ -236,6 +236,18 @@ wake-word listening is implemented. While active, the existing tray menu exposes
 transcription** while provider transcription is pending; the control disappears
 when the operation settles.
 
+Phase 1 also adds a host-private `VoiceConversationService` and a separate
+hidden, sandboxed realtime renderer. The service owns one persistent conversation,
+shares the microphone lease with one-shot listening, tracks interruptions and
+mute state internally, rejects stale session events, and releases privacy state
+on every close path. The renderer owns `getUserMedia`, WebRTC, the data channel,
+and remote audio; the host keeps the OpenAI credential and performs bounded SDP
+negotiation. The session uses automatic server VAD turns with interruption and no
+tools. This phase intentionally has no visible conversation status, UI, tray
+control, pet indicator, settings, public SDK method, plugin permission, plugin
+tool, transcript, memory, or generic TTS behavior. Those are deferred until the
+host lifecycle and protocol are reviewed for Phase 2.
+
 The plugin subsystem also owns **display deliveries**: a lazy, transparent,
 host-owned surface used by `ctx.ui.delivery`. A delivery is rendered as a single
 courier-and-banner surface on the cursor display, rather than as a spawned pet

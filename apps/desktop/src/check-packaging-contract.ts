@@ -15,6 +15,8 @@ const rootPackageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), 
 const workspaceConfig = readFileSync(join(repoRoot, "pnpm-workspace.yaml"), "utf8");
 const builderConfigPath = join(appDir, "electron-builder.yml");
 const builderConfig = readFileSync(builderConfigPath, "utf8");
+const realtimeRendererSource = readFileSync(join(appDir, "assets", "voice-realtime.html"), "utf8");
+const realtimeTransportSource = readFileSync(join(appDir, "src", "voice-realtime-electron.ts"), "utf8");
 
 assert.equal(packageJson.description, "OpenPets tray-first desktop companion app.");
 assert.equal(packageJson.author, "OpenPets");
@@ -49,7 +51,12 @@ assert.match(builderConfig, /control-center-preload\.cjs/);
 assert.match(builderConfig, /pet-preload\.cjs/);
 assert.match(builderConfig, /plugin-sdk-preload\.cjs/);
 assert.match(builderConfig, /plugin-command-form-preload\.cjs/);
+assert.match(builderConfig, /voice-realtime-preload\.cjs/);
 assert.match(builderConfig, /assets\/\*\*/);
+assert.match(realtimeRendererSource, /response\.output_audio\.delta/);
+assert.match(realtimeRendererSource, /response\.output_audio_transcript\.delta/);
+assert.doesNotMatch(realtimeRendererSource, /response\.audio\.delta/);
+assert.match(realtimeTransportSource, /details\?\.mediaType === "audio"/);
 assert.match(builderConfig, /extraResources:[\s\S]*from:\s*\.\.\/\.\.\/plugins\/official[\s\S]*to:\s*plugins\/official/, "desktop packages must include bundled official plugins as extra resources.");
 assert.match(builderConfig, /icon:\s*assets\/app-icon\.icns/);
 
@@ -57,6 +64,7 @@ assert.ok(existsSync(join(appDir, "control-center-preload.cjs")), "control-cente
 assert.ok(existsSync(join(appDir, "pet-preload.cjs")), "pet-preload.cjs must exist for pet window motion state updates.");
 assert.ok(existsSync(join(appDir, "plugin-sdk-preload.cjs")), "plugin-sdk-preload.cjs must exist for JavaScript plugin SDK hosting.");
 assert.ok(existsSync(join(appDir, "plugin-command-form-preload.cjs")), "plugin-command-form-preload.cjs must exist for plugin command forms.");
+assert.ok(existsSync(join(appDir, "voice-realtime-preload.cjs")), "voice-realtime-preload.cjs must exist for the private realtime voice renderer.");
 assert.ok(existsSync(join(appDir, "assets", "tray-icon.png")), "tray icon must exist for packaging.");
 assert.ok(existsSync(join(appDir, "assets", "app-icon.icns")), "app icon must exist for packaging.");
 assert.ok(existsSync(join(appDir, "assets", "app-icon.ico")), "Windows app icon must exist for packaging.");

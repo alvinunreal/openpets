@@ -1,0 +1,143 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; media-src blob:">
+<script>
+(() => {
+  const bridge = globalThis.openPetsVoiceRealtime;
+  if (!bridge) return;
+
+  const MAX_SIGNAL_BYTES = 256 * 1024;
+  let sessionId = "";
+  let stream = null;
+  let peer = null;
+  let channel = null;
+  let audio = null;
+  let started = false;
+  let closing = false;
+  let assistantSpeaking = false;
+  let responseInProgress = false;
+
+  const emit = (event) => {
+    try { bridge.emit({ sessionId, ...event }); } catch { /* host teardown may race renderer cleanup */ }
+  };
+
+  const stopTracks = (current) => {
+    for (const track of current?.getTracks?.() ?? []) {
+      try { track.stop(); } catch { /* already stopped */ }
+    }
+  };
+
+  const closeResources = (notify) => {
+    if (closing && !notify) return;
+    closing = true;
+    stopTracks(stream);
+    stream = null;
+    try { channel?.close(); } catch { /* already closed */ }
+    channel = null;
+    try { peer?.close(); } catch { /* already closed */ }
+    peer = null;
+    if (audio) {
+      try { audio.pause(); } catch { /* already paused */ }
+      audio.srcObject = null;
+      audio.remove();
+      audio = null;
+    }
+    try { sessionStorage.clear(); localStorage.clear(); } catch { /* ephemeral partition cleanup is host-owned */ }
+    if (notify) emit({ type: "closed" });
+  };
+
+  const failureMessage = (error) => error instanceof Error ? error.message.slice(0, 240) : "Realtime voice renderer failed.";
+  const fail = (error) => {
+    emit({ type: "error", error: failureMessage(error) });
+    closeResources(true);
+  };
+
+  const handleServerEvent = (raw) => {
+    if (raw.length > MAX_SIGNAL_BYTES) return;
+    let message;
+    try { message = JSON.parse(raw); } catch { return; }
+    if (!message || typeof message !== "object" || Array.isArray(message)) return;
+    const type = typeof message.type === "string" ? message.type : "";
+    if (type === "input_audio_buffer.speech_started") {
+      if (responseInProgress) emit({ type: "interrupted" });
+      responseInProgress = false;
+      assistantSpeaking = false;
+      emit({ type: "speech-started" });
+    } else if (type === "input_audio_buffer.speech_stopped") {
+      emit({ type: "speech-stopped" });
+    } else if (type === "response.created") {
+      responseInProgress = true;
+      emit({ type: "response-started" });
+    } else if (type === "response.output_audio.delta" || type === "response.output_audio_transcript.delta") {
+      if (!assistantSpeaking) emit({ type: "response-audio-started" });
+      assistantSpeaking = true;
+      responseInProgress = true;
+    } else if (type === "response.output_audio.done") {
+      if (assistantSpeaking) emit({ type: "response-audio-stopped" });
+      assistantSpeaking = false;
+    } else if (type === "response.done") {
+      if (assistantSpeaking) emit({ type: "response-audio-stopped" });
+      assistantSpeaking = false;
+      responseInProgress = false;
+      emit({ type: "response-completed" });
+    } else if (type === "error") {
+      const error = message.error && typeof message.error === "object" && !Array.isArray(message.error) ? message.error : {};
+      fail(typeof error.message === "string" ? error.message : "Realtime voice provider reported an error.");
+    }
+  };
+
+  const start = async () => {
+    if (started || closing) return;
+    started = true;
+    try {
+      const acquired = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false });
+      if (closing) { stopTracks(acquired); return; }
+      stream = acquired;
+      emit({ type: "microphone-acquired" });
+      peer = new RTCPeerConnection();
+      peer.addEventListener("track", (event) => {
+        if (closing) return;
+        const remote = event.streams?.[0] ?? new MediaStream([event.track]);
+        audio ??= document.body.appendChild(document.createElement("audio"));
+        audio.autoplay = true;
+        audio.srcObject = remote;
+        void audio.play().catch(() => undefined);
+      });
+      peer.addEventListener("connectionstatechange", () => {
+        if (closing) return;
+        if (peer?.connectionState === "failed" || peer?.connectionState === "closed") fail(new Error("Realtime voice RTC connection failed."));
+      });
+      channel = peer.createDataChannel("oai-events");
+      channel.addEventListener("open", () => { if (!closing) emit({ type: "connected" }); });
+      channel.addEventListener("message", (event) => { if (!closing) handleServerEvent(String(event.data)); });
+      channel.addEventListener("error", () => { if (!closing) fail(new Error("Realtime voice data channel failed.")); });
+      channel.addEventListener("close", () => { if (!closing) fail(new Error("Realtime voice data channel closed.")); });
+      for (const track of stream.getTracks()) peer.addTrack(track, stream);
+      const offer = await peer.createOffer();
+      if (closing) return;
+      await peer.setLocalDescription(offer);
+      const sdp = peer.localDescription?.sdp ?? offer.sdp ?? "";
+      if (!sdp || sdp.length > MAX_SIGNAL_BYTES) throw new Error("Realtime voice produced an invalid session description.");
+      emit({ type: "negotiating" });
+      emit({ type: "offer", sdp });
+    } catch (error) {
+      if (!closing) fail(error);
+    }
+  };
+
+  bridge.onCommand((command) => {
+    if (!command || typeof command !== "object") return;
+    if (command.type !== "start" && command.sessionId !== sessionId) return;
+    if (command.type === "start") {
+      sessionId = typeof command.sessionId === "string" ? command.sessionId : "";
+      void start();
+    } else if (command.type === "answer" && typeof command.sdp === "string" && command.sdp.length <= MAX_SIGNAL_BYTES && peer) {
+      void peer.setRemoteDescription({ type: "answer", sdp: command.sdp }).catch(fail);
+    } else if (command.type === "mute") {
+      for (const track of stream?.getAudioTracks?.() ?? []) track.enabled = command.muted !== true;
+    } else if (command.type === "close") {
+      closeResources(true);
+    }
+  });
+})();
+</script>

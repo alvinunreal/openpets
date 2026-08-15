@@ -15,6 +15,7 @@ files:
   - plugin-sdk-preload.cjs
   - plugin-command-form-preload.cjs
   - panel-preload.cjs
+  - voice-realtime-preload.cjs
   - assets/**
   - package.json
 
@@ -35,7 +36,7 @@ mac:
   icon: assets/app-icon.icns
   category: public.app-category.utilities
   extendInfo:
-    NSMicrophoneUsageDescription: OpenPets uses your microphone only for one-shot, user-initiated voice input.
+    NSMicrophoneUsageDescription: OpenPets uses your microphone only for user-initiated one-shot input and realtime voice conversations.
   target:
     - dmg
     - zip

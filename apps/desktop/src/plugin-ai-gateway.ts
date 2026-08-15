@@ -1,6 +1,7 @@
 import { getPluginPlatformSettings } from "./plugin-platform-settings.js";
 import type { PluginSecretsStore } from "./plugin-secrets.js";
 import type { PluginAiRequest, PluginAiResult } from "./plugin-sdk-bridge.js";
+import type { VoiceRealtimeSessionConfig } from "./voice-conversation.js";
 
 /**
  * Host AI gateway (§13.2): one user-configured provider/model serves every
@@ -32,13 +33,23 @@ export const minimaxSpeechModels = [
 
 export const defaultMinimaxSpeechVoiceId = "English_expressive_narrator";
 
+export const VOICE_REALTIME_MAX_SDP_BYTES = 256 * 1024;
+export const VOICE_REALTIME_MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024;
+export const VOICE_REALTIME_NEGOTIATION_TIMEOUT_MS = 30_000;
+
 export type SynthesizedSpeech = { readonly bytes: Uint8Array; readonly mimeType: "audio/mpeg" };
+
+export type PluginAiGatewayOptions = {
+  readonly realtimeNegotiationTimeoutMs?: number;
+};
 
 export class PluginAiGateway {
   readonly #secrets: PluginSecretsStore;
+  readonly #realtimeNegotiationTimeoutMs: number;
 
-  constructor(secrets: PluginSecretsStore) {
+  constructor(secrets: PluginSecretsStore, options: PluginAiGatewayOptions = {}) {
     this.#secrets = secrets;
+    this.#realtimeNegotiationTimeoutMs = options.realtimeNegotiationTimeoutMs ?? VOICE_REALTIME_NEGOTIATION_TIMEOUT_MS;
   }
 
   async available(): Promise<boolean> {
@@ -73,6 +84,53 @@ export class PluginAiGateway {
     if (!response.ok) throw new Error(`Transcription failed with HTTP ${response.status}.`);
     const parsed = await response.json() as { text?: string };
     return typeof parsed.text === "string" ? parsed.text : "";
+  }
+
+  /** Host-private SDP negotiation for the realtime conversation foundation. */
+  async negotiateRealtime(sdp: string, session: VoiceRealtimeSessionConfig, signal?: AbortSignal): Promise<string> {
+    if (getPluginPlatformSettings().ai.provider !== "openai") {
+      throw new Error("Realtime voice currently requires the OpenAI provider.");
+    }
+    const offer = validateRealtimeSdp(sdp, "Voice realtime offer");
+    let serializedSession: string;
+    try {
+      serializedSession = JSON.stringify(session);
+    } catch {
+      throw new Error("Voice realtime session configuration is invalid.");
+    }
+    if (Buffer.byteLength(serializedSession, "utf8") > 64 * 1024) throw new Error("Voice realtime session configuration is too large.");
+    const apiKey = await this.#secrets.get(hostSecretsOwner, hostAiApiKeySecret);
+    if (!apiKey) throw new Error("The configured OpenAI provider has no API key.");
+
+    const body = new FormData();
+    body.set("sdp", offer);
+    body.set("session", serializedSession);
+    const controller = new AbortController();
+    const abortFromCaller = () => controller.abort();
+    if (signal?.aborted) throw new Error("Voice realtime negotiation was cancelled.");
+    signal?.addEventListener("abort", abortFromCaller, { once: true });
+    const timeout = setTimeout(() => controller.abort(), this.#realtimeNegotiationTimeoutMs);
+    try {
+      const response = await fetch("https://api.openai.com/v1/realtime/calls", {
+        method: "POST",
+        headers: { authorization: `Bearer ${apiKey}` },
+        body,
+        redirect: "error",
+        signal: controller.signal,
+      });
+      const responseText = await readBoundedResponseText(response, VOICE_REALTIME_MAX_PROVIDER_RESPONSE_BYTES);
+      if (!response.ok) throw new Error(`OpenAI realtime negotiation failed with HTTP ${response.status}.`);
+      return validateRealtimeSdp(responseText, "OpenAI realtime answer");
+    } catch (error) {
+      if (controller.signal.aborted) {
+        if (signal?.aborted) throw new Error("Voice realtime negotiation was cancelled.");
+        throw new Error("Voice realtime negotiation timed out.");
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", abortFromCaller);
+    }
   }
 
   /** Synthesize plugin speech when MiniMax is the configured provider. */
@@ -256,4 +314,43 @@ async function readSseStream(body: ReadableStream<Uint8Array>, onData: (data: st
       if (trimmed.startsWith("data:")) onData(trimmed.slice(5).trim());
     }
   }
+}
+
+function validateRealtimeSdp(value: unknown, label: string): string {
+  if (typeof value !== "string") throw new Error(`${label} is invalid.`);
+  const sdp = value.trim();
+  if (sdp.length === 0 || sdp.includes("\0") || !/^v=0(?:\r?\n|$)/.test(sdp) || Buffer.byteLength(sdp, "utf8") > VOICE_REALTIME_MAX_SDP_BYTES) {
+    throw new Error(`${label} is invalid.`);
+  }
+  return sdp;
+}
+
+async function readBoundedResponseText(response: Response, maxBytes: number): Promise<string> {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) throw new Error("OpenAI realtime response is too large.");
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error("OpenAI realtime response is too large.");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
 }
