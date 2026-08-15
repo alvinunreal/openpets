@@ -27,6 +27,12 @@ Docs here are the *narrative* layer on top of those maps.
 - **[lan-mode.md](lan-mode.md)** - experimental LAN office-pet mode: one
   shared default pet moves between PCs on the same network.
 
+## Product direction
+
+- **[openpets_v4.md](openpets_v4.md)** - v4 delivery direction: a conversational
+  Pet Assistant that uses enabled companion-plugin capabilities through voice
+  and chat.
+
 ## Content & catalogs (app-facing web data)
 
 - **[catalog.md](catalog.md)** - the pet and plugin catalogs the app consumes:
