@@ -194,6 +194,35 @@ registers a `/openpets` slash command namespace (`status`, `test`,
 non-blocking; it registers **no** model-callable tools, and never forwards
 prompt/assistant/tool/command text, paths, URLs, or secrets.
 
+## DSH - `@open-pets/dsh`
+
+Install the strict local-only v1 DSH plugin for a DSH profile:
+
+```sh
+dsh plugin --profile <profile> add @open-pets/dsh
+```
+
+The plugin is installed per profile; repeat the command for each profile that
+should receive the integration.
+
+`@open-pets/dsh` is a Cordis bundle that automatically maps DSH lifecycle
+events to OpenPets reactions:
+
+DSH always uses local IPC and the default pet, and ignores remote configuration.
+
+| DSH event | OpenPets reaction |
+|-----------|-------------------|
+| running | thinking |
+| idle | success |
+| error | error |
+| approval/request | waiting |
+
+Automatic dispatch is non-blocking and uses only curated categorical speech.
+The bundle never forwards prompts, tool payloads or results, paths, URLs,
+secrets, or arbitrary event text. Idle/success is briefly suppressed after an
+error so the error state remains visible. DSH adds no model tools or MCP setup;
+the existing OpenPets MCP integration remains separately configurable.
+
 ## The CLI - `@open-pets/cli`
 
 The user-facing front door (`openpets`), and the package that composes the

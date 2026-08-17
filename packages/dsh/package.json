@@ -1,0 +1,60 @@
+{
+  "name": "@open-pets/dsh",
+  "version": "3.3.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alvinunreal/openpets.git",
+    "directory": "packages/dsh"
+  },
+  "type": "module",
+  "keywords": [
+    "dsh",
+    "cordis",
+    "openpets",
+    "coding-agent"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/index.d.ts",
+    "dist/index.js",
+    "dist/runtime.d.ts",
+    "dist/runtime.js",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "test": "node dist/runtime.test.js && node dist/check-dsh.js",
+    "check": "pnpm typecheck && pnpm build && pnpm test",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@open-pets/agent-events": "workspace:*",
+    "@open-pets/client": "workspace:*"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@types/node": "^25.6.2",
+    "typescript": "^6.0.3"
+  }
+}
