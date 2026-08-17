@@ -1,12 +1,12 @@
-import { constants } from "node:fs";
-import { lstat, mkdir, mkdtemp, open, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
 
 import sharp from "sharp";
 
 import { getAppStateSnapshot, installPetState, type OpenPetsStateV1 } from "./app-state.js";
-import { maxCodexPetJsonBytes, maxCodexPets, maxCodexSpritesheetBytes, maxCodexThumbnailSourceBytes, validateCodexPetMetadata, type CodexPetMetadata } from "./codex-pets-core.js";
+import { maxCodexPetJsonBytes, maxCodexPets, maxCodexSpritesheetBytes, maxCodexThumbnailSourceBytes, validateCodexPetMetadata, validateCodexPetSpritesheet, type CodexPetMetadata } from "./codex-pets-core.js";
+import { readBoundedRegularFile } from "./pet-file-safety.js";
 import { withPetOperation } from "./pet-installation.js";
 import { assertInsideRoot, assertSafePetId, getInstalledPetDir, getPetsRoot } from "./pet-paths.js";
 
@@ -64,7 +64,8 @@ export async function importCodexPet(petId: string): Promise<OpenPetsStateV1> {
     await assertCodexPetDirectory(root, sourceDir);
     const metadata = await readCodexPetMetadata(root, sourceDir, petId);
     const spritesheetPath = join(sourceDir, metadata.spritesheetPath);
-    const spritesheet = await readRegularFile(spritesheetPath, maxCodexSpritesheetBytes, "spritesheet.webp");
+    const spritesheet = await readBoundedRegularFile(spritesheetPath, maxCodexSpritesheetBytes, "spritesheet.webp");
+    await validateCodexPetSpritesheet(spritesheet, metadata);
 
     const petsRoot = getPetsRoot();
     await mkdir(petsRoot, { recursive: true, mode: 0o700 });
@@ -102,7 +103,7 @@ async function tryReadCodexPet(root: string, dir: string, folderName: string): P
   try {
     const metadata = await readCodexPetMetadata(root, dir, folderName);
     const spritesheetPath = join(dir, metadata.spritesheetPath);
-    await validateSpritesheet(spritesheetPath);
+    await validateSpritesheet(spritesheetPath, metadata);
     const preview = await createCodexThumbnailDataUrl(spritesheetPath);
     return {
       id: metadata.id,
@@ -122,25 +123,23 @@ export async function readCodexPetSpritesheet(petId: string): Promise<Buffer> {
   const root = await validateCodexRoot();
   const sourceDir = resolve(root, petId);
   const metadata = await readCodexPetMetadata(root, sourceDir, petId);
-  return readRegularFile(join(sourceDir, metadata.spritesheetPath), maxCodexSpritesheetBytes, "spritesheet.webp");
+  const spritesheet = await readBoundedRegularFile(join(sourceDir, metadata.spritesheetPath), maxCodexSpritesheetBytes, "spritesheet.webp");
+  await validateCodexPetSpritesheet(spritesheet, metadata);
+  return spritesheet;
 }
 
 async function readCodexPetMetadata(root: string, dir: string, folderName: string): Promise<CodexPetMetadata> {
   await assertCodexPetDirectory(root, dir);
   assertSafePetId(folderName);
   const petJson = join(dir, "pet.json");
-  const parsed = JSON.parse((await readRegularFile(petJson, maxCodexPetJsonBytes, "pet.json")).toString("utf8")) as unknown;
+  const parsed = JSON.parse((await readBoundedRegularFile(petJson, maxCodexPetJsonBytes, "pet.json")).toString("utf8")) as unknown;
   const metadata = validateCodexPetMetadata(parsed, folderName);
   assertSafePetId(metadata.id);
   return metadata;
 }
 
-async function validateSpritesheet(path: string): Promise<void> {
-  const spritesheet = await lstat(path);
-  if (spritesheet.isSymbolicLink()) throw new Error("spritesheet.webp cannot be a symlink.");
-  if (!spritesheet.isFile()) throw new Error("spritesheet.webp must be a file.");
-  if (spritesheet.size <= 0) throw new Error("spritesheet.webp is empty.");
-  if (spritesheet.size > maxCodexSpritesheetBytes) throw new Error("spritesheet.webp is too large.");
+async function validateSpritesheet(path: string, metadata: CodexPetMetadata): Promise<void> {
+  await validateCodexPetSpritesheet(await readBoundedRegularFile(path, maxCodexSpritesheetBytes, "spritesheet.webp"), metadata);
 }
 
 async function createCodexThumbnailDataUrl(path: string): Promise<string> {
@@ -187,22 +186,6 @@ async function assertCodexPetDirectory(root: string, target: string): Promise<vo
   if (!dirStats.isDirectory()) throw new Error("Codex pet path must be a directory.");
   const realTarget = await realpath(resolvedTarget);
   if (!realTarget.startsWith(`${root}${sep}`)) throw new Error("Codex pet directory escapes Codex pets root.");
-}
-
-async function readRegularFile(path: string, maxBytes: number, label: string): Promise<Buffer> {
-  const stats = await lstat(path);
-  if (stats.isSymbolicLink()) throw new Error(`${label} cannot be a symlink.`);
-  if (!stats.isFile()) throw new Error(`${label} must be a file.`);
-  if (stats.size <= 0 || stats.size > maxBytes) throw new Error(`${label} size is invalid.`);
-  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-  try {
-    const openedStats = await file.stat();
-    if (!openedStats.isFile()) throw new Error(`${label} must be a file.`);
-    if (openedStats.size !== stats.size || openedStats.size <= 0 || openedStats.size > maxBytes) throw new Error(`${label} size is invalid.`);
-    return await file.readFile();
-  } finally {
-    await file.close();
-  }
 }
 
 async function validateInstalledRegularFile(path: string): Promise<void> {

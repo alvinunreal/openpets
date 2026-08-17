@@ -5,9 +5,11 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { getAppStateSnapshot, markPetBroken, type PetScaleValue } from "./app-state.js";
+import { getCodexPetSpriteLayout, getCodexPetSpritePosition, maxCodexPetJsonBytes, validateCodexPetMetadata, type CodexPetSpriteLayout } from "./codex-pets-core.js";
 import { clampToNearestDisplayIfOffscreen, clampToVisibleWorkArea, defaultPetWindowSize, getDefaultPetInitialPosition, isCrossDisplayRoamingEnabled, type Point } from "./display.js";
 import { builtInPet } from "./built-in-pet.js";
 import { getInstalledPetDir } from "./pet-paths.js";
+import { readBoundedRegularFile } from "./pet-file-safety.js";
 import { getActiveLocale, getActiveLocaleLang, t } from "./i18n/index.js";
 import { defaultMediaDurationMs, type OpenPetsReaction } from "./local-ipc-protocol.js";
 import { pickReactionMessage } from "./reaction-messages.js";
@@ -1028,6 +1030,7 @@ async function createInstalledPetRender(petId: string, displayName: string, paus
   if (!spritesheet.isFile() || spritesheet.size <= 0 || spritesheet.size > 100 * 1024 * 1024) {
     throw new Error("Installed pet spritesheet is missing or too large.");
   }
+  const spriteLayout = await readInstalledPetSpriteLayout(petId);
 
   const imageUrl = pathToFileURL(spritesheetPath).toString();
   const hasPinned = Boolean(pluginBubbles?.pinned);
@@ -1037,7 +1040,7 @@ async function createInstalledPetRender(petId: string, displayName: string, paus
   const stateRows = getConfiguredSpriteStates(waitingAnimationDurationMs);
 
   return {
-    cacheKey: `${cachePrefix}:${paused}:${scale}:${spritesheet.mtimeMs}:${spritesheet.size}:${getConfiguredSpriteCacheKey(waitingAnimationDurationMs)}:${getActiveLocale()}`,
+    cacheKey: `${cachePrefix}:${paused}:${scale}:v${spriteLayout.version}:${spritesheet.mtimeMs}:${spritesheet.size}:${getConfiguredSpriteCacheKey(waitingAnimationDurationMs)}:${getActiveLocale()}`,
     bodyHtml,
     reactionState,
     html: `<!doctype html>
@@ -1049,30 +1052,32 @@ async function createInstalledPetRender(petId: string, displayName: string, paus
           <title>OpenPets Default Pet</title>
           <style>
             ${createPetWindowCss(paused, scale)}
-            .installed-card { width: ${Math.ceil(defaultPetSprite.frameWidth * scale)}px; height: ${Math.ceil(defaultPetSprite.frameHeight * scale)}px; overflow: visible; position: relative; }
+            .installed-card { width: ${Math.ceil(spriteLayout.frameWidth * scale)}px; height: ${Math.ceil(spriteLayout.frameHeight * scale)}px; overflow: visible; position: relative; }
             .installed-sprite {
               position: absolute;
               left: 0;
               top: 0;
-              width: ${defaultPetSprite.frameWidth}px;
-              height: ${defaultPetSprite.frameHeight}px;
+              width: ${spriteLayout.frameWidth}px;
+              height: ${spriteLayout.frameHeight}px;
               background-image: url("${escapeCssUrl(imageUrl)}");
-              background-size: ${defaultPetSprite.frameWidth * defaultPetSprite.columns}px ${defaultPetSprite.frameHeight * defaultPetSprite.rows}px;
+              background-size: ${spriteLayout.frameWidth * spriteLayout.columns}px ${spriteLayout.frameHeight * spriteLayout.rows}px;
               background-repeat: no-repeat;
               --sprite-row-y: 0px;
+              --sprite-offset-x: 0px;
+              --sprite-end-offset-x: 0px;
               --sprite-frames: ${stateRows.idle.frames};
               --sprite-duration: ${stateRows.idle.durationMs}ms;
               --sprite-iterations: ${stateRows.idle.iterations};
-              background-position: 0 var(--sprite-row-y);
-              animation: pet-frames var(--sprite-duration) steps(var(--sprite-frames)) var(--sprite-iterations);
+              background-position: var(--sprite-offset-x) var(--sprite-row-y);
+              animation: var(--sprite-animation, pet-frames var(--sprite-duration) steps(var(--sprite-frames)) var(--sprite-iterations));
               animation-play-state: var(--play-state);
               transform: scale(${scale});
               transform-origin: top left;
             }
-            ${createSpriteStateCss(".installed-sprite", stateRows)}
+            ${createInstalledSpriteStateCss(stateRows, spriteLayout)}
             @keyframes pet-frames {
-              from { background-position: 0 var(--sprite-row-y); }
-              to { background-position: calc(-${defaultPetSprite.frameWidth}px * var(--sprite-frames)) var(--sprite-row-y); }
+              from { background-position: var(--sprite-offset-x) var(--sprite-row-y); }
+              to { background-position: var(--sprite-end-offset-x) var(--sprite-row-y); }
             }
           </style>
         </head>
@@ -1081,6 +1086,15 @@ async function createInstalledPetRender(petId: string, displayName: string, paus
         </body>
       </html>`,
   };
+}
+
+async function readInstalledPetSpriteLayout(petId: string): Promise<CodexPetSpriteLayout> {
+  const metadataPath = join(getInstalledPetDir(petId), "pet.json");
+  const metadata = validateCodexPetMetadata(
+    JSON.parse((await readBoundedRegularFile(metadataPath, maxCodexPetJsonBytes, "Installed pet metadata")).toString("utf8")) as unknown,
+    petId,
+  );
+  return getCodexPetSpriteLayout(metadata);
 }
 
 function createPetBodyMarkup(stageLabel: string, bubble: string, spriteMarkup: string, pinnedBubble = "", hasPinned = false): string {
@@ -1302,18 +1316,35 @@ function createPetWindowCss(paused: boolean, scale: PetScaleValue): string {
   `;
 }
 
-function createSpriteStateCss(selector: ".sprite" | ".installed-sprite", stateRows: Readonly<Record<UniversalSpriteState, SpriteStateDefinition>>): string {
-  const reactionRules = Object.keys(stateRows).map((state) => createSpriteRule(`html[data-reaction-state="${state}"] ${selector}`, state as UniversalSpriteState, stateRows));
+function createSpriteStateCss(selector: ".sprite" | ".installed-sprite", stateRows: Readonly<Record<UniversalSpriteState, SpriteStateDefinition>>, layout: CodexPetSpriteLayout = {
+  version: 1,
+  frameWidth: defaultPetSprite.frameWidth,
+  frameHeight: defaultPetSprite.frameHeight,
+  columns: defaultPetSprite.columns,
+  rows: defaultPetSprite.rows,
+}): string {
+  const reactionRules = Object.keys(stateRows).map((state) => createSpriteRule(`html[data-reaction-state="${state}"] ${selector}`, state as UniversalSpriteState, stateRows, layout, state === "idle" ? layout.neutralPose : undefined));
   const motionRules = (Object.entries(motionToSpriteState) as Array<[PetMotionState, UniversalSpriteState]>)
     .filter(([motion]) => motion !== "idle")
-    .map(([motion, state]) => createSpriteRule(`html[data-motion-state="${motion}"] ${selector}`, state, stateRows));
+    .map(([motion, state]) => createSpriteRule(`html[data-motion-state="${motion}"] ${selector}`, state, stateRows, layout));
   return [...reactionRules, ...motionRules].join("\n");
 }
 
-function createSpriteRule(selector: string, state: UniversalSpriteState, stateRows: Readonly<Record<UniversalSpriteState, SpriteStateDefinition>>): string {
+function createInstalledSpriteStateCss(stateRows: Readonly<Record<UniversalSpriteState, SpriteStateDefinition>>, layout: CodexPetSpriteLayout): string {
+  if (layout.version === 1) return createSpriteStateCss(".installed-sprite", stateRows);
+  return createSpriteStateCss(".installed-sprite", stateRows, layout);
+}
+
+function createSpriteRule(selector: string, state: UniversalSpriteState, stateRows: Readonly<Record<UniversalSpriteState, SpriteStateDefinition>>, layout: CodexPetSpriteLayout, neutralPose?: { readonly row: number; readonly column: number }): string {
   const row = stateRows[state];
   const iterations = "iterations" in row ? row.iterations : "infinite";
-  return `${selector} { --sprite-row-y: -${row.row * defaultPetSprite.frameHeight}px; --sprite-frames: ${row.frames}; --sprite-duration: ${row.durationMs}ms; --sprite-iterations: ${iterations}; }`;
+  const position = getCodexPetSpritePosition(layout, row, neutralPose !== undefined);
+  const startOffset = -(position.startColumn * layout.frameWidth);
+  const endOffset = -(position.endColumn * layout.frameWidth);
+  const animation = position.animated
+    ? " --sprite-animation: pet-frames var(--sprite-duration) steps(var(--sprite-frames)) var(--sprite-iterations);"
+    : " --sprite-animation: none;";
+  return `${selector} { --sprite-row-y: -${row.row * layout.frameHeight}px; --sprite-offset-x: ${startOffset}px; --sprite-end-offset-x: ${endOffset}px; --sprite-frames: ${row.frames}; --sprite-duration: ${row.durationMs}ms; --sprite-iterations: ${iterations};${animation} }`;
 }
 
 function getReactionSpriteState(reaction: OpenPetsReaction | undefined): UniversalSpriteState {
