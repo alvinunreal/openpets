@@ -86,18 +86,22 @@ export async function validateCodexPetSpritesheet(spritesheet: Buffer, metadata:
   if (layout.version === 1) return;
 
   let imageMetadata: sharp.Metadata;
+  const image = sharp(spritesheet, { animated: true, failOn: "error", limitInputPixels: 50_000_000 });
   try {
-    const image = sharp(spritesheet, { animated: true, failOn: "error", limitInputPixels: 50_000_000 });
     imageMetadata = await image.metadata();
-    if (imageMetadata.format !== "webp") throw new Error("Codex V2 spritesheet must be WebP.");
-    if (!imageMetadata.hasAlpha) throw new Error("Codex V2 spritesheet must include transparency.");
-    if ((imageMetadata.pages ?? 1) !== 1) throw new Error("Codex V2 spritesheet must contain exactly one image.");
-    await image.raw().toBuffer();
   } catch {
-    throw new Error("Codex V2 spritesheet must be a fully decodable RGBA WebP image.");
+    throw new Error("Codex V2 spritesheet metadata is invalid.");
   }
+  if (imageMetadata.format !== "webp") throw new Error("Codex V2 spritesheet must be WebP.");
+  if (!imageMetadata.hasAlpha) throw new Error("Codex V2 spritesheet must include transparency.");
+  if ((imageMetadata.pages ?? 1) !== 1) throw new Error("Codex V2 spritesheet must contain exactly one image.");
   if (imageMetadata.width !== layout.frameWidth * layout.columns || imageMetadata.height !== layout.frameHeight * layout.rows) {
     throw new Error(`Codex V2 spritesheet must be exactly ${layout.frameWidth * layout.columns}x${layout.frameHeight * layout.rows}.`);
+  }
+  try {
+    await image.raw().toBuffer();
+  } catch {
+    throw new Error("Codex V2 spritesheet must be fully decodable.");
   }
 }
 

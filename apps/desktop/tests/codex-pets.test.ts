@@ -58,13 +58,13 @@ async function runImageContracts(): Promise<void> {
   const validV2Atlas = await createAtlas(1536, 2288, "webp");
   await validateCodexPetSpritesheet(validV2Atlas, v2);
   await assert.rejects(() => createAtlas(1536, 2080, "webp").then((atlas) => validateCodexPetSpritesheet(atlas, v2)), /exactly 1536x2288/);
-  await assert.rejects(() => createAtlas(1536, 2288, "png").then((atlas) => validateCodexPetSpritesheet(atlas, v2)), /fully decodable RGBA WebP/);
+  await assert.rejects(() => createAtlas(1536, 2288, "png").then((atlas) => validateCodexPetSpritesheet(atlas, v2)), /must be WebP/);
   const opaqueWebp = await sharp({ create: { width: 1536, height: 2288, channels: 3, background: { r: 0, g: 0, b: 0 } } }).webp().toBuffer();
-  await assert.rejects(() => validateCodexPetSpritesheet(opaqueWebp, v2), /fully decodable RGBA WebP/);
+  await assert.rejects(() => validateCodexPetSpritesheet(opaqueWebp, v2), /must include transparency/);
   const secondV2Frame = await sharp({ create: { width: 1536, height: 2288, channels: 4, background: { r: 1, g: 0, b: 0, alpha: 0.5 } } }).webp().toBuffer();
   const animatedWebp = await sharp([validV2Atlas, secondV2Frame], { join: { animated: true } }).webp({ delay: [100, 100], loop: 0 }).toBuffer();
-  await assert.rejects(() => validateCodexPetSpritesheet(animatedWebp, v2), /fully decodable RGBA WebP/);
-  await assert.rejects(() => validateCodexPetSpritesheet(Buffer.from("not an image"), v2), /fully decodable RGBA WebP/);
+  await assert.rejects(() => validateCodexPetSpritesheet(animatedWebp, v2), /exactly one image/);
+  await assert.rejects(() => validateCodexPetSpritesheet(Buffer.from("not an image"), v2), /metadata is invalid/);
   await validateCodexPetSpritesheet(Buffer.from("not an image"), valid);
   console.log("Codex pet validation and V2 layout contracts passed.");
 }
