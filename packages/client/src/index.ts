@@ -21,7 +21,7 @@ const SESSION_NONCE = randomUUID();
 export interface OpenPetsClientOptions {
   readonly discoveryPath?: string;
   /** Explicit remote mode. Remote mode never reads the local discovery file. */
-  readonly remote?: OpenPetsRemoteOptions;
+  readonly remote?: OpenPetsRemoteOptions | false;
   readonly remoteEndpoint?: string;
   readonly remoteToken?: string;
   readonly remoteClientId?: string;
@@ -199,6 +199,7 @@ interface ResolvedRemoteOptions {
 }
 
 function resolveRemoteOptions(options: OpenPetsClientOptions): ResolvedRemoteOptions | null {
+  if (options.remote === false) return null;
   const explicit = options.remote;
   const hasFlatRemote = options.remoteEndpoint !== undefined || options.remoteToken !== undefined || options.remoteClientId !== undefined;
   const hasEnvironmentRemote = process.env.OPENPETS_REMOTE_ENDPOINT !== undefined || process.env.OPENPETS_REMOTE_TOKEN !== undefined || process.env.OPENPETS_REMOTE_CLIENT_ID !== undefined;

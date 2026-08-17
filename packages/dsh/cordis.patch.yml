@@ -1,0 +1,3 @@
+- insert:
+    - id: openpets-dsh
+      name: '@open-pets/dsh'

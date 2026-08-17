@@ -26,9 +26,12 @@ There are three runtime worlds. Keep them distinct in your head.
    This is the only long-lived process; remote control is disabled by default.
 2. **Agent-side integrations** (`packages/*`) - short-lived code that runs
    inside or alongside a coding agent (Claude Code hooks, the MCP server,
-   OpenCode plugin, Cursor config, Pi extension, the CLI). They translate agent
-   activity into pet commands and send them over local IPC unless an explicit
-   remote endpoint/token configuration selects the separate remote protocol.
+   OpenCode plugin, Cursor config, Pi extension, the DSH Cordis bundle, the
+   CLI). They translate agent activity into pet commands and send them over
+   local IPC unless an explicit remote endpoint/token configuration selects the
+   separate remote protocol.
+   `@open-pets/dsh` is the strict local-only v1 exception: it always uses local
+   IPC and the default pet and ignores all remote configuration.
 3. **The public web origin** (`openpets.dev`, source in `web/`) - static
    catalogs and asset hosting. The app fetches pet/plugin catalogs and downloads
    ZIPs from here. Only the *data* side of `web/` (catalogs, ZIP hosting, pet
@@ -67,13 +70,17 @@ encrypted overlay with its own ACLs; CGNAT addressing alone is not encryption.
 | `@open-pets/cursor` | Cursor MCP config + project rules management | [Agent integrations](/agent-integrations) |
 | `@open-pets/pi` | Pi coding-agent extension + `/openpets` commands | [Agent integrations](/agent-integrations) |
 | `@open-pets/agent-events` | Shared, validated speech pools for agent feedback | [Agent integrations](/agent-integrations) |
+| `@open-pets/dsh` | Strict local-only v1 Cordis bundle for DSH lifecycle reactions | [Agent integrations](/agent-integrations) |
 | `@open-pets/plugin-sdk` | Public SDK v3 type contract + deterministic test harness | [Plugin SDK v3](/sdk) |
 | `install-pet` | Standalone pet installer (works with or without the running app) | [Pets](/pets) |
 | `pet-format` | Tiny marker/identity type for pet packages | - |
 
-The dependency spine: every integration depends on `@open-pets/client`; the
-`cli` composes `claude`, `opencode`, `cursor`, and `mcp`; `claude`/`opencode`/`pi`
-depend on `agent-events` for safe speech.
+The dependency spine: every integration, including `@open-pets/dsh`, depends on
+`@open-pets/client`; the `cli` composes `claude`, `opencode`, `cursor`, and
+`mcp`; `claude`/`opencode`/`pi`/`dsh` use curated speech for safe automatic
+feedback.
+`@open-pets/dsh` is strict local-only v1: it always uses local IPC and the
+default pet and ignores remote configuration.
 
 ## End-to-end flows
 

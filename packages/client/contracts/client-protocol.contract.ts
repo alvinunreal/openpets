@@ -140,6 +140,21 @@ restoreEnvironment("OPENPETS_REMOTE_TOKEN", previousRemoteEnvironment.token);
 restoreEnvironment("OPENPETS_REMOTE_CLIENT_ID", previousRemoteEnvironment.clientId);
 restoreEnvironment("OPENPETS_DISCOVERY_FILE", previousRemoteEnvironment.discovery);
 
+process.env.OPENPETS_REMOTE_ENDPOINT = "tcp://8.8.8.8:37645";
+process.env.OPENPETS_REMOTE_TOKEN = "too-short";
+try {
+  const localOnlyClient = createOpenPetsClient({
+    remote: false,
+    remoteEndpoint: "tcp://8.8.8.8:37645",
+    remoteToken: "too-short",
+    remoteClientId: "ignored",
+  });
+  assert.equal(localOnlyClient.transport, "local", "remote: false must override flat and environment remote configuration");
+} finally {
+  restoreEnvironment("OPENPETS_REMOTE_ENDPOINT", previousRemoteEnvironment.endpoint);
+  restoreEnvironment("OPENPETS_REMOTE_TOKEN", previousRemoteEnvironment.token);
+}
+
 await withRemoteServer("timeout", async (endpoint) => {
   const client = createOpenPetsClient({ remote: { endpoint, token: "x".repeat(43) }, responseTimeoutMs: 50 });
   await assert.rejects(client.react("working"), (error: unknown) => error instanceof OpenPetsClientError && error.code === "response_timeout");

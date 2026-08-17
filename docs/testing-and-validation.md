@@ -72,6 +72,9 @@ Each package runs its own `check`/`test`. Notable contract/boundary coverage:
   representative plugin against the test harness to detect drift between the
   published types (`index.ts`), the harness (`testing.ts`), and the desktop
   bridge. Changing the SDK without updating all three fails here. See [Plugin SDK v3](/sdk).
+- `@open-pets/dsh` - package artifact/load smoke: confirm the built or published
+  artifact loads as the DSH Cordis bundle and its automatic dispatch wiring is
+  available without model tools or MCP setup. See [Agent integrations](/agent-integrations).
 - `packages/cursor/src/check-cursor.ts`, `packages/opencode` checks, etc. - validate the safe config-write behavior (status classification, redaction,
   symlink/oversize rejection, atomic writes, uninstall preserving user entries).
   See [Agent integrations](/agent-integrations).
@@ -150,7 +153,8 @@ after to confirm the deploy landed. See [Catalogs](/catalog).
 Before shipping, the relevant gate must be green:
 
 - **A package change** → `pnpm check` + `pnpm test` (incl. contract + conformance
-  checks) pass.
+  checks) pass; for `@open-pets/dsh`, the package artifact/load smoke also
+  passes.
 - **An app change** → desktop behavior + contract + runtime checks pass; if it
   touches packaging/CSP/bundled plugins, `check-packaging-contract.ts` passes.
   A delivery, trusted-asset protocol, or sprite-picker change additionally needs
