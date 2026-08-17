@@ -18,6 +18,7 @@ export const pluginSdkAsyncRoutes = [
   "files.pick", "files.read", "files.save",
   "system.info", "system.metrics", "system.openExternal", "system.readClipboardText", "system.writeClipboardText",
   "commands.register", "commands.unregister", "status.set", "status.clear", "http.fetch",
+  "assistant.registerCapability", "assistant.unregisterCapability",
   "log.debug", "log.info", "log.warn", "log.error",
 ] as const;
 

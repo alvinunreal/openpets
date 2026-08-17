@@ -14,7 +14,7 @@ import type {
   OpenPetsPluginDefinition,
   OpenPetsStatus,
 } from "./index.js";
-import { createMockContext } from "./testing.js";
+import { createMockContext, createTestHarness } from "./testing.js";
 
 export { createMockContext } from "./testing.js";
 
@@ -82,6 +82,16 @@ const plugin: OpenPetsPluginDefinition = {
     await ctx.commands.register({ id: "greet", title: "Greet" }, async () => {
       await ctx.pet.speak("Hi again!");
     });
+    await ctx.assistant.registerCapability({
+      id: "sample.greet",
+      description: "Greet someone by name.",
+      inputSchema: {
+        type: "object",
+        properties: { name: { type: "string", minLength: 1, maxLength: 40 } },
+        required: ["name"],
+        additionalProperties: false,
+      },
+    }, async (input) => ({ greeting: `Hello, ${String(input.name)}.` }));
     // i18n surface: ctx.locale (active host locale) + ctx.t (runtime translation).
     await ctx.status.set({ text: `${ctx.locale}:${ctx.t("greeting", { name: "Pet" })}` });
   },
@@ -99,6 +109,8 @@ assert.equal(calls.status.length, 2);
 assert.ok(calls.schedules.has("tick"));
 assert.ok(calls.schedules.has("daily-summary"));
 assert.ok(calls.commands.has("greet"));
+assert.ok(calls.assistantCapabilities.has("sample.greet"));
+assert.deepEqual(await harness.runCapability("sample.greet", { name: "Pet" }), { greeting: "Hello, Pet." });
 assert.equal(calls.bubbles.length, 4, "speak + ui.alert + ui.bubble all produce bubbles");
 assert.equal(calls.bubbles[3]!.spec.hud?.items.length, 2);
 assert.equal(calls.bubbles[3]!.spec.hud?.items[0]?.icon, "food");
@@ -150,5 +162,16 @@ i18n.harness.system.set({ locale: "ja" });
 assert.equal(i18n.ctx.locale, "ja", "ctx.locale follows system.set({ locale })");
 assert.equal(i18n.ctx.t("greeting", { name: "Pet" }), "やあ Pet", "active locale catalog wins");
 assert.equal(i18n.ctx.t("absent"), "absent", "unknown key echoes even with catalogs");
+
+const assistantHarness = createTestHarness({
+  async start(ctx) {
+    await ctx.assistant.registerCapability({ id: "sample.echo", description: "Echo input.", inputSchema: { type: "object", additionalProperties: true } }, async (input) => ({ ...input }));
+  },
+}, { permissions: [] });
+await assistantHarness.start();
+assert.deepEqual(await assistantHarness.runCapability("sample.echo", { value: 1 }), { value: 1 }, "capability harness invocation is deterministic");
+assert.ok(assistantHarness.calls.assistantCapabilities.has("sample.echo"), "capability registrations are recorded");
+await assistantHarness.stop();
+assert.equal(assistantHarness.calls.assistantCapabilities.size, 0, "harness cleanup removes capability registrations");
 
 console.log("Plugin SDK contract tests passed.");

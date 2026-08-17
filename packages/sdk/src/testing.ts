@@ -24,6 +24,8 @@ import type {
   OpenPetsBubbleHandle,
   OpenPetsAlert,
   OpenPetsAlertHandle,
+  OpenPetsAssistantCapability,
+  OpenPetsAssistantCapabilityHandler,
   OpenPetsCommand,
   OpenPetsCommandHandler,
   OpenPetsContext,
@@ -75,6 +77,11 @@ export interface RecordedDelivery {
   dismissed: boolean;
 }
 
+export interface RecordedAssistantCapability {
+  capability: OpenPetsAssistantCapability;
+  handler: OpenPetsAssistantCapabilityHandler;
+}
+
 export interface RecordedSchedule {
   type: "once" | "every" | "daily" | "cron" | "at";
   handler: OpenPetsScheduleHandler;
@@ -101,6 +108,7 @@ export interface MockCalls {
   storage: Map<string, unknown>;
   schedules: Map<string, RecordedSchedule>;
   commands: Map<string, { meta: OpenPetsCommand; handler: OpenPetsCommandHandler }>;
+  assistantCapabilities: Map<string, RecordedAssistantCapability>;
   menuItems: OpenPetsMenuItem[];
   bubbles: RecordedBubble[];
   alerts: RecordedAlert[];
@@ -288,6 +296,7 @@ export interface MockHarnessCore {
   fireBubbleSubmit(bubbleId: string, values: Record<string, string | number>): Promise<void>;
   dismissBubble(bubbleId: string, reason?: OpenPetsBubbleDismissReason): Promise<void>;
   dismissDelivery(deliveryId: string, reason?: OpenPetsDeliveryDismissReason): Promise<void>;
+  runCapability(id: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
   runCommand(commandId: string, values?: Record<string, unknown>): Promise<void>;
   setConfig(config: Record<string, unknown>): Promise<void>;
   net: { mock(urlPrefix: string, response: { status?: number; json?: unknown; text?: string; chunks?: string[] }): void };
@@ -311,7 +320,7 @@ export function createMockContext(optionsOrConfig: MockContextOptions | Record<s
   const calls: MockCalls = {
     speak: [], react: [], reactions: [], statusReactions: [], status: [], storage: new Map(), schedules: new Map(), commands: new Map(), menuItems: [],
     bubbles: [], alerts: [], deliveries: [], dismissedBubbles: [], toasts: [], notifications: [], sounds: [], importedUserSounds: [], forgottenUserSounds: [], busPublishes: [], netCalls: [],
-    aiCalls: [], voiceSpeaks: [], openedExternal: [], clipboardWrites: [], spawnedPets: [], panelMessages: [],
+    aiCalls: [], voiceSpeaks: [], openedExternal: [], clipboardWrites: [], spawnedPets: [], panelMessages: [], assistantCapabilities: new Map(),
     savedFiles: [], secrets: new Map(), errors: [],
   };
   const clock = new FakeClock(options.nowMs ?? Date.now(), calls.schedules, (message) => calls.errors.push(message));
@@ -654,6 +663,10 @@ export function createMockContext(optionsOrConfig: MockContextOptions | Record<s
       set: async (status) => { requirePermission("status"); calls.status.push(status); },
       clear: async () => { requirePermission("status"); },
     },
+    assistant: {
+      registerCapability: async (capability, handler) => { calls.assistantCapabilities.set(capability.id, { capability: { ...capability, inputSchema: { ...capability.inputSchema } }, handler }); },
+      unregisterCapability: async (id) => { calls.assistantCapabilities.delete(id); },
+    },
     http: {
       fetch: async (url, options) => {
         requirePermission("network");
@@ -681,6 +694,11 @@ export function createMockContext(optionsOrConfig: MockContextOptions | Record<s
     fireBubbleSubmit: async (bubbleId, values) => { const entry = bubbleCallbacks.get(bubbleId); if (!entry) throw new Error(`Unknown bubble: ${bubbleId}`); await entry.callbacks.onSubmit?.(values); },
     dismissBubble: async (bubbleId, reason = "click") => { const entry = bubbleCallbacks.get(bubbleId); if (!entry || entry.record.dismissed) return; entry.record.dismissed = true; calls.dismissedBubbles.push(bubbleId); entry.callbacks.onDismiss?.(reason); },
     dismissDelivery,
+    runCapability: async (id, input) => {
+      const capability = calls.assistantCapabilities.get(id);
+      if (!capability) throw new Error(`Unknown assistant capability: ${id}`);
+      return capability.handler(input);
+    },
     runCommand: async (commandId, values) => { const command = calls.commands.get(commandId); if (!command) throw new Error(`Unknown command: ${commandId}`); await command.handler(values); },
     setConfig: async (next) => { config = { ...next }; for (const listener of configListeners) await Promise.resolve(listener({ ...config })); },
     net: { mock: (urlPrefix, response) => { netMocks.unshift({ urlPrefix, response }); } },
@@ -699,6 +717,7 @@ export function createMockContext(optionsOrConfig: MockContextOptions | Record<s
   const cleanup = async (): Promise<void> => {
     calls.schedules.clear();
     calls.commands.clear();
+    calls.assistantCapabilities.clear();
     for (const entry of bubbleCallbacks.values()) {
       try { await entry.record.handle.dismiss(); } catch {}
     }

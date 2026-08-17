@@ -61,6 +61,7 @@ each gated by a permission ([Plugin platform](/plugins)):
 | `ctx.assets` | Resolve declared asset refs (icons/images/sprites/sounds) | (declared assets) |
 | `ctx.commands` | Register right-click commands | `commands` |
 | `ctx.status` | Publish status text | (status surface) |
+| `ctx.assistant` | Explicitly register structured capabilities for host assistant routing | No new permission |
 | `ctx.t` | Localized strings via plugin locales | - |
 | `ctx.log` | Plugin logging | - |
 
@@ -68,6 +69,35 @@ The exact signatures live in `packages/sdk/src/index.ts` - that file is the
 contract, so program against it rather than any list copied into a doc.
 `OpenPetsPermission` in the SDK mirrors manifest validation so authors get
 autocomplete for exactly the capabilities they can request.
+
+### `ctx.assistant`
+
+`ctx.assistant.registerCapability(...)` is the explicit opt-in for making a
+plugin operation callable by the host Pet Assistant. There is deliberately no
+`assistant` manifest permission: registration grants no authority and does not
+change the plugin's existing permission approvals. Every SDK effect performed
+by a handler still goes through the normal bridge permission and quota checks.
+
+A capability has a stable `id`, a plain-language `description`, and an
+object-rooted `inputSchema`. The v1 schema subset supports `type`, `properties`,
+`required`, boolean `additionalProperties`, `description`, `enum`, `const`,
+string `minLength`/`maxLength`, numeric `minimum`/`maximum`, and array `items`,
+`minItems`, and `maxItems`. The host rejects unsupported schema keywords and
+malformed descriptors. Inputs are validated and cloned before the handler runs;
+handlers return object-shaped JSON-safe results subject to host size and depth
+limits. `unregisterCapability(id)` removes a registration owned by the current
+plugin generation. Current v1 limits are 32 registrations per plugin, 16 KiB
+per schema, depth six for schemas, 32 properties per object, 128 total schema
+properties, 32 array items, 4,096 characters per string, 64 KiB per input or
+result, and a five-second host execution wait.
+
+The host owns capability discovery and execution routing. Plugin disable,
+reload, and stop revoke registrations, and an in-flight result from an old
+plugin generation is rejected rather than returned as current state. Capability
+registration does not persist transcripts or conversations. Sensitive-action
+confirmation UX and the Pet Assistant model loop are outside this contract;
+issue #137 only adds the plugin capability boundary and does not implement
+realtime tool calling.
 
 `ctx.net` is the canonical network surface. Executable permissions are
 manifest∩approved. Hosts match the intersection of `network.hosts` and approved
@@ -126,6 +156,9 @@ host lifecycle signal rather than a durable acknowledgement.
 - **Everything is permission-gated and quota-bound.** A namespace call without
   the declared+approved permission is denied; storage and other namespaces have
   quotas (`plugin-sdk-quotas`). Design for graceful denial.
+- **Assistant registration is not permission escalation.** Only explicitly
+  registered capabilities are discoverable, while their handlers retain the
+  plugin's ordinary manifest and user-approved authority.
 - **State survives restarts.** `ctx.storage` persists; schedules reconcile after
   restart/sleep. Stateful companions (reminders, virtual pet) rely on this.
 - **Localize by reference.** Use `$t:` in the manifest and `ctx.t(key, vars)` in
@@ -142,10 +175,11 @@ deterministic mock `ctx` with **fake time** and runs the plugin's startup
 without Electron, then exposes controls and assertions:
 
 - **Drive**: `clock.advance(...)`, `emit(event)`, `runCommand(...)`,
-  `fireBubbleAction(...)`.
+  `runCapability(...)`, `fireBubbleAction(...)`.
 - **Assert on recorded effects** (descriptors, not pixels): helpers like
   `expectSpoke`, `expectBubble`, `expectScheduled`, plus recorded
-  storage/config/network/AI/sound/panel/pet actions and recorded deliveries.
+  storage/config/network/AI/sound/panel/pet actions, recorded deliveries, and
+  capability registrations.
 
 This is why official plugins can have fast, deterministic `test.js` suites:
 they assert that a scheduled job *would* fire and the pet *would* speak, by

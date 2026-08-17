@@ -263,6 +263,10 @@ const sdk = {
     set: (status) => call("status.set", [status]),
     clear: () => call("status.clear", []),
   },
+  assistant: {
+    registerCapability: (capability, handler) => call("assistant.registerCapability", [capability, registerCallback(handler)]),
+    unregisterCapability: (id) => call("assistant.unregisterCapability", [id]),
+  },
   http: {
     fetch: (url, options) => call("http.fetch", [url, options]),
   },

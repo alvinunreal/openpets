@@ -257,6 +257,87 @@ await scenario("javascript plugin starts through host", async ({ store }) => {
   assert.equal(store.getRecord("plug")?.brokenReason, undefined);
 });
 
+await scenario("assistant discovery and execution follow the active plugin lifecycle", async ({ store }) => {
+  let starts = 0;
+  const jsHost: PluginJsHost = {
+    async startPlugin(options) {
+      starts += 1;
+      const version = starts;
+      options.sdk!.assistant.registerCapability({
+        id: "focus.status",
+        description: "Read focus status.",
+        inputSchema: { type: "object", properties: { detail: { type: "boolean" } }, additionalProperties: false },
+      }, async (input) => ({ version, detail: input.detail === true }));
+      return { stop: () => undefined };
+    },
+  };
+  addPlugin(store, { manifestVersion: 3, runtime: "javascript", sdkVersion: "3.0.0", approvedPermissions: [] }, jsManifest({ manifestVersion: 3, sdkVersion: "3.0.0", permissions: [] }));
+  const rt = runtime(store, new FakeScheduler(), new FakePetApi(), undefined, jsHost);
+  await rt.start();
+  assert.equal(rt.getAssistantCapabilities().length, 1);
+  assert.deepEqual(await rt.executeAssistantCapability("plug", "focus.status", { detail: true }), { version: 1, detail: true });
+  await rt.reloadPlugin("plug");
+  assert.deepEqual(await rt.executeAssistantCapability("plug", "focus.status", {}), { version: 2, detail: false });
+  await rt.stop();
+  assert.deepEqual(rt.getAssistantCapabilities(), []);
+  await assert.rejects(() => rt.executeAssistantCapability("plug", "focus.status", {}), /active/);
+});
+
+await scenario("assistant in-flight results from a replaced generation are rejected", async ({ store }) => {
+  let starts = 0;
+  let releaseOld!: (result: Record<string, unknown>) => void;
+  let oldStarted!: () => void;
+  const started = new Promise<void>((resolve) => { oldStarted = resolve; });
+  const jsHost: PluginJsHost = {
+    async startPlugin(options) {
+      starts += 1;
+      if (starts === 1) {
+        options.sdk!.assistant.registerCapability({ id: "slow", description: "Wait for work.", inputSchema: { type: "object" } }, () => {
+          oldStarted();
+          return new Promise<Record<string, unknown>>((resolve) => { releaseOld = resolve; });
+        });
+      } else {
+        options.sdk!.assistant.registerCapability({ id: "slow", description: "Wait for work.", inputSchema: { type: "object" } }, async () => ({ current: true }));
+      }
+      return { stop: () => undefined };
+    },
+  };
+  addPlugin(store, { manifestVersion: 3, runtime: "javascript", sdkVersion: "3.0.0", approvedPermissions: [] }, jsManifest({ manifestVersion: 3, sdkVersion: "3.0.0", permissions: [] }));
+  const rt = runtime(store, new FakeScheduler(), new FakePetApi(), undefined, jsHost);
+  await rt.start();
+  const pending = rt.executeAssistantCapability("plug", "slow", {});
+  await started;
+  await rt.reloadPlugin("plug");
+  releaseOld({ stale: true });
+  await assert.rejects(() => pending, /active/);
+  assert.deepEqual(await rt.executeAssistantCapability("plug", "slow", {}), { current: true });
+});
+
+await scenario("assistant discovery excludes disabled and broken plugins", async ({ store }) => {
+  let breakPlugin = false;
+  const jsHost: PluginJsHost = {
+    async startPlugin(options) {
+      options.sdk!.assistant.registerCapability({ id: "status", description: "Read status.", inputSchema: { type: "object" } }, async () => ({ ok: true }));
+      if (breakPlugin) options.onBroken("broken for test");
+      return { stop: () => undefined };
+    },
+  };
+  addPlugin(store, { manifestVersion: 3, runtime: "javascript", sdkVersion: "3.0.0", approvedPermissions: [] }, jsManifest({ manifestVersion: 3, sdkVersion: "3.0.0", permissions: [] }));
+  const rt = runtime(store, new FakeScheduler(), new FakePetApi(), undefined, jsHost);
+  await rt.start();
+  assert.equal(rt.getAssistantCapabilities().length, 1);
+  store.setEnabled("plug", false);
+  await rt.reloadPlugin("plug");
+  assert.deepEqual(rt.getAssistantCapabilities(), []);
+
+  store.setEnabled("plug", true);
+  store.clearBrokenReason("plug");
+  breakPlugin = true;
+  await rt.reloadPlugin("plug");
+  assert.deepEqual(rt.getAssistantCapabilities(), []);
+  assert.match(store.getRecord("plug")?.brokenReason ?? "", /broken for test/);
+});
+
 await scenario("javascript stop cancels host", async ({ store }) => {
   const jsHost = new FakeJsHost();
   addPlugin(store, { manifestVersion: 2, runtime: "javascript", approvedPermissions: [] }, jsManifest());
@@ -297,6 +378,36 @@ await scenario("stop drains in-flight javascript startup", async ({ store }) => 
   assert.equal(voiceCalls, 0);
   assert.equal(staleVoiceError, "Plugin is no longer active.");
   assert.equal(hostStopped, true);
+});
+
+await scenario("stale startup cleanup keeps assistant generations aligned", async ({ store }) => {
+  let starts = 0;
+  let releaseStartup!: () => void;
+  let startupStarted!: () => void;
+  const startup = new Promise<void>((resolve) => { startupStarted = resolve; });
+  const gate = new Promise<void>((resolve) => { releaseStartup = resolve; });
+  const jsHost: PluginJsHost = {
+    async startPlugin(options) {
+      starts += 1;
+      if (starts === 1) {
+        startupStarted();
+        await gate;
+        return { stop: () => undefined };
+      }
+      options.sdk!.assistant.registerCapability({ id: "healthy", description: "Healthy capability.", inputSchema: { type: "object" } }, async () => ({ healthy: true }));
+      return { stop: () => undefined };
+    },
+  };
+  addPlugin(store, { manifestVersion: 3, runtime: "javascript", sdkVersion: "3.0.0", approvedPermissions: [] }, jsManifest({ manifestVersion: 3, sdkVersion: "3.0.0", permissions: [] }));
+  const rt = runtime(store, new FakeScheduler(), new FakePetApi(), undefined, jsHost);
+  const firstStart = rt.start();
+  await startup;
+  const stop = rt.stop();
+  releaseStartup();
+  await Promise.all([firstStart, stop]);
+  await rt.start();
+  assert.equal(rt.getAssistantCapabilities().length, 1);
+  assert.deepEqual(await rt.executeAssistantCapability("plug", "healthy", {}), { healthy: true });
 });
 
 await scenario("javascript startup failure marks broken", async ({ store }) => {

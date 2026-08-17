@@ -6,12 +6,13 @@ import { registerConfigChangedEvent } from "./plugin-sdk-config.js";
 export function createPluginEventsApi(options: {
   readonly state: PluginRuntimeState;
   readonly capabilities: PluginHostCapabilities;
+  readonly requireActive: () => void;
   readonly requirePermission: (permission: PluginPermission) => void;
   readonly guardCallback: <A extends unknown[]>(fn: (...args: A) => unknown) => ((...args: A) => void);
   readonly allowedEventNames: ReadonlySet<string>;
   readonly eventSubscriptionsQuota: number;
 }) {
-  const { state, capabilities, requirePermission, guardCallback, allowedEventNames, eventSubscriptionsQuota } = options;
+  const { state, capabilities, requireActive, requirePermission, guardCallback, allowedEventNames, eventSubscriptionsQuota } = options;
   return {
     on: (event: unknown, handler: (payload: Record<string, unknown>) => void) => {
       requirePermission("events");
@@ -33,7 +34,7 @@ export function createPluginEventsApi(options: {
       }
       return { subscriptionId: subId };
     },
-    off: (subscriptionId: unknown) => { state.eventSubscriptions.get(String(subscriptionId))?.(); state.eventSubscriptions.delete(String(subscriptionId)); },
+    off: (subscriptionId: unknown) => { requireActive(); state.eventSubscriptions.get(String(subscriptionId))?.(); state.eventSubscriptions.delete(String(subscriptionId)); },
   };
 }
 

@@ -9,6 +9,7 @@ import { defaultMaxPluginManifestBytes, readSafePluginManifest } from "./plugin-
 import { type OpenPetsJavascriptPluginManifest, type OpenPetsPluginManifest, type PluginAction } from "./plugin-manifest.js";
 import type { PluginPetApi } from "./plugin-pet-api.js";
 import { PluginSdkBridge, type PluginHostCapabilities, type PluginLogLevel, type PluginRuntimePublicState, type PluginStorageStore } from "./plugin-sdk-bridge.js";
+import type { PluginAssistantCapability } from "./plugin-sdk-assistant.js";
 import type { PluginInspectorState } from "./plugin-sdk-state.js";
 import type { PluginStateRecord, PluginStateStore } from "./plugin-state.js";
 import { classifyPluginError, logPluginDiagnostic } from "./plugin-diagnostics.js";
@@ -88,6 +89,23 @@ export class PluginRuntime {
   getPluginState(id: string): PluginRuntimePublicState { return this.#sdkBridge.getPublicState(id); }
   getInspectorState(id: string): PluginInspectorState { return this.#sdkBridge.getInspectorState(id); }
   executeCommand(id: string, commandId: string, args?: Record<string, unknown>): Promise<void> { return this.#sdkBridge.executeCommand(id, commandId, args); }
+  getAssistantCapabilities(): readonly PluginAssistantCapability[] {
+    if (!this.#active) return [];
+    const capabilities: PluginAssistantCapability[] = [];
+    for (const record of this.#stateStore.listRecords()) {
+      const slot = this.#slots.get(record.id);
+      if (!slot?.active || !record.enabled || record.catalogDisabled || record.brokenReason) continue;
+      capabilities.push(...this.#sdkBridge.getAssistantCapabilities(record.id, slot.generation));
+    }
+    return capabilities;
+  }
+  executeAssistantCapability(pluginId: string, capabilityId: string, input: unknown): Promise<Record<string, unknown>> {
+    if (!this.#active) return Promise.reject(new Error("Plugin runtime is not active."));
+    const record = this.#stateStore.getRecord(pluginId);
+    const slot = this.#slots.get(pluginId);
+    if (!record || !slot?.active || !record.enabled || record.catalogDisabled || record.brokenReason) return Promise.reject(new Error("Plugin is no longer active."));
+    return this.#sdkBridge.executeAssistantCapability(pluginId, capabilityId, input, slot.generation);
+  }
   executeMenuSelect(id: string, itemId: string): Promise<void> { return this.#sdkBridge.executeMenuSelect(id, itemId); }
   notifyConfigChanged(id: string): void { this.#sdkBridge.notifyConfigChanged(id); }
   resyncSchedules(): void { this.#sdkBridge.resyncSchedules(); }
@@ -179,7 +197,7 @@ export class PluginRuntime {
     if (!this.#canCommitReload(record, generation)) {
       host.stop();
       unregisterPluginLocales(record.id);
-      await this.#clearPlugin(record.id);
+      await this.#clearPlugin(record.id, generation);
       return;
     }
     slot.jsHost = host;
@@ -235,8 +253,8 @@ export class PluginRuntime {
     logPluginDiagnostic(this.#logger, "debug", "plugin cancel", { pluginId: id, phase: "end" });
   }
 
-  async #clearPlugin(id: string): Promise<void> {
-    this.#sdkBridge.clearPlugin(id);
+  async #clearPlugin(id: string, expectedGeneration?: number): Promise<void> {
+    if (!this.#sdkBridge.clearPlugin(id, expectedGeneration)) return;
     const teardown = (this.#capabilities as { clearPlugin?: (pluginId: string) => void | Promise<void> } | undefined)?.clearPlugin;
     if (teardown) {
       try { await teardown(id); } catch { /* host teardown is best effort */ }

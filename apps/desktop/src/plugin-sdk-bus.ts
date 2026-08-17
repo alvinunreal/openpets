@@ -7,6 +7,7 @@ export function createPluginBusApi(options: {
   readonly pluginId: string;
   readonly state: PluginRuntimeState;
   readonly topics: Map<string, Set<PluginBusTopicEntry>>;
+  readonly requireActive: () => void;
   readonly requirePermission: (permission: PluginPermission) => void;
   readonly guardCallback: <A extends unknown[]>(fn: (...args: A) => unknown) => ((...args: A) => void);
   readonly normalizeJson: (value: unknown, maxBytes: number, label: string) => unknown;
@@ -14,7 +15,7 @@ export function createPluginBusApi(options: {
   readonly busPayloadBytes: number;
   readonly busSubscriptionsQuota: number;
 }) {
-  const { pluginId, state, topics, requirePermission, guardCallback, normalizeJson, busPerMinute, busPayloadBytes, busSubscriptionsQuota } = options;
+  const { pluginId, state, topics, requireActive, requirePermission, guardCallback, normalizeJson, busPerMinute, busPayloadBytes, busSubscriptionsQuota } = options;
   return {
     publish: async (topic: unknown, payload: unknown) => {
       requirePermission("bus");
@@ -41,7 +42,7 @@ export function createPluginBusApi(options: {
       state.eventSubscriptions.set(subId, () => { subscribers.delete(entry); state.busSubscriptions.delete(subId); });
       return { subscriptionId: subId };
     },
-    unsubscribe: (subscriptionId: unknown) => { state.eventSubscriptions.get(String(subscriptionId))?.(); state.eventSubscriptions.delete(String(subscriptionId)); },
+    unsubscribe: (subscriptionId: unknown) => { requireActive(); state.eventSubscriptions.get(String(subscriptionId))?.(); state.eventSubscriptions.delete(String(subscriptionId)); },
   };
 }
 
