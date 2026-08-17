@@ -205,7 +205,7 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `renderer/`: Vite React/Tailwind Control Center shell for Dashboard, Pets, Integrations, Plugins, and Settings.
 
 **Pets**:
-- `pet-window.ts`: Window creation (transparent, frameless, always-on-top), HTML/CSS generation, sprite animation states, speech bubbles, status badges, transient displays
+- `pet-window.ts`: Window creation (transparent, frameless, always-on-top), HTML/CSS generation, sprite animation states, speech bubbles, status badges, transient displays, and validated V1/V2 installed-atlas layout selection
 - `default-pet-controller.ts`: Default pet visibility, position persistence, transient reactions, status badges, logging
 - `agent-pet-controller.ts`: Lease-triggered pet windows, dismissal tracking, transient displays, status badges, logging
 - `pet-motion-engine.ts`: Interpolated movement vector/tick engine for plugin-driven pet motion and target-following behavior
@@ -223,8 +223,9 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 **Installation**:
 - `pet-installation.ts`: ZIP download, yauzl extraction with safety limits, pet validation
 - `pet-paths.ts`: Safe path resolution for pet directories
+- `pet-file-safety.ts`: Bounded, no-follow regular-file reads shared by pet import and installed-pet rendering
 - `codex-pets.ts`: Import from `~/.codex/pets/` with validation
-- `codex-pets-core.ts`: Codex metadata validation constants
+- `codex-pets-core.ts`: Codex V1/V2 metadata, exact V2 atlas, and neutral-pose layout validation
 - `catalog.ts`: Remote catalog fetch with V3 pagination support, search, fixture fallback
 - `catalog-validation.ts`: CatalogV2/V3 schema validation
 - `zip-safety.ts`: ZIP entry path validation (traversal prevention, case collision detection)
@@ -282,7 +283,7 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `update-version.ts`: Version parsing and comparison
 
 **Tests** (excluded from detailed codemap coverage per repository conventions):
-- Behavior tests live in `tests/*.test.ts` (compiled to `.test-dist/tests/`)
+- Behavior tests live in `tests/*.test.ts` (compiled to `.test-dist/tests/`); `codex-pets.test.ts` asserts released V1/V2 metadata fixtures and strict V2 atlas contracts
 - Contract tests live in `contracts/*.contract.ts` (compiled to `.test-dist/contracts/`)
 - Runtime checks (`check-*.ts`) remain in `src/` for packaging/validation (compiled to `dist/`)
 

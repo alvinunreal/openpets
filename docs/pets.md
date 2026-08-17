@@ -238,6 +238,27 @@ regenerating the catalog) lives in `web/`'s sync scripts. The contract those
 scripts produce is in [Catalogs](/catalog), with release checks in
 [Testing and validation](/testing-and-validation).
 
+### Codex sprite versions
+
+OpenPets preserves the original Codex V1 package shape: an unmarked
+`spritesheet.webp` with the nine standard `192×208` animation rows. It also
+imports V2 only when `pet.json` has `"spriteVersionNumber": 2` and its source
+asset is a fully decodable, single-image, alpha-enabled WebP with the exact `1536×2288`
+(`8×11`) grid. Any other supplied version marker, a non-WebP/non-alpha image,
+or a mismatched V2 atlas is rejected before the atomic import writes anything.
+
+The V2 adapter uses the unchanged standard rows 0–8 for OpenPets reactions and
+horizontal run motion, and uses V2's neutral pose (row 0, column 6) whenever
+the existing runtime is idle. This matches the released
+[Malou V2 manifest](https://raw.githubusercontent.com/mySebbe/malou-codex-pet/v2.0.0/dist/malou/pet.json)
+and its [8×11 atlas specification](https://raw.githubusercontent.com/mySebbe/malou-codex-pet/v2.0.0/metadata/atlas.json).
+
+V2's sixteen look-direction cells (rows 9–10) are retained in the imported
+atlas but are not individually selected: OpenPets currently emits only idle,
+left-run, and right-run motion, not a two-dimensional gaze target. It therefore
+does not invent directional behavior or claim full gaze support. A future gaze
+API can map those cells directly without changing the import contract.
+
 ## Image protocols & CSP
 
 Pet images are served to renderers through internal protocols
