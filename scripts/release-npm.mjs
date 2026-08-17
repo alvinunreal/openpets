@@ -14,6 +14,7 @@ const publishOrder = [
   "packages/sdk",
   "packages/client",
   "packages/agent-events",
+  "packages/dsh",
   "packages/mcp",
   "packages/claude",
   "packages/opencode",
@@ -269,13 +270,14 @@ Packages:
   1. @open-pets/plugin-sdk
   2. @open-pets/client
   3. @open-pets/agent-events
-  4. @open-pets/mcp
-  5. @open-pets/claude
-  6. @open-pets/opencode
-  7. @open-pets/cursor
-  8. @open-pets/pi
-  9. @open-pets/cli
-  10. install-pet
+  4. @open-pets/dsh
+  5. @open-pets/mcp
+  6. @open-pets/claude
+  7. @open-pets/opencode
+  8. @open-pets/cursor
+  9. @open-pets/pi
+  10. @open-pets/cli
+  11. install-pet
 
 Options:
   --yes            publish to npm; without this, runs pnpm publish --dry-run

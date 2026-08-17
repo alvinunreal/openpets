@@ -12,7 +12,7 @@ assert.equal(typeof apply, "function");
   const packageDirectory = join(import.meta.dirname, "..");
   const manifest = JSON.parse(readFileSync(join(packageDirectory, "package.json"), "utf8")) as Record<string, unknown>;
   assert.equal(manifest.name, "@open-pets/dsh");
-  assert.equal(manifest.version, "3.3.0");
+  assert.match(manifest.version as string, /^\d+\.\d+\.\d+$/, "package version must use stable semver");
   assert.deepEqual(manifest.files, [
     "dist/index.d.ts",
     "dist/index.js",
