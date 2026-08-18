@@ -3,6 +3,7 @@ import { lookup } from "node:dns/promises";
 import * as net from "node:net";
 import { join } from "node:path";
 
+import type { OpenPetsAssistantCapability, OpenPetsAssistantCapabilityHandler } from "@open-pets/plugin-sdk";
 import { getActiveLocaleLang } from "./i18n/index.js";
 import type { OpenPetsReaction } from "./local-ipc-protocol.js";
 import { validateReaction, validateSayMessage } from "./local-ipc-protocol.js";
@@ -21,6 +22,7 @@ import type { ScheduleSpec, PluginInspectorState } from "./plugin-sdk-state.js";
 import { WindowCounter, type PluginRuntimeState } from "./plugin-sdk-state.js";
 import { createPluginStorageApi } from "./plugin-sdk-storage.js";
 import { createPluginUiApi } from "./plugin-sdk-ui.js";
+import { normalizeAssistantResult, validateAssistantCapability, validateAssistantInput, type PluginAssistantCapability, type PluginAssistantCapabilityRegistration } from "./plugin-sdk-assistant.js";
 import type { PluginStateRecord, PluginStateStore } from "./plugin-state.js";
 import { classifyPluginError, logPluginDiagnostic } from "./plugin-diagnostics.js";
 
@@ -372,9 +374,10 @@ export class PluginSdkBridge {
     const apiGeneration = this.#apiGenerations.get(pluginId) ?? 0;
     const requireActive = () => { if ((this.#apiGenerations.get(pluginId) ?? 0) !== apiGeneration) throw new Error("Plugin is no longer active."); };
     const requirePermission = (permission: PluginPermission) => { requireActive(); if (!approved.has(permission)) throw new Error(`Plugin permission is not approved: ${permission}`); };
-    const runScheduled = async (callback: () => unknown) => { try { await callback(); } catch (error) { this.#onError(pluginId, safeError(error)); } };
+    const isCurrentGeneration = () => (this.#apiGenerations.get(pluginId) ?? 0) === apiGeneration;
+    const runScheduled = async (callback: () => unknown) => { try { requireActive(); await callback(); } catch (error) { if (isCurrentGeneration()) this.#onError(pluginId, safeError(error)); } };
     const getConfig = () => ({ ...(this.#stateStore.getRecord(pluginId)?.config ?? {}) }) as PluginConfig;
-    const guardCallback = <A extends unknown[]>(fn: (...args: A) => unknown): ((...args: A) => void) => (...args) => { void Promise.resolve().then(() => fn(...args)).catch((error: unknown) => this.#onError(pluginId, safeError(error))); };
+    const guardCallback = <A extends unknown[]>(fn: (...args: A) => unknown): ((...args: A) => void) => (...args) => { void Promise.resolve().then(() => { requireActive(); return fn(...args); }).catch((error: unknown) => { if (isCurrentGeneration()) this.#onError(pluginId, safeError(error)); }); };
 
     const setSchedule = (id: string, spec: ScheduleSpec, callback: () => unknown) => {
       requirePermission("schedule");
@@ -529,10 +532,10 @@ export class PluginSdkBridge {
 
     const audio = createPluginAudioApi({ pluginId, state, capabilities: caps, requirePermission, audioPerMinute: quotas.audioPerMinute, resolveAssetRef });
     const ui = createPluginUiApi({ pluginId, manifest, installPath: record.installPath, state, capabilities: caps, audio, requirePermission, guardCallback, validateBubbleSpec, validatePetHandleId, resolvePanelPath: (name) => resolveDeclaredPanelPath(manifest, record.installPath, name), normalizeJson, validateMenuItems, validateSayMessage, safeError, logger: this.#logger, onError: (reason) => this.#onError(pluginId, reason), quotas });
-    const storage = createPluginStorageApi({ pluginId, state, storage: this.#storage, requirePermission, guardCallback, validateStorageKey, onError: (reason) => this.#onError(pluginId, reason), safeError, storageSubscriptionsQuota: quotas.storageSubscriptions });
-    const config = createPluginConfigApi({ state, getConfig });
-    const events = createPluginEventsApi({ state, capabilities: caps, requirePermission, guardCallback, allowedEventNames, eventSubscriptionsQuota: quotas.eventSubscriptions });
-    const bus = createPluginBusApi({ pluginId, state, topics: this.#busTopics, requirePermission, guardCallback, normalizeJson, busPerMinute: quotas.busPerMinute, busPayloadBytes: quotas.busPayloadBytes, busSubscriptionsQuota: quotas.busSubscriptions });
+    const storage = createPluginStorageApi({ pluginId, state, storage: this.#storage, requireActive, requirePermission, guardCallback, validateStorageKey, onError: (reason) => this.#onError(pluginId, reason), safeError, storageSubscriptionsQuota: quotas.storageSubscriptions });
+    const config = createPluginConfigApi({ state, getConfig, requireActive });
+    const events = createPluginEventsApi({ state, capabilities: caps, requireActive, requirePermission, guardCallback, allowedEventNames, eventSubscriptionsQuota: quotas.eventSubscriptions });
+    const bus = createPluginBusApi({ pluginId, state, topics: this.#busTopics, requireActive, requirePermission, guardCallback, normalizeJson, busPerMinute: quotas.busPerMinute, busPayloadBytes: quotas.busPayloadBytes, busSubscriptionsQuota: quotas.busSubscriptions });
 
     const petNamespace = (petHandleId: string) => ({
       speak: (spec: unknown) => ui.showBubble(petHandleId, spec),
@@ -569,7 +572,7 @@ export class PluginSdkBridge {
         state.tickSubscriptions.set(subId, dispose);
         return { subscriptionId: subId };
       },
-      offTick: (subscriptionId: unknown) => { const dispose = state.tickSubscriptions.get(String(subscriptionId)); dispose?.(); state.tickSubscriptions.delete(String(subscriptionId)); },
+      offTick: (subscriptionId: unknown) => { requireActive(); const dispose = state.tickSubscriptions.get(String(subscriptionId)); dispose?.(); state.tickSubscriptions.delete(String(subscriptionId)); },
       getState: async () => { requirePermission("pets:read"); return caps.pets.getState(validatePetHandleId(petHandleId)); },
       show: async () => { requirePermission("pets:manage"); await caps.pets.show(validatePetHandleId(petHandleId)); },
       hide: async () => { requirePermission("pets:manage"); await caps.pets.hide(validatePetHandleId(petHandleId)); },
@@ -604,13 +607,14 @@ export class PluginSdkBridge {
           state.eventSubscriptions.set(subId, caps.pets.onChange(guardCallback(handler)));
           return { subscriptionId: subId };
         },
-        offChange: (subscriptionId: unknown) => { state.eventSubscriptions.get(String(subscriptionId))?.(); state.eventSubscriptions.delete(String(subscriptionId)); },
+        offChange: (subscriptionId: unknown) => { requireActive(); state.eventSubscriptions.get(String(subscriptionId))?.(); state.eventSubscriptions.delete(String(subscriptionId)); },
       },
       ui: ui.api,
       audio,
       events,
       assets: {
         resolve: (kind: unknown, name: unknown) => {
+          requireActive();
           const kindMap: Record<string, PluginAssetKind> = { icon: "icons", image: "images", svg: "svgs", sprite: "sprites", sound: "sounds" };
           const mapped = kindMap[String(kind)];
           if (!mapped) throw new Error("Invalid plugin asset kind.");
@@ -625,9 +629,9 @@ export class PluginSdkBridge {
         daily: (id: string, spec: string | { time: string; days?: number[] }, callback: () => unknown) => { setSchedule(id, { type: "daily", daily: parseDaily(spec) }, callback); },
         cron: (id: string, expr: unknown, callback: () => unknown) => { const expression = String(expr); parseCronExpression(expression); setSchedule(id, { type: "cron", expr: expression }, callback); },
         at: (id: string, isoTimestamp: unknown, callback: () => unknown) => { const timestamp = Date.parse(String(isoTimestamp)); check(Number.isFinite(timestamp), "Invalid schedule timestamp."); setSchedule(id, { type: "at", timestamp }, callback); },
-        list: () => [...state.schedules.entries()].map(([id, slot]) => ({ id, nextRunMs: slot.nextRunMs })),
-        cancel: (id: string) => { state.schedules.get(String(id))?.handle.cancel(); state.schedules.delete(String(id)); },
-        cancelAll: () => { for (const slot of state.schedules.values()) slot.handle.cancel(); state.schedules.clear(); },
+        list: () => { requireActive(); return [...state.schedules.entries()].map(([id, slot]) => ({ id, nextRunMs: slot.nextRunMs })); },
+        cancel: (id: string) => { requireActive(); state.schedules.get(String(id))?.handle.cancel(); state.schedules.delete(String(id)); },
+        cancelAll: () => { requireActive(); for (const slot of state.schedules.values()) slot.handle.cancel(); state.schedules.clear(); },
       },
       storage,
       config,
@@ -746,11 +750,33 @@ export class PluginSdkBridge {
       },
       commands: {
         register: (command: PluginCommand, handler: (values?: Record<string, unknown>) => unknown) => { requirePermission("commands"); const meta = validateCommand(command, (ref) => resolveAssetRef(ref, ["icons"])); check(state.commands.size < quotas.commands || state.commands.has(meta.id), "Plugin command quota exceeded."); state.commands.set(meta.id, { meta, handler }); },
-        unregister: (id: string) => { state.commands.delete(String(id)); },
+        unregister: (id: string) => { requirePermission("commands"); state.commands.delete(String(id)); },
       },
-      status: { set: (status: PluginStatus | string) => { requirePermission("status"); state.status = validateStatus(status); }, clear: () => { state.status = undefined; } },
+      status: { set: (status: PluginStatus | string) => { requirePermission("status"); state.status = validateStatus(status); }, clear: () => { requirePermission("status"); state.status = undefined; } },
+      assistant: {
+        registerCapability: (capability: OpenPetsAssistantCapability, handler: OpenPetsAssistantCapabilityHandler) => {
+          requireActive();
+          if (typeof handler !== "function") throw new Error("Invalid assistant capability handler.");
+          const validated = validateAssistantCapability(capability);
+          const existing = state.assistantCapabilities.get(validated.capability.id);
+          check(state.assistantCapabilities.size < quotas.assistantCapabilities || existing !== undefined, "Plugin assistant capability quota exceeded.");
+          const registration: PluginAssistantCapabilityRegistration = {
+            capability: validated.capability,
+            schema: validated.schema,
+            handler: handler as PluginAssistantCapabilityRegistration["handler"],
+            generation: apiGeneration,
+          };
+          state.assistantCapabilities.set(validated.capability.id, registration);
+        },
+        unregisterCapability: (id: string) => {
+          requireActive();
+          const capabilityId = String(id);
+          const registration = state.assistantCapabilities.get(capabilityId);
+          if (registration?.generation === apiGeneration) state.assistantCapabilities.delete(capabilityId);
+        },
+      },
       http: { fetch: async (url: string, options?: unknown) => { requirePermission("network"); state.httpWindow.tick(quotas.httpPerMinute, "HTTP"); const opts = isRecord(options) ? options : {}; check(opts.method === undefined || String(opts.method).toUpperCase() === "GET", "Plugin HTTP fetch only supports GET."); return safeHttpFetch(String(url), { method: "GET", headers: safeNetHeaders(opts.headers), timeoutMs: opts.timeoutMs === undefined ? undefined : Number(opts.timeoutMs) }, allowedNetworkHosts(record, manifest), false, { logger: this.#logger, pluginId, route: "http.fetch" }); } },
-      log: Object.fromEntries((["debug", "info", "warn", "error"] as PluginLogLevel[]).map((level) => [level, (...args: unknown[]) => { state.logWindow.tick(quotas.logsPerMinute, "log"); this.#logger(level, "plugin log", { id: manifest.id, args }); }])) as Record<PluginLogLevel, (...args: unknown[]) => void>,
+      log: Object.fromEntries((["debug", "info", "warn", "error"] as PluginLogLevel[]).map((level) => [level, (...args: unknown[]) => { requireActive(); state.logWindow.tick(quotas.logsPerMinute, "log"); this.#logger(level, "plugin log", { id: manifest.id, args }); }])) as Record<PluginLogLevel, (...args: unknown[]) => void>,
       t: makePluginT(manifest.id),
       get locale(): string { return getActiveLocaleLang(); },
     };
@@ -774,6 +800,43 @@ export class PluginSdkBridge {
       lastError: state.lastError,
       quotaCounters: { petActions: state.petWindow.count, logs: state.logWindow.count, http: state.httpWindow.count, bus: state.busWindow.count, audio: state.audioWindow.count, notify: state.notifyWindow.count, toast: state.toastWindow.count, ai: state.aiWindow.count, voice: state.voiceWindow.count },
     };
+  }
+
+  getAssistantCapabilities(id: string, expectedGeneration?: number): readonly PluginAssistantCapability[] {
+    const currentGeneration = this.#apiGenerations.get(id) ?? 0;
+    if (expectedGeneration !== undefined && currentGeneration !== expectedGeneration) return [];
+    const state = this.#pluginState(id);
+    return [...state.assistantCapabilities.values()]
+      .filter((registration) => registration.generation === currentGeneration)
+      .map((registration) => ({ pluginId: id, capability: registration.capability }));
+  }
+
+  async executeAssistantCapability(id: string, capabilityId: string, input: unknown, expectedGeneration?: number): Promise<Record<string, unknown>> {
+    const state = this.#pluginState(id);
+    const registration = state.assistantCapabilities.get(String(capabilityId));
+    if (!registration) throw new Error(`Assistant capability "${capabilityId}" is not registered for plugin "${id}".`);
+    this.#assertAssistantRegistration(id, registration, expectedGeneration);
+    const normalizedInput = validateAssistantInput(registration.schema, input);
+    this.#assertAssistantRegistration(id, registration, expectedGeneration);
+    const result = await withTimeout(
+      Promise.resolve().then(() => {
+        this.#assertAssistantRegistration(id, registration, expectedGeneration);
+        return registration.handler(normalizedInput);
+      }),
+      quotas.assistantExecutionTimeoutMs,
+      "Plugin assistant capability timed out.",
+    );
+    this.#assertAssistantRegistration(id, registration, expectedGeneration);
+    const normalizedResult = normalizeAssistantResult(result);
+    this.#assertAssistantRegistration(id, registration, expectedGeneration);
+    return normalizedResult;
+  }
+
+  #assertAssistantRegistration(id: string, registration: PluginAssistantCapabilityRegistration, expectedGeneration?: number): void {
+    const currentGeneration = this.#apiGenerations.get(id) ?? 0;
+    if (expectedGeneration !== undefined && currentGeneration !== expectedGeneration) throw new Error("Plugin is no longer active.");
+    const current = this.#pluginState(id).assistantCapabilities.get(registration.capability.id);
+    if (registration.generation !== currentGeneration || current !== registration) throw new Error("Plugin is no longer active.");
   }
 
   async executeCommand(id: string, commandId: string, args?: Record<string, unknown>, timeoutMs = 5_000): Promise<void> {
@@ -832,11 +895,13 @@ export class PluginSdkBridge {
   }
 
   clearPlugin(id: string): void {
-    this.#apiGenerations.set(id, (this.#apiGenerations.get(id) ?? 0) + 1);
+    const currentGeneration = this.#apiGenerations.get(id) ?? 0;
+    this.#apiGenerations.set(id, currentGeneration + 1);
     const state = this.#pluginState(id);
     for (const slot of state.schedules.values()) slot.handle.cancel();
     state.schedules.clear();
     state.commands.clear();
+    state.assistantCapabilities.clear();
     state.menuItems = [];
     state.menuHandlers.clear();
     state.status = undefined;
@@ -865,7 +930,7 @@ export class PluginSdkBridge {
     let state = this.#states.get(id);
     if (!state) {
       state = {
-        commands: new Map(), menuItems: [], menuHandlers: new Set(), schedules: new Map(), configListeners: new Set(),
+        commands: new Map(), assistantCapabilities: new Map(), menuItems: [], menuHandlers: new Set(), schedules: new Map(), configListeners: new Set(),
         storageSubscriptions: new Map(), busSubscriptions: new Map(), eventSubscriptions: new Map(), tickSubscriptions: new Map(),
         bubbles: new Map(), deliveries: new Map(), panels: new Map(), spawnedPets: new Set(), pickedFiles: new Set(), userCommandDepth: 0,
         petWindow: new WindowCounter(), logWindow: new WindowCounter(), httpWindow: new WindowCounter(), busWindow: new WindowCounter(),
@@ -1407,6 +1472,6 @@ export function nextCronRunMs(expr: string, fromMs: number): number | null {
   return null;
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> { return new Promise((resolve, reject) => { const timeout = setTimeout(() => reject(new Error("Plugin command timed out.")), timeoutMs); promise.then((v) => { clearTimeout(timeout); resolve(v); }, (e) => { clearTimeout(timeout); reject(e); }); }); }
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage = "Plugin command timed out."): Promise<T> { return new Promise((resolve, reject) => { const timeout = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs); promise.then((v) => { clearTimeout(timeout); resolve(v); }, (e) => { clearTimeout(timeout); reject(e); }); }); }
 function safeError(error: unknown): string { return error instanceof Error ? error.message : "Plugin SDK callback failed."; }
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }

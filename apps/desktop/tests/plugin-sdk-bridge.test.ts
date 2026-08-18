@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { PluginSdkBridge, type PluginHostCapabilities } from "../src/plugin-sdk-bridge.js";
+import { PluginSdkBridge, type PluginDeliveryHostHandle, type PluginHostCapabilities } from "../src/plugin-sdk-bridge.js";
 import { pluginSdkQuotas } from "../src/plugin-sdk-quotas.js";
 import { PluginStateStore, type PluginStateRecord } from "../src/plugin-state.js";
 import type { OpenPetsJavascriptPluginManifest } from "../src/plugin-manifest.js";
@@ -131,7 +131,7 @@ await scenario("unregistered command diagnostics identify safe command and plugi
 
 await scenario("status validation reports safe actionable errors", ({ bridge, store }) => {
   const record = store.getRecord("plug")!;
-  const api = bridge.createApi({ ...record, approvedPermissions: [...record.approvedPermissions, "status"] }, manifest());
+  const api = bridge.createApi({ ...record, approvedPermissions: [...record.approvedPermissions, "status"] }, manifest({ permissions: [...record.approvedPermissions, "status"] as OpenPetsJavascriptPluginManifest["permissions"] }));
 
   assert.throws(() => api.status.set({ text: 42 } as never), /Plugin status text must be a string; received number\./);
   assert.throws(() => api.status.set(" \t "), /Plugin status text must not be empty\./);
@@ -269,6 +269,21 @@ await scenario("delivery re-registration retires obsolete handles and callbacks"
   assert.deepEqual(api.ui.deliverySubscribe(second.deliveryId, () => undefined), { ok: false });
 });
 
+await scenario("late delivery registration is dismissed after generation clear", async ({ bridge, store, capabilities }) => {
+  const record = { ...store.getRecord("plug")!, approvedPermissions: [...store.getRecord("plug")!.approvedPermissions, "ui:delivery" as const] };
+  store.upsertRecord(record);
+  const api = bridge.createApi(record, manifest({ permissions: record.approvedPermissions as OpenPetsJavascriptPluginManifest["permissions"] }));
+  let release!: (handle: PluginDeliveryHostHandle) => void;
+  let dismissals = 0;
+  capabilities.delivery.register = async () => new Promise<PluginDeliveryHostHandle>((resolve) => { release = resolve; });
+  const pending = api.ui.delivery({ key: "calendar.1", courier: { kind: "sprite", name: "courier" }, title: "Pending", detail: "Soon", expiresAt: Date.now() + 60_000 });
+  await Promise.resolve();
+  bridge.clearPlugin("plug");
+  release({ dismiss: () => { dismissals += 1; }, onDismiss: () => undefined });
+  await pending;
+  assert.equal(dismissals, 1);
+});
+
 await scenario("net.fetch with network:local reaches exact local HTTP and public HTTPS hosts", async ({ bridge, store }) => {
   const originalFetch = globalThis.fetch;
   const localHost = "127.0.0.1:18765";
@@ -357,6 +372,175 @@ await scenario("approved bare hostname does not approve a newly declared host:po
     network: { hosts: ["127.0.0.1:9876"] },
   }));
   await assert.rejects(() => api.net.fetch("http://127.0.0.1:9876/"), /host is not approved/);
+});
+
+await scenario("assistant registration is explicit and does not require a permission", async ({ api, bridge }) => {
+  let calls = 0;
+  api.assistant.registerCapability({
+    id: "focus.start",
+    description: "Start a focus session.",
+    inputSchema: {
+      type: "object",
+      properties: { minutes: { type: "integer", minimum: 1, maximum: 120 } },
+      required: ["minutes"],
+      additionalProperties: false,
+    },
+  }, async (input) => { calls += 1; return { started: true, minutes: input.minutes }; });
+
+  assert.deepEqual(bridge.getAssistantCapabilities("plug"), [{
+    pluginId: "plug",
+    capability: {
+      id: "focus.start",
+      description: "Start a focus session.",
+      inputSchema: {
+        type: "object",
+        properties: { minutes: { type: "integer", minimum: 1, maximum: 120 } },
+        required: ["minutes"],
+        additionalProperties: false,
+      },
+    },
+  }]);
+  assert.deepEqual(await bridge.executeAssistantCapability("plug", "focus.start", { minutes: 25 }), { started: true, minutes: 25 });
+  assert.equal(calls, 1);
+});
+
+await scenario("assistant schema rejects unsupported and oversized descriptors", ({ api }) => {
+  assert.throws(() => api.assistant.registerCapability({ id: "bad", description: "Bad", inputSchema: { type: "object", anyOf: [] } }, () => ({})), /Unsupported assistant capability schema keyword/);
+  assert.throws(() => api.assistant.registerCapability({ id: "bad", description: "Bad", inputSchema: { type: "array", items: { type: "string" } } }, () => ({})), /inputSchema must have type object/);
+  assert.throws(() => api.assistant.registerCapability({ id: "bad id", description: "Bad", inputSchema: { type: "object" } }, () => ({})), /Invalid assistant capability id/);
+  assert.throws(() => api.assistant.registerCapability({ id: "bad", description: " ", inputSchema: { type: "object" } }, () => ({})), /Invalid assistant capability description/);
+  assert.throws(() => api.assistant.registerCapability({ id: "bad", description: "Bad", inputSchema: { type: "object", properties: { value: { type: "string", maxLength: pluginSdkQuotas.assistantStringChars + 1 } } } }, () => ({})), /Invalid assistant capability schema maxLength/);
+  assert.throws(() => api.assistant.registerCapability({ id: "bad", description: "Bad", inputSchema: { type: "object", properties: { value: { type: "string", unsupported: true } } } }, () => ({})), /Unsupported assistant capability schema keyword/);
+  assert.throws(() => api.assistant.registerCapability({ id: "bad", description: "Bad", inputSchema: { type: "object", properties: Object.fromEntries(Array.from({ length: pluginSdkQuotas.assistantObjectProperties + 1 }, (_, index) => [`p${index}`, { type: "string" }])) } }, () => ({})), /too many properties/);
+  assert.throws(() => api.assistant.registerCapability({ id: "bad", description: "Bad", inputSchema: { type: "object", properties: { value: { type: "string", enum: Array.from({ length: pluginSdkQuotas.assistantEnumValues }, () => "x".repeat(pluginSdkQuotas.assistantStringChars)) } } } }, () => ({})), /inputSchema is too large/);
+  let deepSchema: Record<string, unknown> = { type: "string" };
+  for (let depth = 0; depth <= pluginSdkQuotas.assistantSchemaDepth; depth += 1) deepSchema = { type: "object", properties: { child: deepSchema } };
+  assert.throws(() => api.assistant.registerCapability({ id: "bad", description: "Bad", inputSchema: deepSchema }, () => ({})), /too deeply nested|Invalid assistant capability schema/);
+});
+
+await scenario("assistant schema validates input before invoking the handler", async ({ api, bridge }) => {
+  let calls = 0;
+  api.assistant.registerCapability({
+    id: "reminder.create",
+    description: "Create a reminder.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string", minLength: 1, maxLength: 20 },
+        minutes: { type: "number", minimum: 1, maximum: 120 },
+        tags: { type: "array", items: { type: "string", maxLength: 10 }, minItems: 1, maxItems: 2 },
+        mode: { type: "string", enum: ["normal", "urgent"] },
+        fixed: { type: "boolean", const: true },
+      },
+      required: ["title", "minutes"],
+      additionalProperties: false,
+    },
+  }, async () => { calls += 1; return { ok: true }; });
+
+  await assert.rejects(() => bridge.executeAssistantCapability("plug", "reminder.create", { minutes: 20 }), /title is required/);
+  await assert.rejects(() => bridge.executeAssistantCapability("plug", "reminder.create", { title: "x", minutes: 0 }), /below minimum/);
+  await assert.rejects(() => bridge.executeAssistantCapability("plug", "reminder.create", { title: "x", minutes: "20" }), /must be a number/);
+  await assert.rejects(() => bridge.executeAssistantCapability("plug", "reminder.create", { title: "x", minutes: 20, extra: true }), /unsupported property/);
+  await assert.rejects(() => bridge.executeAssistantCapability("plug", "reminder.create", { title: "x", minutes: 20, tags: [] }), /invalid item count/);
+  const sparseTags: string[] = [];
+  sparseTags.length = 1;
+  await assert.rejects(() => bridge.executeAssistantCapability("plug", "reminder.create", { title: "x", minutes: 20, tags: sparseTags }), /sparse arrays/);
+  await assert.rejects(() => bridge.executeAssistantCapability("plug", "reminder.create", { title: "x", minutes: 20, mode: "unknown" }), /enum value/);
+  await assert.rejects(() => bridge.executeAssistantCapability("plug", "reminder.create", { title: "x", minutes: 20, fixed: false }), /const/);
+  await assert.rejects(() => bridge.executeAssistantCapability("plug", "reminder.create", { title: "x", minutes: 20, toString: "inherited" }), /unsupported property/);
+  assert.equal(calls, 0);
+  assert.deepEqual(await bridge.executeAssistantCapability("plug", "reminder.create", { title: "x", minutes: 20, tags: ["work"] }), { ok: true });
+  assert.equal(calls, 1);
+});
+
+await scenario("assistant capability quota and unregister/re-register semantics are enforced", async ({ api, bridge }) => {
+  for (let index = 0; index < pluginSdkQuotas.assistantCapabilities; index += 1) {
+    api.assistant.registerCapability({ id: `cap-${index}`, description: "Capability", inputSchema: { type: "object" } }, async () => ({ version: 1 }));
+  }
+  assert.throws(() => api.assistant.registerCapability({ id: "one-too-many", description: "Capability", inputSchema: { type: "object" } }, () => ({})), /assistant capability quota exceeded/);
+  await api.assistant.unregisterCapability("cap-0");
+  api.assistant.registerCapability({ id: "one-too-many", description: "Capability", inputSchema: { type: "object" } }, async () => ({ version: 2 }));
+  assert.deepEqual(await bridge.executeAssistantCapability("plug", "one-too-many", {}), { version: 2 });
+});
+
+await scenario("assistant results are structured, JSON-safe, bounded, and timeout-limited", async ({ api, bridge }) => {
+  api.assistant.registerCapability({ id: "invalid-array", description: "Capability", inputSchema: { type: "object" } }, () => [] as never);
+  await assert.rejects(() => bridge.executeAssistantCapability("plug", "invalid-array", {}), /result must be an object/);
+
+  api.assistant.registerCapability({ id: "invalid-circular", description: "Capability", inputSchema: { type: "object" } }, () => {
+    const result: Record<string, unknown> = {};
+    result.self = result;
+    return result;
+  });
+  await assert.rejects(() => bridge.executeAssistantCapability("plug", "invalid-circular", {}), /circular/);
+
+  api.assistant.registerCapability({ id: "invalid-date", description: "Capability", inputSchema: { type: "object" } }, () => ({ date: new Date() } as never));
+  await assert.rejects(() => bridge.executeAssistantCapability("plug", "invalid-date", {}), /JSON-compatible/);
+
+  api.assistant.registerCapability({ id: "invalid-size", description: "Capability", inputSchema: { type: "object" } }, () => ({ text: "x".repeat(pluginSdkQuotas.assistantResultBytes) }));
+  await assert.rejects(() => bridge.executeAssistantCapability("plug", "invalid-size", {}), /result.*too large|result.*too long/);
+
+  api.assistant.registerCapability({ id: "handler-error", description: "Capability", inputSchema: { type: "object" } }, () => { throw new Error("handler failed"); });
+  await assert.rejects(() => bridge.executeAssistantCapability("plug", "handler-error", {}), /handler failed/);
+
+  api.assistant.registerCapability({ id: "timeout", description: "Capability", inputSchema: { type: "object" } }, () => new Promise<Record<string, unknown>>(() => undefined));
+  await assert.rejects(() => bridge.executeAssistantCapability("plug", "timeout", {}), /assistant capability timed out/);
+});
+
+await scenario("assistant handlers retain normal plugin permission checks", async ({ bridge, store }) => {
+  const restrictedRecord = { ...store.getRecord("plug")!, approvedPermissions: ["events", "pet:reaction", "auth"] as const };
+  store.upsertRecord(restrictedRecord);
+  const restrictedApi = bridge.createApi(restrictedRecord, manifest({ permissions: restrictedRecord.approvedPermissions as unknown as OpenPetsJavascriptPluginManifest["permissions"] }));
+  restrictedApi.assistant.registerCapability({ id: "needs-storage", description: "Capability", inputSchema: { type: "object" } }, async () => {
+    restrictedApi.storage.set("key", "value");
+    return { ok: true };
+  });
+  await assert.rejects(() => bridge.executeAssistantCapability("plug", "needs-storage", {}), /storage/);
+  restrictedApi.assistant.registerCapability({ id: "needs-status", description: "Capability", inputSchema: { type: "object" } }, async () => {
+    restrictedApi.status.clear();
+    return { ok: true };
+  });
+  await assert.rejects(() => bridge.executeAssistantCapability("plug", "needs-status", {}), /status/);
+  restrictedApi.assistant.registerCapability({ id: "needs-commands", description: "Capability", inputSchema: { type: "object" } }, async () => {
+    restrictedApi.commands.unregister("missing");
+    return { ok: true };
+  });
+  await assert.rejects(() => bridge.executeAssistantCapability("plug", "needs-commands", {}), /commands/);
+
+  const approvedRecord = { ...store.getRecord("plug")!, approvedPermissions: ["storage"] as const };
+  store.upsertRecord(approvedRecord);
+  const approvedApi = bridge.createApi(approvedRecord, manifest({ permissions: ["storage"] }));
+  approvedApi.assistant.registerCapability({ id: "needs-storage", description: "Capability", inputSchema: { type: "object" } }, async () => {
+    approvedApi.storage.set("key", "value");
+    return { ok: true };
+  });
+  assert.deepEqual(await bridge.executeAssistantCapability("plug", "needs-storage", {}), { ok: true });
+});
+
+await scenario("assistant clear and generation replacement revoke stale APIs and results", async ({ api, bridge, store }) => {
+  let release!: (result: Record<string, unknown>) => void;
+  api.assistant.registerCapability({ id: "slow", description: "Capability", inputSchema: { type: "object" } }, () => new Promise<Record<string, unknown>>((resolve) => { release = resolve; }));
+  const pending = bridge.executeAssistantCapability("plug", "slow", {});
+  await Promise.resolve();
+  bridge.clearPlugin("plug");
+  assert.deepEqual(bridge.getAssistantCapabilities("plug"), []);
+  assert.throws(() => api.assistant.registerCapability({ id: "stale", description: "Capability", inputSchema: { type: "object" } }, () => ({})), /no longer active/);
+
+  const current = store.getRecord("plug")!;
+  const freshApi = bridge.createApi(current, manifest());
+  freshApi.assistant.registerCapability({ id: "slow", description: "Capability", inputSchema: { type: "object" } }, async () => ({ fresh: true }));
+  await assert.rejects(async () => { release({ stale: true }); await pending; }, /no longer active/);
+  assert.deepEqual(await bridge.executeAssistantCapability("plug", "slow", {}), { fresh: true });
+  assert.throws(() => api.assistant.unregisterCapability("slow"), /no longer active/);
+});
+
+await scenario("assistant handler is not started after generation clear", async ({ api, bridge }) => {
+  let calls = 0;
+  api.assistant.registerCapability({ id: "not-started", description: "Capability", inputSchema: { type: "object" } }, async () => { calls += 1; return { ok: true }; });
+  const pending = bridge.executeAssistantCapability("plug", "not-started", {});
+  bridge.clearPlugin("plug");
+  await assert.rejects(() => pending, /no longer active/);
+  assert.equal(calls, 0);
 });
 
 type ScenarioContext = {

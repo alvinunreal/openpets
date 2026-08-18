@@ -1,6 +1,7 @@
 import type { PluginConfig } from "./plugin-config.js";
 import type { PluginCommand, PluginBubbleDismissReason, PluginBubbleHostHandle, PluginDeliveryDismissReason, PluginDeliveryHostHandle, PluginMenuItem, PluginPanelHostHandle, PluginStatus } from "./plugin-sdk-bridge.js";
 import type { PluginTimerHandle } from "./plugin-runtime.js";
+import type { PluginAssistantCapabilityRegistration } from "./plugin-sdk-assistant.js";
 
 export type ScheduleSpec =
   | { type: "once"; delayMs: number }
@@ -22,6 +23,7 @@ export class WindowCounter {
 
 export type PluginRuntimeState = {
   commands: Map<string, { meta: PluginCommand; handler: (values?: Record<string, unknown>) => unknown | Promise<unknown> }>;
+  assistantCapabilities: Map<string, PluginAssistantCapabilityRegistration>;
   menuItems: PluginMenuItem[];
   menuHandlers: Set<(id: string) => void>;
   status?: PluginStatus;

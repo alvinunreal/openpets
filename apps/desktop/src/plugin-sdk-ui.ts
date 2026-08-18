@@ -80,7 +80,11 @@ export function createPluginUiApi(options: {
     }
     // A newer registration for this key won while the host call was pending.
     // Its handle exclusively owns dismissal callbacks and host interactions.
-    if (slot.dismissed || state.deliveries.get(deliveryId) !== slot) return { deliveryId };
+    if (slot.dismissed || state.deliveries.get(deliveryId) !== slot) {
+      slot.dismissed = true;
+      try { slot.host.dismiss(); } catch { /* late host handles are best effort */ }
+      return { deliveryId };
+    }
     slot.host.onDismiss((reason) => {
       if (slot.dismissed || !state.deliveries.has(deliveryId)) return;
       slot.dismissed = true;

@@ -6,6 +6,7 @@ export function createPluginStorageApi(options: {
   readonly pluginId: string;
   readonly state: PluginRuntimeState;
   readonly storage: PluginStorageStore;
+  readonly requireActive: () => void;
   readonly requirePermission: (permission: PluginPermission) => void;
   readonly guardCallback: <A extends unknown[]>(fn: (...args: A) => unknown) => ((...args: A) => void);
   readonly validateStorageKey: (key: string) => string;
@@ -13,7 +14,7 @@ export function createPluginStorageApi(options: {
   readonly safeError: (error: unknown) => string;
   readonly storageSubscriptionsQuota: number;
 }) {
-  const { pluginId, state, storage, requirePermission, guardCallback, validateStorageKey, onError, safeError, storageSubscriptionsQuota } = options;
+  const { pluginId, state, storage, requireActive, requirePermission, guardCallback, validateStorageKey, onError, safeError, storageSubscriptionsQuota } = options;
   const notify = (storageKey: string, value: unknown) => {
     for (const sub of state.storageSubscriptions.values()) if (sub.key === storageKey) { try { sub.handler(value); } catch (error) { onError(safeError(error)); } }
   };
@@ -39,7 +40,7 @@ export function createPluginStorageApi(options: {
       state.storageSubscriptions.set(subId, { key: validateStorageKey(key), handler: guardCallback(handler) });
       return { subscriptionId: subId };
     },
-    unsubscribe: (subscriptionId: unknown) => { state.storageSubscriptions.delete(String(subscriptionId)); },
+    unsubscribe: (subscriptionId: unknown) => { requireActive(); state.storageSubscriptions.delete(String(subscriptionId)); },
   };
 }
 

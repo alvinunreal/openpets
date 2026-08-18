@@ -928,6 +928,34 @@ export interface OpenPetsLogApi {
 }
 
 // ---------------------------------------------------------------------------
+// Assistant capabilities
+// ---------------------------------------------------------------------------
+
+/** A bounded, explicitly AI-callable plugin capability descriptor. */
+export interface OpenPetsAssistantCapability {
+  /** Stable capability id (`[A-Za-z0-9._:-]`, 1-64 characters). */
+  id: string;
+  /** Plain-language description shown to the host assistant. */
+  description: string;
+  /** Object-rooted JSON Schema subset describing the capability input. */
+  inputSchema: Record<string, unknown>;
+}
+
+/** Structured object returned by an assistant capability handler. */
+export type OpenPetsAssistantCapabilityResult = Record<string, unknown>;
+
+/** Handler invoked by the host with validated object-shaped input. */
+export type OpenPetsAssistantCapabilityHandler = (
+  input: Record<string, unknown>,
+) => OpenPetsAssistantCapabilityResult | Promise<OpenPetsAssistantCapabilityResult>;
+
+/** Explicit registration surface for capabilities the plugin wants the assistant to call. */
+export interface OpenPetsAssistantApi {
+  registerCapability(capability: OpenPetsAssistantCapability, handler: OpenPetsAssistantCapabilityHandler): Promise<void>;
+  unregisterCapability(id: string): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
 // Context & registration
 // ---------------------------------------------------------------------------
 
@@ -962,6 +990,7 @@ export interface OpenPetsContext {
   system: OpenPetsSystemApi;
   commands: OpenPetsCommandsApi;
   status: OpenPetsStatusApi;
+  assistant: OpenPetsAssistantApi;
   /** v2 alias of `net` (GET-only). */
   http: OpenPetsHttpApi;
   log: OpenPetsLogApi;

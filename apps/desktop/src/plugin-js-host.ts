@@ -150,6 +150,11 @@ type SdkCallHandler = (sdk: PluginSdkApi, args: unknown[], runCallback: RunCallb
 
 const noop = (): void => undefined;
 const callbackOf = (runCallback: RunCallback, id: unknown): ((...callbackArgs: unknown[]) => unknown) => runCallback(id) ?? noop;
+const requiredCallbackOf = (runCallback: RunCallback, id: unknown): ((...callbackArgs: unknown[]) => unknown) => {
+  const callback = runCallback(id);
+  if (!callback) throw new Error("Invalid plugin SDK callback.");
+  return callback;
+};
 
 export const sdkCallHandlers: Record<PluginSdkRoute, SdkCallHandler> = {
   // Pet handles (first arg is the pet handle id; "default" targets the default pet).
@@ -267,6 +272,8 @@ export const sdkCallHandlers: Record<PluginSdkRoute, SdkCallHandler> = {
   "commands.unregister": (sdk, args) => sdk.commands.unregister(String(args[0])),
   "status.set": (sdk, args) => sdk.status.set(args[0] as never),
   "status.clear": (sdk) => sdk.status.clear(),
+  "assistant.registerCapability": (sdk, args, runCallback) => sdk.assistant.registerCapability(args[0] as never, requiredCallbackOf(runCallback, args[1]) as never),
+  "assistant.unregisterCapability": (sdk, args) => sdk.assistant.unregisterCapability(String(args[0])),
   "http.fetch": (sdk, args) => sdk.http.fetch(String(args[0]), args[1]),
   "log.debug": (sdk, args) => sdk.log.debug(...args),
   "log.info": (sdk, args) => sdk.log.info(...args),

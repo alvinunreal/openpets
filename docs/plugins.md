@@ -120,6 +120,43 @@ denied and the block is recorded in diagnostics. `network:*` is further
 constrained to declared hosts. This is defense in depth: manifest validation,
 user approval, runtime permission check, and quotas all apply.
 
+### Assistant capabilities
+
+Assistant capabilities are a separate plugin contract, not a manifest
+permission. A plugin explicitly opts in with
+`ctx.assistant.registerCapability(...)`; an unregistered command or SDK method
+is not implicitly callable by the host assistant. Registration grants no new
+authority. The handler's effects remain limited by the plugin's existing
+manifest-declared and user-approved permissions and continue through the normal
+bridge checks.
+
+The descriptor is bounded and object-rooted: it contains only an id,
+description, and input JSON Schema subset. The host validates supported schema
+keywords, input types, required fields, enum/const values, string and numeric
+bounds, array limits, nested object depth, property counts, and payload size.
+Handlers receive a validated clone and must return an object-shaped,
+JSON-compatible, size-bounded result. Unsupported or malformed schemas,
+circular/non-JSON data, and oversized values are rejected.
+
+The current v1 quotas are 32 registrations per plugin, 16 KiB per schema,
+schema depth six, 32 properties per object, 128 total schema properties, 32
+array items, 4,096 characters per string, 64 KiB per input or result, and a
+five-second host execution wait.
+
+Registrations belong to the owning `PluginSdkBridge` runtime state. Discovery
+and execution are host-internal `PluginRuntime`/`PluginService` operations; no
+global capability registry or plugin-callable discovery route is added. The
+active plugin generation is checked before execution and again after awaiting
+the handler. Disable, reload, stop, and broken-plugin teardown revoke
+registrations, prevent stale APIs from mutating replacement state, and reject
+late results from an old generation.
+
+Existing right-click commands remain direct menu controls. They are not
+implicitly AI-callable and are not a substitute for a capability descriptor.
+Issue #137 does not implement the Pet Assistant model loop, provider/model
+routing, realtime tool calling, transcript or conversation persistence, or
+sensitive-action confirmation UX. Those remain later product work.
+
 Network access is gated per call by the **intersection** of manifest-declared
 permissions and the user's persisted approvals. A stale approval never grants a
 capability the current manifest no longer declares.
