@@ -196,8 +196,7 @@ export class PluginRuntime {
     } });
     if (!this.#canCommitReload(record, generation)) {
       host.stop();
-      unregisterPluginLocales(record.id);
-      await this.#clearPlugin(record.id, generation);
+      await this.#cancelPlugin(record.id);
       return;
     }
     slot.jsHost = host;
@@ -253,8 +252,8 @@ export class PluginRuntime {
     logPluginDiagnostic(this.#logger, "debug", "plugin cancel", { pluginId: id, phase: "end" });
   }
 
-  async #clearPlugin(id: string, expectedGeneration?: number): Promise<void> {
-    if (!this.#sdkBridge.clearPlugin(id, expectedGeneration)) return;
+  async #clearPlugin(id: string): Promise<void> {
+    this.#sdkBridge.clearPlugin(id);
     const teardown = (this.#capabilities as { clearPlugin?: (pluginId: string) => void | Promise<void> } | undefined)?.clearPlugin;
     if (teardown) {
       try { await teardown(id); } catch { /* host teardown is best effort */ }

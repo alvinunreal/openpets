@@ -181,6 +181,13 @@ without Electron, then exposes controls and assertions:
   storage/config/network/AI/sound/panel/pet actions, recorded deliveries, and
   capability registrations.
 
+`runCapability()` directly invokes a recorded plugin handler so plugin behavior
+tests stay deterministic. It assumes the descriptor and input are valid for the
+host contract; it intentionally does not reproduce the desktop bridge's
+security, schema, input, or result validation. The authoritative production
+boundary remains `plugin-sdk-preload.cjs` -> `PluginSdkBridge` ->
+`plugin-sdk-assistant.ts`, covered by desktop bridge/runtime tests.
+
 This is why official plugins can have fast, deterministic `test.js` suites:
 they assert that a scheduled job *would* fire and the pet *would* speak, by
 advancing fake time - no rendering, no flake. See `plugins/official/*/test.js`

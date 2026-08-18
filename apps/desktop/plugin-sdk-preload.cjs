@@ -8,6 +8,8 @@ const tokenArg = process.argv.find((arg) => arg.startsWith("--openpets-plugin-to
 const channel = tokenArg ? `openpets:plugin-sdk:${tokenArg.slice("--openpets-plugin-token=".length)}` : "";
 let callbackId = 0;
 const callbacks = new Map();
+const assistantCapabilityCallbacks = new Map();
+const assistantCapabilityOperations = new Map();
 
 async function call(path, args) {
   if (!channel) throw new Error("OpenPets plugin SDK is unavailable.");
@@ -53,6 +55,19 @@ function registerCallback(fn) {
   const id = `cb-${++callbackId}`;
   callbacks.set(id, fn);
   return id;
+}
+
+function queueAssistantCapabilityOperation(capabilityId, operation) {
+  const previous = assistantCapabilityOperations.get(capabilityId) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(operation);
+  assistantCapabilityOperations.set(capabilityId, current);
+  return current.finally(() => {
+    if (assistantCapabilityOperations.get(capabilityId) === current) assistantCapabilityOperations.delete(capabilityId);
+  });
+}
+
+function assistantCapabilityKey(capability) {
+  return String(capability && typeof capability === "object" ? capability.id ?? "" : "");
 }
 
 // Subscription helper: fire-and-forget subscribe that resolves to a
@@ -264,8 +279,30 @@ const sdk = {
     clear: () => call("status.clear", []),
   },
   assistant: {
-    registerCapability: (capability, handler) => call("assistant.registerCapability", [capability, registerCallback(handler)]),
-    unregisterCapability: (id) => call("assistant.unregisterCapability", [id]),
+    registerCapability: (capability, handler) => {
+      const capabilityId = assistantCapabilityKey(capability);
+      const callback = registerCallback(handler);
+      return queueAssistantCapabilityOperation(capabilityId, async () => {
+        try {
+          await call("assistant.registerCapability", [capability, callback]);
+          const previous = assistantCapabilityCallbacks.get(capabilityId);
+          assistantCapabilityCallbacks.set(capabilityId, callback);
+          if (previous) callbacks.delete(previous);
+        } catch (error) {
+          if (callback) callbacks.delete(callback);
+          throw error;
+        }
+      });
+    },
+    unregisterCapability: (id) => {
+      const capabilityId = String(id);
+      return queueAssistantCapabilityOperation(capabilityId, async () => {
+        await call("assistant.unregisterCapability", [id]);
+        const callback = assistantCapabilityCallbacks.get(capabilityId);
+        if (callback) callbacks.delete(callback);
+        assistantCapabilityCallbacks.delete(capabilityId);
+      });
+    },
   },
   http: {
     fetch: (url, options) => call("http.fetch", [url, options]),

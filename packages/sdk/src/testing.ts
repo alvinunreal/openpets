@@ -296,6 +296,11 @@ export interface MockHarnessCore {
   fireBubbleSubmit(bubbleId: string, values: Record<string, string | number>): Promise<void>;
   dismissBubble(bubbleId: string, reason?: OpenPetsBubbleDismissReason): Promise<void>;
   dismissDelivery(deliveryId: string, reason?: OpenPetsDeliveryDismissReason): Promise<void>;
+  /**
+   * Invoke a recorded capability handler directly for deterministic plugin
+   * behavior tests. This assumes a host-valid descriptor and input; it does
+   * not emulate the desktop bridge's security or validation boundary.
+   */
   runCapability(id: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
   runCommand(commandId: string, values?: Record<string, unknown>): Promise<void>;
   setConfig(config: Record<string, unknown>): Promise<void>;

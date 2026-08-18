@@ -382,32 +382,54 @@ await scenario("stop drains in-flight javascript startup", async ({ store }) => 
 
 await scenario("stale startup cleanup keeps assistant generations aligned", async ({ store }) => {
   let starts = 0;
-  let releaseStartup!: () => void;
   let startupStarted!: () => void;
+  let spawnStarted!: () => void;
+  let releaseSpawn!: (petHandleId: string) => void;
+  let firstCancellationTeardown!: () => void;
+  let staleHostStopped = false;
+  let clearCalls = 0;
+  const closedPets: string[] = [];
   const startup = new Promise<void>((resolve) => { startupStarted = resolve; });
-  const gate = new Promise<void>((resolve) => { releaseStartup = resolve; });
+  const spawnStartedPromise = new Promise<void>((resolve) => { spawnStarted = resolve; });
+  const pendingSpawn = new Promise<string>((resolve) => { releaseSpawn = resolve; });
+  const firstCancellation = new Promise<void>((resolve) => { firstCancellationTeardown = resolve; });
+  const capabilities = createDefaultPluginHostCapabilities(new FakePetApi());
+  capabilities.pets = {
+    ...capabilities.pets,
+    spawn: async () => { spawnStarted(); return pendingSpawn; },
+    close: async (_pluginId, petHandleId) => { closedPets.push(petHandleId); },
+  };
+  capabilities.clearPlugin = async () => {
+    clearCalls += 1;
+    if (clearCalls === 2) firstCancellationTeardown();
+  };
   const jsHost: PluginJsHost = {
     async startPlugin(options) {
       starts += 1;
       if (starts === 1) {
         startupStarted();
-        await gate;
-        return { stop: () => undefined };
+        await options.sdk!.pets.spawn({ petId: "late" });
+        return { stop: () => { staleHostStopped = true; } };
       }
       options.sdk!.assistant.registerCapability({ id: "healthy", description: "Healthy capability.", inputSchema: { type: "object" } }, async () => ({ healthy: true }));
       return { stop: () => undefined };
     },
   };
-  addPlugin(store, { manifestVersion: 3, runtime: "javascript", sdkVersion: "3.0.0", approvedPermissions: [] }, jsManifest({ manifestVersion: 3, sdkVersion: "3.0.0", permissions: [] }));
-  const rt = runtime(store, new FakeScheduler(), new FakePetApi(), undefined, jsHost);
+  addPlugin(store, { manifestVersion: 3, runtime: "javascript", sdkVersion: "3.0.0", approvedPermissions: ["pets:manage"] }, jsManifest({ manifestVersion: 3, sdkVersion: "3.0.0", permissions: ["pets:manage"] }));
+  const rt = new PluginRuntime({ stateStore: store, petApi: new FakePetApi(), scheduler: new FakeScheduler(), allowedPluginRoots: [currentRoot], jsHost, capabilities });
   const firstStart = rt.start();
   await startup;
+  await spawnStartedPromise;
   const stop = rt.stop();
-  releaseStartup();
+  await firstCancellation;
+  releaseSpawn("late-pet");
   await Promise.all([firstStart, stop]);
+  assert.equal(staleHostStopped, true);
+  assert.deepEqual(closedPets, ["late-pet"]);
   await rt.start();
   assert.equal(rt.getAssistantCapabilities().length, 1);
   assert.deepEqual(await rt.executeAssistantCapability("plug", "healthy", {}), { healthy: true });
+  assert.ok(clearCalls >= 3);
 });
 
 await scenario("javascript startup failure marks broken", async ({ store }) => {

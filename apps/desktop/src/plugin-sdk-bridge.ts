@@ -894,9 +894,8 @@ export class PluginSdkBridge {
     }
   }
 
-  clearPlugin(id: string, expectedGeneration?: number): boolean {
+  clearPlugin(id: string): void {
     const currentGeneration = this.#apiGenerations.get(id) ?? 0;
-    if (expectedGeneration !== undefined && currentGeneration !== expectedGeneration) return false;
     this.#apiGenerations.set(id, currentGeneration + 1);
     const state = this.#pluginState(id);
     for (const slot of state.schedules.values()) slot.handle.cancel();
@@ -925,7 +924,6 @@ export class PluginSdkBridge {
     state.userCommandDepth = 0;
     state.lastError = undefined;
     state.petWindow.reset(); state.logWindow.reset(); state.httpWindow.reset(); state.busWindow.reset(); state.audioWindow.reset(); state.notifyWindow.reset(); state.toastWindow.reset(); state.deliveryWindow.reset(); state.aiWindow.reset(); state.voiceWindow.reset();
-    return true;
   }
 
   #pluginState(id: string): PluginRuntimeState {
