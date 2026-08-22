@@ -124,8 +124,7 @@ verifiable delivery work:
 - [#137](https://github.com/alvinunreal/openpets/issues/137) — plugin assistant
   capability SDK/runtime (complete).
 - [#138](https://github.com/alvinunreal/openpets/issues/138) — provider-neutral
-  Pet Assistant conversation and tool loop (host integration complete; no user
-  surface yet).
+  Pet Assistant conversation and tool loop (complete; no user surface yet).
 - [#143](https://github.com/alvinunreal/openpets/issues/143) and
   [#144](https://github.com/alvinunreal/openpets/issues/144) — Focus Buddy and
   Quick Reminders assistant capabilities.
@@ -142,10 +141,10 @@ verifiable delivery work:
   [#150](https://github.com/alvinunreal/openpets/issues/150) — shared
   chat/transcript UI, recent-history management, and pet Talk controls.
 
-The initial implementation order is #138 alongside #143 and #144; then #145
-and #146; then the voice adapters and chat UI; finally history management and
-the pet-owned Talk controls. OpenAI Realtime is an optimized optional adapter,
-not the provider-neutral basis for voice.
+With #137 and #138 complete, the next work is #143 and #144; then #145 and
+#146; then the voice adapters and chat UI; finally history management and the
+pet-owned Talk controls. OpenAI Realtime is an optimized optional adapter, not
+the provider-neutral basis for voice.
 
 ## Decisions made for v4
 
