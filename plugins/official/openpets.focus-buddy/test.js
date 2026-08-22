@@ -46,7 +46,142 @@ const LOCALES = { en: JSON.parse(await readFile(new URL("./locales/en.json", imp
   h.expectNoErrors();
 }
 
-// 1b) Host stop is invoked without a context; the host owns schedule cleanup.
+// 1a) Assistant capabilities expose the focus lifecycle and use state-only feedback.
+{
+  const h = createTestHarness(register, { permissions: PERMISSIONS, locales: LOCALES, config: { focusLength: "25", breakStyle: "normal" }, nowMs: 1_250_000 });
+  await h.start();
+  assert.deepEqual([...h.calls.assistantCapabilities.keys()], ["focus.start", "focus.status", "focus.pause", "focus.resume", "focus.end"]);
+  assert.deepEqual(h.calls.assistantCapabilities.get("focus.start")?.capability.inputSchema, {
+    type: "object",
+    properties: { minutes: { type: "integer", minimum: 1, maximum: 120 } },
+    required: ["minutes"],
+    additionalProperties: false,
+  });
+  assert.deepEqual(await h.runCapability("focus.start", { minutes: 10 }), {
+    ok: true,
+    state: "active",
+    mode: "focus",
+    minutes: 10,
+    paused: false,
+    completedFocusCount: 0,
+  });
+  h.expectStored("session", (v) => v.mode === "focus" && v.endsAt - v.startedAt === 10 * 60_000);
+  assert.equal(h.calls.bubbles.length, 0, "assistant actions must not emit command speech or bubbles");
+  assert.equal(h.calls.speak.length, 0, "assistant actions must not emit command speech or bubbles");
+  assert.equal(h.calls.schedules.size, 2, "assistant start should use the normal timer schedules");
+  h.expectNoErrors();
+}
+
+// 1b) Assistant lifecycle operations reject invalid states without changing the session.
+{
+  const h = createTestHarness(register, { permissions: PERMISSIONS, locales: LOCALES, nowMs: 1_500_000 });
+  await h.start();
+  assert.deepEqual(await h.runCapability("focus.pause", {}), {
+    ok: false,
+    error: "no_active_session",
+    state: "idle",
+    mode: null,
+    minutes: 0,
+    paused: false,
+    completedFocusCount: 0,
+  });
+  assert.deepEqual(await h.runCapability("focus.start", { minutes: 12.5 }), {
+    ok: false,
+    error: "invalid_duration",
+    state: "idle",
+    mode: null,
+    minutes: 0,
+    paused: false,
+    completedFocusCount: 0,
+  });
+  assert.equal(h.calls.storage.has("session"), false, "invalid assistant input must not create a session");
+  await h.runCapability("focus.start", { minutes: 12 });
+  assert.deepEqual(await h.runCapability("focus.pause", {}), {
+    ok: true,
+    state: "paused",
+    mode: "focus",
+    minutes: 12,
+    paused: true,
+    completedFocusCount: 0,
+  });
+  assert.deepEqual(await h.runCapability("focus.pause", {}), {
+    ok: false,
+    error: "already_paused",
+    state: "paused",
+    mode: "focus",
+    minutes: 12,
+    paused: true,
+    completedFocusCount: 0,
+  });
+  assert.deepEqual(await h.runCapability("focus.resume", {}), {
+    ok: true,
+    state: "active",
+    mode: "focus",
+    minutes: 12,
+    paused: false,
+    completedFocusCount: 0,
+  });
+  assert.deepEqual(await h.runCapability("focus.resume", {}), {
+    ok: false,
+    error: "not_paused",
+    state: "active",
+    mode: "focus",
+    minutes: 12,
+    paused: false,
+    completedFocusCount: 0,
+  });
+  assert.deepEqual(await h.runCapability("focus.end", {}), {
+    ok: true,
+    state: "idle",
+    mode: null,
+    minutes: 0,
+    paused: false,
+    completedFocusCount: 0,
+  });
+  assert.deepEqual(await h.runCapability("focus.end", {}), {
+    ok: false,
+    error: "no_active_session",
+    state: "idle",
+    mode: null,
+    minutes: 0,
+    paused: false,
+    completedFocusCount: 0,
+  });
+  assert.equal(h.calls.bubbles.length, 0, "assistant invalid states must not emit command bubbles");
+  h.expectNoErrors();
+}
+
+// 1c) Assistant capabilities are restored with a persisted session after restart.
+{
+  const h = createTestHarness(register, { permissions: PERMISSIONS, locales: LOCALES, nowMs: 1_750_000 });
+  const now = Date.now();
+  await h.ctx.storage.set("session", { mode: "focus", startedAt: now, endsAt: now + 10 * 60_000, pausedRemainingMs: null, completedFocusCount: 2 });
+  await h.start();
+  assert.equal(h.calls.assistantCapabilities.size, 5);
+  assert.deepEqual(await h.runCapability("focus.status", {}), {
+    ok: true,
+    state: "active",
+    mode: "focus",
+    minutes: 10,
+    paused: false,
+    completedFocusCount: 2,
+  });
+  await h.stop();
+  assert.equal(h.calls.assistantCapabilities.size, 0, "host stop should revoke assistant capabilities");
+  await h.start();
+  assert.equal(h.calls.assistantCapabilities.size, 5, "plugin restart should rediscover assistant capabilities");
+  assert.deepEqual(await h.runCapability("focus.status", {}), {
+    ok: true,
+    state: "active",
+    mode: "focus",
+    minutes: 10,
+    paused: false,
+    completedFocusCount: 2,
+  });
+  h.expectNoErrors();
+}
+
+// 1d) Host stop is invoked without a context; the host owns schedule cleanup.
 {
   const h = createTestHarness(register, { permissions: PERMISSIONS, locales: LOCALES, config: { focusLength: "25", breakStyle: "normal" }, nowMs: 1_500_000 });
   await h.start();

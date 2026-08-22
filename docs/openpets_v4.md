@@ -127,7 +127,7 @@ verifiable delivery work:
   Pet Assistant conversation and tool loop (complete; no user surface yet).
 - [#143](https://github.com/alvinunreal/openpets/issues/143) and
   [#144](https://github.com/alvinunreal/openpets/issues/144) — Focus Buddy and
-  Quick Reminders assistant capabilities.
+  Quick Reminders assistant capabilities (complete).
 - [#145](https://github.com/alvinunreal/openpets/issues/145) — independent text,
   speech-to-text, and text-to-speech provider profiles.
 - [#146](https://github.com/alvinunreal/openpets/issues/146) — editable pet
@@ -141,8 +141,8 @@ verifiable delivery work:
   [#150](https://github.com/alvinunreal/openpets/issues/150) — shared
   chat/transcript UI, recent-history management, and pet Talk controls.
 
-With #137 and #138 complete, the next work is #143 and #144; then #145 and
-#146; then the voice adapters and chat UI; finally history management and the
+With #137, #138, #143, and #144 complete, the next work is #145 and #146;
+then the voice adapters and chat UI; finally history management and the
 pet-owned Talk controls. OpenAI Realtime is an optimized optional adapter, not
 the provider-neutral basis for voice.
 
