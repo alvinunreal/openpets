@@ -18,6 +18,7 @@ import { defaultPluginPetApi } from "./plugin-pet-api.js";
 import { initializePluginPlatformSettings } from "./plugin-platform-settings.js";
 import { ElectronPluginJsHost } from "./plugin-js-host.js";
 import { initializePluginService } from "./plugin-service.js";
+import { startPetAssistantHost } from "./pet-assistant-host.js";
 import { createAppTray, refreshTrayMenu } from "./tray.js";
 import { checkForGitHubReleaseUpdate } from "./update-checker.js";
 import { installInternalUiHandlers, installInternalUiProtocol } from "./windows.js";
@@ -137,6 +138,7 @@ if (!gotSingleInstanceLock) {
     void (async () => {
       const service = pluginService;
       await service.start();
+      startPetAssistantHost(service, pluginCapabilities.secretsStore);
       const persistedPaths = service.getLocalSourcePaths();
       for (const path of paths) {
         const result = await service.loadLocalPath(path, { autoApprove: true });

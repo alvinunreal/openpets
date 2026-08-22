@@ -14,6 +14,14 @@ the same conversation.
 
 This is a v4 delivery commitment. It is not a speculative post-v4 direction.
 
+Issue #138 now supplies the host-owned provider adapter, canonical in-memory
+conversation/tool loop, generation-pinned capability routing, and bounded
+turn/lifecycle behavior. It is an internal foundation only: there is not yet a
+chat surface, voice surface, transcript/history persistence, personality
+settings, or provider-profile/settings UI. The host contract accepts bounded
+curated context and style guidance, but no personality setting is persisted or
+user-editable yet.
+
 ## The product experience
 
 Voice is the first conversation surface:
@@ -85,6 +93,11 @@ accepts, and the result it returns.
 - Realtime voice transport is infrastructure, not the product by itself. The
   product is a pet that can converse and act.
 
+The current #138 implementation has no UI, voice, chat, persistence,
+personality, or editable provider-profile surface. Later v4 issues add those
+surfaces on top of the host contract rather than moving provider or capability
+authority into plugins.
+
 ## v4 outcomes
 
 v4 is complete only when:
@@ -111,7 +124,8 @@ verifiable delivery work:
 - [#137](https://github.com/alvinunreal/openpets/issues/137) — plugin assistant
   capability SDK/runtime (complete).
 - [#138](https://github.com/alvinunreal/openpets/issues/138) — provider-neutral
-  Pet Assistant conversation and tool loop.
+  Pet Assistant conversation and tool loop (host integration complete; no user
+  surface yet).
 - [#143](https://github.com/alvinunreal/openpets/issues/143) and
   [#144](https://github.com/alvinunreal/openpets/issues/144) — Focus Buddy and
   Quick Reminders assistant capabilities.

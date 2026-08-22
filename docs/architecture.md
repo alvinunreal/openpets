@@ -84,6 +84,21 @@ default pet and ignores remote configuration.
 
 ## End-to-end flows
 
+### Host Pet Assistant loop (#138)
+
+After `PluginService.start()` resolves, the desktop constructs one canonical
+in-memory Pet Assistant service. Each turn reads the current host text-provider
+configuration, discovers enabled generation-pinned capabilities, and routes
+validated tool calls back through `PluginService`. Provider codecs and the
+lifecycle enforce bounded context, payloads, results, timeouts, cancellation,
+and final output. Assistant requests do not use the plugin `ctx.ai` gateway.
+
+This is an internal integration only: no chat UI, voice UI, transcript or
+conversation persistence, personality settings, or provider-profile UI exists
+yet. Bounded curated context and personality-style guidance can be composed
+after the immutable host rules for later surfaces; they are not persisted and
+cannot change capability authority.
+
 These are the flows worth holding in memory. Each links to the doc that details it.
 
 - **Agent reaction → visible pet.** Agent activity is classified into a reaction
@@ -138,6 +153,9 @@ These hold everywhere; the rest of the docs assume them.
 - **Voice is bounded and visible.** Listening is one-shot, one-at-a-time,
   explicitly cancellable, visibly indicated while a media track is live, and
   bounded by separate microphone-acquisition and transcription timeouts.
+- **Pet Assistant lifecycle is bounded.** The host loop is stopped and active
+  turns are cancelled before plugin teardown; capability handles remain pinned
+  to the plugin generation that registered them.
 
 ## Glossary
 

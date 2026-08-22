@@ -274,13 +274,16 @@ await scenario("assistant discovery and execution follow the active plugin lifec
   addPlugin(store, { manifestVersion: 3, runtime: "javascript", sdkVersion: "3.0.0", approvedPermissions: [] }, jsManifest({ manifestVersion: 3, sdkVersion: "3.0.0", permissions: [] }));
   const rt = runtime(store, new FakeScheduler(), new FakePetApi(), undefined, jsHost);
   await rt.start();
-  assert.equal(rt.getAssistantCapabilities().length, 1);
-  assert.deepEqual(await rt.executeAssistantCapability("plug", "focus.status", { detail: true }), { version: 1, detail: true });
+  const first = rt.getAssistantCapabilities();
+  assert.equal(first.length, 1);
+  assert.equal(first[0]!.handle, rt.getAssistantCapabilities()[0]!.handle);
+  assert.deepEqual(await rt.executeAssistantCapability(first[0]!.handle, { detail: true }), { ok: true, result: { version: 1, detail: true } });
   await rt.reloadPlugin("plug");
-  assert.deepEqual(await rt.executeAssistantCapability("plug", "focus.status", {}), { version: 2, detail: false });
+  const second = rt.getAssistantCapabilities();
+  assert.deepEqual(await rt.executeAssistantCapability(second[0]!.handle, {}), { ok: true, result: { version: 2, detail: false } });
   await rt.stop();
   assert.deepEqual(rt.getAssistantCapabilities(), []);
-  await assert.rejects(() => rt.executeAssistantCapability("plug", "focus.status", {}), /active/);
+  assert.deepEqual((await rt.executeAssistantCapability(second[0]!.handle, {})).ok, false);
 });
 
 await scenario("assistant in-flight results from a replaced generation are rejected", async ({ store }) => {
@@ -305,12 +308,14 @@ await scenario("assistant in-flight results from a replaced generation are rejec
   addPlugin(store, { manifestVersion: 3, runtime: "javascript", sdkVersion: "3.0.0", approvedPermissions: [] }, jsManifest({ manifestVersion: 3, sdkVersion: "3.0.0", permissions: [] }));
   const rt = runtime(store, new FakeScheduler(), new FakePetApi(), undefined, jsHost);
   await rt.start();
-  const pending = rt.executeAssistantCapability("plug", "slow", {});
+  const staleHandle = rt.getAssistantCapabilities()[0]!.handle;
+  const pending = rt.executeAssistantCapability(staleHandle, {});
   await started;
   await rt.reloadPlugin("plug");
   releaseOld({ stale: true });
-  await assert.rejects(() => pending, /active/);
-  assert.deepEqual(await rt.executeAssistantCapability("plug", "slow", {}), { current: true });
+  assert.deepEqual(await pending, { ok: false, error: { stage: "lifecycle", code: "stale_generation", message: "Plugin is no longer active." } });
+  const current = rt.getAssistantCapabilities()[0]!;
+  assert.deepEqual(await rt.executeAssistantCapability(current.handle, {}), { ok: true, result: { current: true } });
 });
 
 await scenario("assistant discovery excludes disabled and broken plugins", async ({ store }) => {
@@ -336,6 +341,25 @@ await scenario("assistant discovery excludes disabled and broken plugins", async
   await rt.reloadPlugin("plug");
   assert.deepEqual(rt.getAssistantCapabilities(), []);
   assert.match(store.getRecord("plug")?.brokenReason ?? "", /broken for test/);
+});
+
+await scenario("assistant handles reject disabled and invalid generations", async ({ store }) => {
+  let calls = 0;
+  const jsHost: PluginJsHost = {
+    async startPlugin(options) {
+      options.sdk!.assistant.registerCapability({ id: "status", description: "Read status.", inputSchema: { type: "object" } }, async () => { calls += 1; return { ok: true }; });
+      return { stop: () => undefined };
+    },
+  };
+  addPlugin(store, { manifestVersion: 3, runtime: "javascript", sdkVersion: "3.0.0", approvedPermissions: [] }, jsManifest({ manifestVersion: 3, sdkVersion: "3.0.0", permissions: [] }));
+  const rt = runtime(store, new FakeScheduler(), new FakePetApi(), undefined, jsHost);
+  await rt.start();
+  const handle = rt.getAssistantCapabilities()[0]!.handle;
+
+  store.setEnabled("plug", false);
+  assert.deepEqual(await rt.executeAssistantCapability(handle, {}), { ok: false, error: { stage: "lifecycle", code: "inactive_plugin", message: "Plugin is no longer active." } });
+  assert.deepEqual(await rt.executeAssistantCapability({} as never, {}), { ok: false, error: { stage: "handle", code: "invalid_handle", message: "Assistant capability handle is invalid." } });
+  assert.equal(calls, 0);
 });
 
 await scenario("javascript stop cancels host", async ({ store }) => {
@@ -428,7 +452,7 @@ await scenario("stale startup cleanup keeps assistant generations aligned", asyn
   assert.deepEqual(closedPets, ["late-pet"]);
   await rt.start();
   assert.equal(rt.getAssistantCapabilities().length, 1);
-  assert.deepEqual(await rt.executeAssistantCapability("plug", "healthy", {}), { healthy: true });
+  assert.deepEqual(await rt.executeAssistantCapability(rt.getAssistantCapabilities()[0]!.handle, {}), { ok: true, result: { healthy: true } });
   assert.ok(clearCalls >= 3);
 });
 

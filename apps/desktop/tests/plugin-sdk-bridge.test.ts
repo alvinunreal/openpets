@@ -385,22 +385,21 @@ await scenario("assistant registration is explicit and does not require a permis
       required: ["minutes"],
       additionalProperties: false,
     },
-  }, async (input) => { calls += 1; return { started: true, minutes: input.minutes }; });
+  }, async (input: Record<string, unknown>) => { calls += 1; return { started: true, minutes: input.minutes }; });
 
-  assert.deepEqual(bridge.getAssistantCapabilities("plug"), [{
-    pluginId: "plug",
-    capability: {
-      id: "focus.start",
-      description: "Start a focus session.",
-      inputSchema: {
-        type: "object",
-        properties: { minutes: { type: "integer", minimum: 1, maximum: 120 } },
-        required: ["minutes"],
-        additionalProperties: false,
-      },
+  const discovered = bridge.getAssistantCapabilities("plug");
+  assert.equal(discovered.length, 1);
+  assert.deepEqual(discovered[0]?.capability, {
+    id: "focus.start",
+    description: "Start a focus session.",
+    inputSchema: {
+      type: "object",
+      properties: { minutes: { type: "integer", minimum: 1, maximum: 120 } },
+      required: ["minutes"],
+      additionalProperties: false,
     },
-  }]);
-  assert.deepEqual(await bridge.executeAssistantCapability("plug", "focus.start", { minutes: 25 }), { started: true, minutes: 25 });
+  });
+  assert.deepEqual(await bridge.executeAssistantCapability(discovered[0]!.handle, { minutes: 25 }), { started: true, minutes: 25 });
   assert.equal(calls, 1);
 });
 
@@ -437,19 +436,19 @@ await scenario("assistant schema validates input before invoking the handler", a
     },
   }, async () => { calls += 1; return { ok: true }; });
 
-  await assert.rejects(() => bridge.executeAssistantCapability("plug", "reminder.create", { minutes: 20 }), /title is required/);
-  await assert.rejects(() => bridge.executeAssistantCapability("plug", "reminder.create", { title: "x", minutes: 0 }), /below minimum/);
-  await assert.rejects(() => bridge.executeAssistantCapability("plug", "reminder.create", { title: "x", minutes: "20" }), /must be a number/);
-  await assert.rejects(() => bridge.executeAssistantCapability("plug", "reminder.create", { title: "x", minutes: 20, extra: true }), /unsupported property/);
-  await assert.rejects(() => bridge.executeAssistantCapability("plug", "reminder.create", { title: "x", minutes: 20, tags: [] }), /invalid item count/);
+  await assert.rejects(() => bridge.executeAssistantCapability(assistantHandle(bridge, "reminder.create"), { minutes: 20 }), /title is required/);
+  await assert.rejects(() => bridge.executeAssistantCapability(assistantHandle(bridge, "reminder.create"), { title: "x", minutes: 0 }), /below minimum/);
+  await assert.rejects(() => bridge.executeAssistantCapability(assistantHandle(bridge, "reminder.create"), { title: "x", minutes: "20" }), /must be a number/);
+  await assert.rejects(() => bridge.executeAssistantCapability(assistantHandle(bridge, "reminder.create"), { title: "x", minutes: 20, extra: true }), /unsupported property/);
+  await assert.rejects(() => bridge.executeAssistantCapability(assistantHandle(bridge, "reminder.create"), { title: "x", minutes: 20, tags: [] }), /invalid item count/);
   const sparseTags: string[] = [];
   sparseTags.length = 1;
-  await assert.rejects(() => bridge.executeAssistantCapability("plug", "reminder.create", { title: "x", minutes: 20, tags: sparseTags }), /sparse arrays/);
-  await assert.rejects(() => bridge.executeAssistantCapability("plug", "reminder.create", { title: "x", minutes: 20, mode: "unknown" }), /enum value/);
-  await assert.rejects(() => bridge.executeAssistantCapability("plug", "reminder.create", { title: "x", minutes: 20, fixed: false }), /const/);
-  await assert.rejects(() => bridge.executeAssistantCapability("plug", "reminder.create", { title: "x", minutes: 20, toString: "inherited" }), /unsupported property/);
+  await assert.rejects(() => bridge.executeAssistantCapability(assistantHandle(bridge, "reminder.create"), { title: "x", minutes: 20, tags: sparseTags }), /sparse arrays/);
+  await assert.rejects(() => bridge.executeAssistantCapability(assistantHandle(bridge, "reminder.create"), { title: "x", minutes: 20, mode: "unknown" }), /enum value/);
+  await assert.rejects(() => bridge.executeAssistantCapability(assistantHandle(bridge, "reminder.create"), { title: "x", minutes: 20, fixed: false }), /const/);
+  await assert.rejects(() => bridge.executeAssistantCapability(assistantHandle(bridge, "reminder.create"), { title: "x", minutes: 20, toString: "inherited" }), /unsupported property/);
   assert.equal(calls, 0);
-  assert.deepEqual(await bridge.executeAssistantCapability("plug", "reminder.create", { title: "x", minutes: 20, tags: ["work"] }), { ok: true });
+  assert.deepEqual(await bridge.executeAssistantCapability(assistantHandle(bridge, "reminder.create"), { title: "x", minutes: 20, tags: ["work"] }), { ok: true });
   assert.equal(calls, 1);
 });
 
@@ -460,31 +459,31 @@ await scenario("assistant capability quota and unregister/re-register semantics 
   assert.throws(() => api.assistant.registerCapability({ id: "one-too-many", description: "Capability", inputSchema: { type: "object" } }, () => ({})), /assistant capability quota exceeded/);
   await api.assistant.unregisterCapability("cap-0");
   api.assistant.registerCapability({ id: "one-too-many", description: "Capability", inputSchema: { type: "object" } }, async () => ({ version: 2 }));
-  assert.deepEqual(await bridge.executeAssistantCapability("plug", "one-too-many", {}), { version: 2 });
+  assert.deepEqual(await bridge.executeAssistantCapability(assistantHandle(bridge, "one-too-many"), {}), { version: 2 });
 });
 
 await scenario("assistant results are structured, JSON-safe, bounded, and timeout-limited", async ({ api, bridge }) => {
   api.assistant.registerCapability({ id: "invalid-array", description: "Capability", inputSchema: { type: "object" } }, () => [] as never);
-  await assert.rejects(() => bridge.executeAssistantCapability("plug", "invalid-array", {}), /result must be an object/);
+  await assert.rejects(() => bridge.executeAssistantCapability(assistantHandle(bridge, "invalid-array"), {}), /result must be an object/);
 
   api.assistant.registerCapability({ id: "invalid-circular", description: "Capability", inputSchema: { type: "object" } }, () => {
     const result: Record<string, unknown> = {};
     result.self = result;
     return result;
   });
-  await assert.rejects(() => bridge.executeAssistantCapability("plug", "invalid-circular", {}), /circular/);
+  await assert.rejects(() => bridge.executeAssistantCapability(assistantHandle(bridge, "invalid-circular"), {}), /circular/);
 
   api.assistant.registerCapability({ id: "invalid-date", description: "Capability", inputSchema: { type: "object" } }, () => ({ date: new Date() } as never));
-  await assert.rejects(() => bridge.executeAssistantCapability("plug", "invalid-date", {}), /JSON-compatible/);
+  await assert.rejects(() => bridge.executeAssistantCapability(assistantHandle(bridge, "invalid-date"), {}), /JSON-compatible/);
 
   api.assistant.registerCapability({ id: "invalid-size", description: "Capability", inputSchema: { type: "object" } }, () => ({ text: "x".repeat(pluginSdkQuotas.assistantResultBytes) }));
-  await assert.rejects(() => bridge.executeAssistantCapability("plug", "invalid-size", {}), /result.*too large|result.*too long/);
+  await assert.rejects(() => bridge.executeAssistantCapability(assistantHandle(bridge, "invalid-size"), {}), /result.*too large|result.*too long/);
 
   api.assistant.registerCapability({ id: "handler-error", description: "Capability", inputSchema: { type: "object" } }, () => { throw new Error("handler failed"); });
-  await assert.rejects(() => bridge.executeAssistantCapability("plug", "handler-error", {}), /handler failed/);
+  await assert.rejects(() => bridge.executeAssistantCapability(assistantHandle(bridge, "handler-error"), {}), /handler failed/);
 
   api.assistant.registerCapability({ id: "timeout", description: "Capability", inputSchema: { type: "object" } }, () => new Promise<Record<string, unknown>>(() => undefined));
-  await assert.rejects(() => bridge.executeAssistantCapability("plug", "timeout", {}), /assistant capability timed out/);
+  await assert.rejects(() => bridge.executeAssistantCapability(assistantHandle(bridge, "timeout"), {}), /assistant capability timed out/);
 });
 
 await scenario("assistant handlers retain normal plugin permission checks", async ({ bridge, store }) => {
@@ -495,17 +494,17 @@ await scenario("assistant handlers retain normal plugin permission checks", asyn
     restrictedApi.storage.set("key", "value");
     return { ok: true };
   });
-  await assert.rejects(() => bridge.executeAssistantCapability("plug", "needs-storage", {}), /storage/);
+  await assert.rejects(() => bridge.executeAssistantCapability(assistantHandle(bridge, "needs-storage"), {}), /storage/);
   restrictedApi.assistant.registerCapability({ id: "needs-status", description: "Capability", inputSchema: { type: "object" } }, async () => {
     restrictedApi.status.clear();
     return { ok: true };
   });
-  await assert.rejects(() => bridge.executeAssistantCapability("plug", "needs-status", {}), /status/);
+  await assert.rejects(() => bridge.executeAssistantCapability(assistantHandle(bridge, "needs-status"), {}), /status/);
   restrictedApi.assistant.registerCapability({ id: "needs-commands", description: "Capability", inputSchema: { type: "object" } }, async () => {
     restrictedApi.commands.unregister("missing");
     return { ok: true };
   });
-  await assert.rejects(() => bridge.executeAssistantCapability("plug", "needs-commands", {}), /commands/);
+  await assert.rejects(() => bridge.executeAssistantCapability(assistantHandle(bridge, "needs-commands"), {}), /commands/);
 
   const approvedRecord = { ...store.getRecord("plug")!, approvedPermissions: ["storage"] as const };
   store.upsertRecord(approvedRecord);
@@ -514,13 +513,13 @@ await scenario("assistant handlers retain normal plugin permission checks", asyn
     approvedApi.storage.set("key", "value");
     return { ok: true };
   });
-  assert.deepEqual(await bridge.executeAssistantCapability("plug", "needs-storage", {}), { ok: true });
+  assert.deepEqual(await bridge.executeAssistantCapability(assistantHandle(bridge, "needs-storage"), {}), { ok: true });
 });
 
 await scenario("assistant clear and generation replacement revoke stale APIs and results", async ({ api, bridge, store }) => {
   let release!: (result: Record<string, unknown>) => void;
   api.assistant.registerCapability({ id: "slow", description: "Capability", inputSchema: { type: "object" } }, () => new Promise<Record<string, unknown>>((resolve) => { release = resolve; }));
-  const pending = bridge.executeAssistantCapability("plug", "slow", {});
+  const pending = bridge.executeAssistantCapability(assistantHandle(bridge, "slow"), {});
   await Promise.resolve();
   bridge.clearPlugin("plug");
   assert.deepEqual(bridge.getAssistantCapabilities("plug"), []);
@@ -530,14 +529,14 @@ await scenario("assistant clear and generation replacement revoke stale APIs and
   const freshApi = bridge.createApi(current, manifest());
   freshApi.assistant.registerCapability({ id: "slow", description: "Capability", inputSchema: { type: "object" } }, async () => ({ fresh: true }));
   await assert.rejects(async () => { release({ stale: true }); await pending; }, /no longer active/);
-  assert.deepEqual(await bridge.executeAssistantCapability("plug", "slow", {}), { fresh: true });
+  assert.deepEqual(await bridge.executeAssistantCapability(assistantHandle(bridge, "slow"), {}), { fresh: true });
   assert.throws(() => api.assistant.unregisterCapability("slow"), /no longer active/);
 });
 
 await scenario("assistant handler is not started after generation clear", async ({ api, bridge }) => {
   let calls = 0;
   api.assistant.registerCapability({ id: "not-started", description: "Capability", inputSchema: { type: "object" } }, async () => { calls += 1; return { ok: true }; });
-  const pending = bridge.executeAssistantCapability("plug", "not-started", {});
+  const pending = bridge.executeAssistantCapability(assistantHandle(bridge, "not-started"), {});
   bridge.clearPlugin("plug");
   await assert.rejects(() => pending, /no longer active/);
   assert.equal(calls, 0);
@@ -549,6 +548,12 @@ type ScenarioContext = {
   store: PluginStateStore;
   capabilities: TestCapabilities;
 };
+
+function assistantHandle(bridge: PluginSdkBridge, capabilityId: string) {
+  const capability = bridge.getAssistantCapabilities("plug").find((entry) => entry.capability.id === capabilityId);
+  assert.ok(capability, `Expected assistant capability ${capabilityId}.`);
+  return capability.handle;
+}
 
 async function scenario(name: string, run: (context: ScenarioContext) => Promise<void> | void): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "openpets-plugin-sdk-"));
