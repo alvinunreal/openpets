@@ -11,6 +11,7 @@ import {
   cleanMessage,
   durationMs,
   summary,
+  parseDueAt,
   register,
   MAX_REMINDERS,
 } from "./index.js";
@@ -39,6 +40,8 @@ assert.equal(
   summary([{ id: "a", message: "tea", dueAt: 1_000 + 5 * 60_000 }], 1_000),
   "5 min: tea",
 );
+assert.equal(parseDueAt("2099-01-01T12:00:00Z", 0), Date.parse("2099-01-01T12:00:00Z"));
+assert.throws(() => parseDueAt("2099-01-01T12:00:00"), /timezone|offset/i);
 
 // --- golden harness test -------------------------------------------------
 
@@ -222,5 +225,145 @@ const LOCALES = {
 
 // 7) MAX_REMINDERS guard.
 assert.equal(MAX_REMINDERS, 10);
+
+// 8) Assistant capabilities expose the same reminder domain without direct-control speech.
+{
+  const now = Date.now();
+  const h = createTestHarness(register, {
+    permissions: PERMISSIONS,
+    locales: LOCALES,
+    nowMs: now,
+  });
+  await h.start();
+  assert.deepEqual(
+    [...h.calls.assistantCapabilities.keys()],
+    ["reminders.create", "reminders.list", "reminders.complete", "reminders.snooze", "reminders.remove"],
+  );
+  assert.equal(h.calls.assistantCapabilities.get("reminders.create").capability.inputSchema.properties.dueAt.type, "string");
+
+  const dueAt = new Date(now + 30 * 60_000).toISOString();
+  const created = await h.runCapability("reminders.create", { message: "Assistant water", dueAt });
+  assert.equal(created.ok, true);
+  assert.deepEqual(created.reminder, {
+    id: created.reminder.id,
+    message: "Assistant water",
+    dueAt: Date.parse(dueAt),
+  });
+  assert.match(created.reminder.id, /^reminder-[A-Za-z0-9]+-[A-Za-z0-9]+$/);
+  assert.equal(h.calls.speak.length, 0, "assistant creation must not use command speech");
+
+  const listed = await h.runCapability("reminders.list", {});
+  assert.deepEqual(listed.reminders, [created.reminder]);
+
+  const snoozed = await h.runCapability("reminders.snooze", { id: created.reminder.id });
+  assert.equal(snoozed.ok, true);
+  assert.notEqual(snoozed.reminder.id, created.reminder.id);
+  assert.equal(snoozed.reminder.message, created.reminder.message);
+  assert.ok(snoozed.reminder.dueAt > now);
+  assert.equal(h.calls.speak.length, 0, "assistant snooze must not use command speech");
+
+  const completed = await h.runCapability("reminders.complete", { id: snoozed.reminder.id });
+  assert.equal(completed.ok, true);
+  assert.equal(completed.reminder.id, snoozed.reminder.id);
+  assert.deepEqual((await h.runCapability("reminders.list", {})).reminders, []);
+
+  const removable = await h.runCapability("reminders.create", {
+    message: "Assistant remove",
+    dueAt: new Date(now + 45 * 60_000).toISOString(),
+  });
+  const removed = await h.runCapability("reminders.remove", { id: removable.reminder.id });
+  assert.equal(removed.ok, true);
+  assert.equal(removed.reminder.id, removable.reminder.id);
+  assert.deepEqual((await h.runCapability("reminders.list", {})).reminders, []);
+
+  const invalid = await h.runCapability("reminders.complete", { id: "reminder-does-not-exist" });
+  assert.deepEqual(invalid, { ok: false, error: "not_found", id: "reminder-does-not-exist" });
+  await assert.rejects(
+    () => h.runCapability("reminders.create", { message: "No guessing", dueAt: "tomorrow afternoon" }),
+    /ISO timestamp|timezone|offset/i,
+  );
+  h.expectNoErrors();
+}
+
+// 9) Restart reconciliation restores schedules and delivers persisted overdue reminders.
+{
+  const now = Date.now();
+  const h = createTestHarness(register, {
+    permissions: PERMISSIONS,
+    config: { soundEnabled: false, osNotification: false },
+    locales: LOCALES,
+    nowMs: now,
+  });
+  await h.ctx.storage.set("reminders", [
+    { id: "reminder-restart-1", message: "Restart check", dueAt: now - 60_000 },
+    { id: "reminder-restart-2", message: "Still pending", dueAt: now + 60 * 60_000 },
+  ]);
+  await h.start();
+  h.expectBubble({ textMatch: /Restart check/ });
+  assert.equal(h.calls.schedules.size, 1);
+  h.expectStored("reminders", (value) => value.length === 1 && value[0].id === "reminder-restart-2");
+  const bubblesAfterFirstStart = h.calls.bubbles.length;
+
+  await h.stop();
+  await h.start();
+  assert.equal(h.calls.bubbles.length, bubblesAfterFirstStart, "restart must not redeliver removed overdue reminders");
+  assert.equal(h.calls.schedules.size, 1, "restart must reschedule persisted future reminders");
+  h.expectNoErrors();
+}
+
+// 10) A scheduled fire and an overlapping assistant removal serialize their
+// read/replace transactions instead of resurrecting or losing a reminder.
+{
+  const now = Date.now();
+  const h = createTestHarness(register, {
+    permissions: PERMISSIONS,
+    config: { soundEnabled: false, osNotification: false },
+    locales: LOCALES,
+    nowMs: now,
+  });
+  await h.start();
+  const first = await h.runCapability("reminders.create", {
+    message: "Fire me",
+    dueAt: new Date(now + 60_000).toISOString(),
+  });
+  const second = await h.runCapability("reminders.create", {
+    message: "Remove me",
+    dueAt: new Date(now + 3 * 60_000).toISOString(),
+  });
+
+  const originalGet = h.ctx.storage.get;
+  let signalFirstRead;
+  const firstReadEntered = new Promise((resolve) => { signalFirstRead = resolve; });
+  let releaseRead;
+  const blockedRead = new Promise((resolve) => { releaseRead = resolve; });
+  h.ctx.storage.get = async (key) => {
+    if (key === "reminders" && signalFirstRead) {
+      const signal = signalFirstRead;
+      signalFirstRead = undefined;
+      signal();
+      await blockedRead;
+    }
+    return originalGet(key);
+  };
+
+  try {
+    const fire = h.clock.advance("1m");
+    await firstReadEntered;
+    const remove = h.runCapability("reminders.remove", { id: second.reminder.id });
+    releaseRead();
+    await Promise.all([fire, remove]);
+  } finally {
+    h.ctx.storage.get = originalGet;
+  }
+
+  h.expectStored("reminders", (value) => Array.isArray(value) && value.length === 0);
+  assert.equal(h.calls.schedules.size, 0, "serialized fire/remove must leave no stale schedules");
+  assert.equal(
+    h.calls.bubbles.filter((bubble) => bubble.spec.text?.includes(first.reminder.message)).length,
+    1,
+    "the fired reminder should be delivered exactly once",
+  );
+  h.expectNoErrors();
+}
 
 console.log("openpets.reminders: all checks passed.");

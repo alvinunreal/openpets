@@ -61,6 +61,11 @@ Those defaults are defined in `apps/desktop/src/plugin-service.ts`.
 Everything else is installable from the catalog, not preloaded into a fresh app
 install.
 
+Focus Buddy and Quick Reminders also expose typed Pet Assistant capabilities
+when enabled. Their assistant operations use the same durable domain state as
+their pet-menu controls, while the host conversation owns the spoken or chat
+response.
+
 The same file also defines `staleBundledPluginIds`, a cleanup list for old
 bundled plugins that should be removed during upgrade. Keep that list when old
 plugin ids need a clean migration, but do not optimize new runtime behavior for

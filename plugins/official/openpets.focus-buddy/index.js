@@ -6,6 +6,8 @@ export const STORAGE_KEY = "session";
 export const SHORT_BREAK_MS = 5 * 60_000;
 export const LONG_BREAK_MS = 15 * 60_000;
 const DISPLAY_REFRESH_INTERVAL_MS = 60_000;
+const MIN_ASSISTANT_FOCUS_MINUTES = 1;
+const MAX_ASSISTANT_FOCUS_MINUTES = 120;
 
 const pinnedBubbles = new WeakMap();
 const contextStates = new WeakMap();
@@ -62,6 +64,39 @@ export function breakMs(completedFocusCount = 0) {
 export function minutesLeft(session, now = Date.now()) {
   const ms = session?.pausedRemainingMs ?? Math.max(0, (session?.endsAt ?? now) - now);
   return Math.max(1, Math.ceil(ms / 60_000));
+}
+
+function assistantSessionStatus(session, now = Date.now()) {
+  if (!active(session)) {
+    return {
+      state: "idle",
+      mode: null,
+      minutes: 0,
+      paused: false,
+      completedFocusCount: session?.completedFocusCount ?? 0,
+    };
+  }
+  return {
+    state: session.pausedRemainingMs ? "paused" : "active",
+    mode: session.mode,
+    minutes: minutesLeft(session, now),
+    paused: Boolean(session.pausedRemainingMs),
+    completedFocusCount: session.completedFocusCount ?? 0,
+  };
+}
+
+function assistantSuccess(session) {
+  return { ok: true, ...assistantSessionStatus(session) };
+}
+
+function assistantInvalid(error, session) {
+  return { ok: false, error, ...assistantSessionStatus(session) };
+}
+
+function assistantFocusMinutes(input) {
+  const minutes = input?.minutes;
+  if (!Number.isInteger(minutes) || minutes < MIN_ASSISTANT_FOCUS_MINUTES || minutes > MAX_ASSISTANT_FOCUS_MINUTES) return null;
+  return minutes;
 }
 
 function active(session) {
@@ -141,7 +176,7 @@ async function scheduleDisplayRefresh(ctx, session, token) {
   }
 }
 
-async function updatePinned(ctx, session, token) {
+async function updatePinned(ctx, session, token, { create = true } = {}) {
   if (!isCurrent(ctx, token)) return;
   const pinnedBubble = getPinnedBubble(ctx);
   if (!active(session)) {
@@ -176,6 +211,7 @@ async function updatePinned(ctx, session, token) {
     }
   }
   if (!isCurrent(ctx, token)) return;
+  if (!create) return;
   const nextBubble = await ctx.ui.bubble(spec);
   if (!isCurrent(ctx, token)) {
     try { await nextBubble.dismiss(); } catch {}
@@ -188,22 +224,28 @@ async function updatePinned(ctx, session, token) {
   setPinnedBubble(ctx, nextBubble);
 }
 
-async function startMode(ctx, mode, durationMs, completedFocusCount, token) {
+async function updateExistingPinned(ctx, session, token) {
+  if (!getPinnedBubble(ctx)) return;
+  await updatePinned(ctx, session, token, { create: false });
+}
+
+async function startMode(ctx, mode, durationMs, completedFocusCount, token, { showPinned = true, syncExistingPinned = false } = {}) {
   const now = Date.now();
   const session = await saveSession(ctx, { mode, startedAt: now, endsAt: now + durationMs, pausedRemainingMs: null, completedFocusCount }, token);
   if (!session || !isCurrent(ctx, token)) return undefined;
   await scheduleEnd(ctx, session, token);
-  await updatePinned(ctx, session, token);
+  if (showPinned) await updatePinned(ctx, session, token);
+  else if (syncExistingPinned) await updateExistingPinned(ctx, session, token);
   await scheduleDisplayRefresh(ctx, session, token);
   return session;
 }
 
-async function startFocusImpl(ctx, token) {
+async function startFocusImpl(ctx, token, options) {
   const current = await getSession(ctx);
   if (!isCurrent(ctx, token)) return;
   const cfg = await config(ctx);
   if (!isCurrent(ctx, token)) return;
-  return startMode(ctx, "focus", focusMs(cfg), current?.completedFocusCount ?? 0, token);
+  return startMode(ctx, "focus", focusMs(cfg), current?.completedFocusCount ?? 0, token, options);
 }
 
 export async function startFocus(ctx) {
@@ -218,10 +260,12 @@ export async function startBreak(ctx, completedFocusCount) {
   return lifecycle(ctx, (token) => startBreakImpl(ctx, completedFocusCount, token));
 }
 
-async function pauseOrResumeImpl(ctx, token) {
+async function changePauseStateImpl(ctx, action, token, { showPinned = true, syncExistingPinned = false } = {}) {
   const session = await getSession(ctx);
   if (!isCurrent(ctx, token)) return;
-  if (!active(session)) return startFocusImpl(ctx, token);
+  if (!active(session)) return { kind: "invalid", session, error: "no_active_session" };
+  if (action === "pause" && session.pausedRemainingMs) return { kind: "invalid", session, error: "already_paused" };
+  if (action === "resume" && !session.pausedRemainingMs) return { kind: "invalid", session, error: "not_paused" };
   await ctx.schedule.cancel(DISPLAY_REFRESH_SCHEDULE_ID);
   if (!isCurrent(ctx, token)) return;
   if (session.pausedRemainingMs) {
@@ -235,22 +279,34 @@ async function pauseOrResumeImpl(ctx, token) {
   await saveSession(ctx, session, token);
   if (!isCurrent(ctx, token)) return;
   await scheduleEnd(ctx, session, token);
-  await updatePinned(ctx, session, token);
+  if (showPinned) await updatePinned(ctx, session, token);
+  else if (syncExistingPinned) await updateExistingPinned(ctx, session, token);
   await scheduleDisplayRefresh(ctx, session, token);
-  return session;
+  return { kind: "updated", session };
+}
+
+async function pauseOrResumeImpl(ctx, token) {
+  const result = await changePauseStateImpl(ctx, "toggle", token);
+  if (result?.kind === "invalid" && result.error === "no_active_session") return startFocusImpl(ctx, token);
+  return result?.session;
 }
 
 export async function pauseOrResume(ctx) {
   return lifecycle(ctx, (token) => pauseOrResumeImpl(ctx, token));
 }
 
-async function endSessionImpl(ctx, token) {
+async function endSessionImpl(ctx, token, { showPinned = true, syncExistingPinned = false } = {}) {
+  const session = await getSession(ctx);
+  if (!isCurrent(ctx, token)) return;
   await ctx.schedule.cancel(SCHEDULE_ID);
   if (!isCurrent(ctx, token)) return;
   await ctx.schedule.cancel(DISPLAY_REFRESH_SCHEDULE_ID);
   if (!isCurrent(ctx, token)) return;
-  await saveSession(ctx, null, token);
-  await updatePinned(ctx, null, token);
+  const cleared = await saveSession(ctx, null, token);
+  if (cleared === undefined || !isCurrent(ctx, token)) return;
+  if (showPinned) await updatePinned(ctx, null, token);
+  else if (syncExistingPinned) await updateExistingPinned(ctx, null, token);
+  return session;
 }
 
 export async function endSession(ctx) {
@@ -351,15 +407,87 @@ export async function reconcile(ctx) {
   return lifecycle(ctx, (token) => reconcileImpl(ctx, token));
 }
 
-async function showStatusImpl(ctx, token) {
+async function readStatusImpl(ctx, token, { showPinned = true, speakWhenIdle = true } = {}) {
   const session = await getSession(ctx);
   if (!isCurrent(ctx, token)) return;
-  if (!active(session)) return ctx.pet.speak(ctx.t("speech.idle"));
-  await updatePinned(ctx, session, token);
+  if (showPinned) {
+    if (!active(session) && speakWhenIdle) return ctx.pet.speak(ctx.t("speech.idle"));
+    await updatePinned(ctx, session, token);
+  }
+  return session;
 }
 
 async function showStatus(ctx) {
-  return enqueue(ctx, async () => showStatusImpl(ctx, stateFor(ctx).token));
+  return enqueue(ctx, async () => readStatusImpl(ctx, stateFor(ctx).token));
+}
+
+async function assistantStart(ctx, input) {
+  return lifecycle(ctx, async (token) => {
+    const current = await getSession(ctx);
+    if (!isCurrent(ctx, token)) return;
+    const minutes = assistantFocusMinutes(input);
+    if (minutes === null) return assistantInvalid("invalid_duration", current);
+    const session = await startMode(ctx, "focus", minutes * 60_000, current?.completedFocusCount ?? 0, token, { showPinned: false, syncExistingPinned: true });
+    return session ? assistantSuccess(session) : assistantInvalid("session_unavailable", current);
+  });
+}
+
+async function assistantStatus(ctx) {
+  return enqueue(ctx, async () => {
+    const session = await readStatusImpl(ctx, stateFor(ctx).token, { showPinned: false, speakWhenIdle: false });
+    return assistantSuccess(session);
+  });
+}
+
+async function assistantPauseOrResume(ctx, action) {
+  return lifecycle(ctx, async (token) => {
+    const result = await changePauseStateImpl(ctx, action, token, { showPinned: false, syncExistingPinned: true });
+    if (!result || result.kind === "invalid") return assistantInvalid(result?.error ?? "session_unavailable", result?.session);
+    return assistantSuccess(result.session);
+  });
+}
+
+async function assistantEnd(ctx) {
+  return lifecycle(ctx, async (token) => {
+    const current = await getSession(ctx);
+    if (!isCurrent(ctx, token)) return;
+    if (!active(current)) return assistantInvalid("no_active_session", current);
+    const ended = await endSessionImpl(ctx, token, { showPinned: false, syncExistingPinned: true });
+    return ended ? assistantSuccess(null) : assistantInvalid("session_unavailable", current);
+  });
+}
+
+async function registerAssistantCapabilities(ctx) {
+  await ctx.assistant.registerCapability({
+    id: "focus.start",
+    description: "Start a focus session for an explicit duration in minutes.",
+    inputSchema: {
+      type: "object",
+      properties: { minutes: { type: "integer", minimum: MIN_ASSISTANT_FOCUS_MINUTES, maximum: MAX_ASSISTANT_FOCUS_MINUTES } },
+      required: ["minutes"],
+      additionalProperties: false,
+    },
+  }, (input) => assistantStart(ctx, input));
+  await ctx.assistant.registerCapability({
+    id: "focus.status",
+    description: "Read the current focus session status.",
+    inputSchema: { type: "object", additionalProperties: false },
+  }, () => assistantStatus(ctx));
+  await ctx.assistant.registerCapability({
+    id: "focus.pause",
+    description: "Pause the active focus session.",
+    inputSchema: { type: "object", additionalProperties: false },
+  }, () => assistantPauseOrResume(ctx, "pause"));
+  await ctx.assistant.registerCapability({
+    id: "focus.resume",
+    description: "Resume the paused focus session.",
+    inputSchema: { type: "object", additionalProperties: false },
+  }, () => assistantPauseOrResume(ctx, "resume"));
+  await ctx.assistant.registerCapability({
+    id: "focus.end",
+    description: "End the active focus session.",
+    inputSchema: { type: "object", additionalProperties: false },
+  }, () => assistantEnd(ctx));
 }
 
 async function handleAction(ctx, id) {
@@ -378,6 +506,7 @@ export function register(OpenPetsPlugin) {
       await ctx.commands.register({ id: "end-session", title: "$t:command.endSession.title", description: "$t:command.endSession.description", icon: focusIcon }, () => endSession(ctx));
       await ctx.commands.register({ id: "skip-to-break", title: "$t:command.skipToBreak.title", description: "$t:command.skipToBreak.description", icon: focusIcon }, () => skipToBreak(ctx));
       await ctx.commands.register({ id: "show-status", title: "$t:command.showStatus.title", description: "$t:command.showStatus.description", icon: focusIcon }, () => showStatus(ctx));
+      await registerAssistantCapabilities(ctx);
     },
     async stop() {},
   });

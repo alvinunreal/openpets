@@ -11,6 +11,24 @@ export const MAX_REMINDERS = 10;
 export const MAX_MESSAGE_LENGTH = 140;
 export const MAX_DELAY_MS = 24 * 60 * 60 * 1000;
 export const SNOOZE_MS = 5 * 60 * 1000;
+export const REMINDER_ID_PREFIX = "reminder-";
+
+let nextReminderSequence = 0;
+const reminderOperationQueues = new WeakMap();
+
+/**
+ * Serialize durable reminder operations per plugin context. The queue keeps
+ * moving after a failed operation while still returning that operation's
+ * original rejection to its caller.
+ */
+function withReminderOperation(ctx, operation) {
+  const previous = reminderOperationQueues.get(ctx) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(operation);
+  reminderOperationQueues.set(ctx, current);
+  return current.finally(() => {
+    if (reminderOperationQueues.get(ctx) === current) reminderOperationQueues.delete(ctx);
+  });
+}
 
 /**
  * Normalize a free-text reminder message: collapse whitespace, strip newlines,
@@ -54,9 +72,42 @@ export function summary(reminders, now = Date.now()) {
     .join("; ");
 }
 
+const EXPLICIT_TIMEZONE_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+/**
+ * Parse the assistant's absolute due-time contract. A timezone designator or
+ * numeric UTC offset is mandatory; local-time and natural-language values are
+ * intentionally rejected.
+ */
+export function parseDueAt(value, now = Date.now()) {
+  if (typeof value !== "string" || !EXPLICIT_TIMEZONE_PATTERN.test(value)) {
+    throw new Error("Reminder dueAt must be an ISO timestamp with Z or a numeric UTC offset.");
+  }
+  const dueAt = Date.parse(value);
+  if (!Number.isFinite(dueAt) || dueAt <= now) {
+    throw new Error("Reminder dueAt must be a valid future timestamp.");
+  }
+  return dueAt;
+}
+
+function reminderId(existing, dueAt) {
+  const timestamp = dueAt.toString(36);
+  let id;
+  do {
+    nextReminderSequence += 1;
+    id = `${REMINDER_ID_PREFIX}${timestamp}-${nextReminderSequence.toString(36)}`;
+  } while (existing.some((reminder) => reminder.id === id));
+  return id.slice(0, 64);
+}
+
+export function reminderResult(reminder) {
+  return { id: reminder.id, message: reminder.message, dueAt: reminder.dueAt };
+}
+
 // --- storage -------------------------------------------------------------
 
-export async function getReminders(ctx) {
+async function readReminders(ctx) {
   const reminders = await ctx.storage.get("reminders");
   return Array.isArray(reminders)
     ? reminders
@@ -65,10 +116,15 @@ export async function getReminders(ctx) {
             r &&
             typeof r.id === "string" &&
             typeof r.dueAt === "number" &&
+            Number.isFinite(r.dueAt) &&
             typeof r.message === "string",
         )
         .slice(0, MAX_REMINDERS)
     : [];
+}
+
+export function getReminders(ctx) {
+  return withReminderOperation(ctx, () => readReminders(ctx));
 }
 
 async function saveReminders(ctx, reminders) {
@@ -88,28 +144,94 @@ async function updateStatus(ctx, count) {
 
 // --- scheduling + delivery ----------------------------------------------
 
-export async function scheduleReminder(ctx, reminder) {
+async function scheduleReminderUnsafe(ctx, reminder) {
   // schedule.once min delay is 1ms; never schedule in the past.
   const delay = Math.max(1, reminder.dueAt - Date.now());
   await ctx.schedule.once(reminder.id, delay, () => fireReminder(ctx, reminder.id));
 }
 
+export function scheduleReminder(ctx, reminder) {
+  return withReminderOperation(ctx, () => scheduleReminderUnsafe(ctx, reminder));
+}
+
 export async function addReminder(ctx, message, delayMs) {
-  const reminders = (await getReminders(ctx)).filter((r) => r.dueAt > Date.now());
+  const reminder = await createReminder(ctx, message, Date.now() + delayMs);
+  await ctx.pet.speak(ctx.t("speech.set", { minutes: Math.max(1, Math.round(delayMs / 60_000)) }));
+  return reminder;
+}
+
+/**
+ * Store and schedule a reminder without producing direct-control speech.
+ * Assistant capabilities use this domain operation directly.
+ */
+async function createReminderUnsafe(ctx, message, dueAt) {
+  if (!Number.isFinite(dueAt) || dueAt <= Date.now()) {
+    throw new Error("Reminder dueAt must be a valid future timestamp.");
+  }
+  const reminders = (await readReminders(ctx)).filter((r) => r.dueAt > Date.now());
   if (reminders.length >= MAX_REMINDERS) {
     throw new Error(ctx.t("error.tooMany", { max: MAX_REMINDERS }));
   }
   const reminder = {
-    // id matches [A-Za-z0-9._:-]{1,64}
-    id: `reminder-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`.slice(0, 64),
+    id: reminderId(reminders, dueAt),
     message: cleanMessage(message, ctx.t("reminder.defaultMessage")),
-    dueAt: Date.now() + delayMs,
+    dueAt,
   };
   reminders.push(reminder);
   await saveReminders(ctx, reminders);
-  await scheduleReminder(ctx, reminder);
-  await ctx.pet.speak(ctx.t("speech.set", { minutes: Math.max(1, Math.round(delayMs / 60_000)) }));
+  await scheduleReminderUnsafe(ctx, reminder);
   return reminder;
+}
+
+export function createReminder(ctx, message, dueAt) {
+  return withReminderOperation(ctx, () => createReminderUnsafe(ctx, message, dueAt));
+}
+
+async function removeReminderUnsafe(ctx, id) {
+  const reminders = await readReminders(ctx);
+  const item = reminders.find((reminder) => reminder.id === id);
+  if (!item) return null;
+  await ctx.schedule.cancel(item.id);
+  await saveReminders(ctx, reminders.filter((reminder) => reminder.id !== id));
+  return item;
+}
+
+export function removeReminder(ctx, id) {
+  return withReminderOperation(ctx, () => removeReminderUnsafe(ctx, id));
+}
+
+/**
+ * Move a pending reminder five minutes into the future. `fallbackMessage` is
+ * only used by the already-fired alert action, whose reminder was removed
+ * before delivery; assistant callers must omit it so invalid IDs stay inert.
+ */
+export function snoozeReminder(ctx, id, fallbackMessage) {
+  return withReminderOperation(ctx, async () => {
+    const item = await removeReminderUnsafe(ctx, id);
+    if (!item && fallbackMessage === undefined) return null;
+    const reminder = await createReminderUnsafe(
+      ctx,
+      item?.message ?? fallbackMessage,
+      Date.now() + SNOOZE_MS,
+    );
+    return { previous: item, reminder };
+  });
+}
+
+async function clearRemindersUnsafe(ctx) {
+  await ctx.schedule.cancelAll();
+  await saveReminders(ctx, []);
+}
+
+export function clearReminders(ctx) {
+  return withReminderOperation(ctx, () => clearRemindersUnsafe(ctx));
+}
+
+export function listPendingReminders(ctx) {
+  return withReminderOperation(ctx, async () => {
+    const now = Date.now();
+    return (await readReminders(ctx)).filter((reminder) => reminder.dueAt > now);
+  });
 }
 
 /**
@@ -117,7 +239,7 @@ export async function addReminder(ctx, message, delayMs) {
  * gracefully: a disabled toggle or an unavailable permission must never throw
  * the message away — the sticky bubble is the guaranteed channel.
  */
-async function deliver(ctx, message, { missed = false } = {}) {
+async function deliver(ctx, message, { missed = false, id } = {}) {
   const config = (await ctx.config.get()) ?? {};
   const soundEnabled = config.soundEnabled !== false;
   const osNotification = config.osNotification !== false;
@@ -165,7 +287,10 @@ async function deliver(ctx, message, { missed = false } = {}) {
   if (alert) {
     alert.onAction(async (actionId) => {
       if (actionId === "snooze") {
-        await addReminder(ctx, message, SNOOZE_MS);
+        const snoozed = await snoozeReminder(ctx, id, message);
+        if (snoozed) {
+          await ctx.pet.speak(ctx.t("speech.set", { minutes: 5 }));
+        }
       }
       // "done" needs no extra work; dismissing the bubble is the acknowledgement.
     });
@@ -173,11 +298,14 @@ async function deliver(ctx, message, { missed = false } = {}) {
 }
 
 export async function fireReminder(ctx, id) {
-  const reminders = await getReminders(ctx);
-  const item = reminders.find((r) => r.id === id);
-  await saveReminders(ctx, reminders.filter((r) => r.id !== id));
+  const item = await withReminderOperation(ctx, async () => {
+    const reminders = await readReminders(ctx);
+    const found = reminders.find((r) => r.id === id);
+    await saveReminders(ctx, reminders.filter((r) => r.id !== id));
+    return found;
+  });
   if (!item) return false;
-  await deliver(ctx, item.message);
+  await deliver(ctx, item.message, { id: item.id });
   return true;
 }
 
@@ -187,22 +315,24 @@ export async function fireReminder(ctx, id) {
  * ones (fired while OpenPets was closed) are delivered as "missed".
  */
 export async function reconcile(ctx) {
-  await ctx.schedule.cancelAll();
-  const now = Date.now();
-  const reminders = await getReminders(ctx);
-  const future = reminders.filter((r) => r.dueAt > now);
-  const overdue = reminders.filter((r) => r.dueAt <= now);
-  await saveReminders(ctx, future);
-  for (const item of future) await scheduleReminder(ctx, item);
-  for (const item of overdue) await deliver(ctx, item.message, { missed: true });
+  const overdue = await withReminderOperation(ctx, async () => {
+    await ctx.schedule.cancelAll();
+    const now = Date.now();
+    const reminders = await readReminders(ctx);
+    const future = reminders.filter((r) => r.dueAt > now);
+    const overdueItems = reminders.filter((r) => r.dueAt <= now);
+    await saveReminders(ctx, future);
+    for (const item of future) await scheduleReminderUnsafe(ctx, item);
+    return overdueItems;
+  });
+  for (const item of overdue) await deliver(ctx, item.message, { missed: true, id: item.id });
 }
 
 // --- commands ------------------------------------------------------------
 
 async function showReminderList(ctx) {
-  const reminders = await getReminders(ctx);
+  const pending = await listPendingReminders(ctx);
   const now = Date.now();
-  const pending = reminders.filter((r) => r.dueAt > now);
   if (!pending.length) {
     await ctx.pet.speak(ctx.t("speech.none"));
     await ctx.ui.menu.setItems([]);
@@ -217,13 +347,108 @@ async function showReminderList(ctx) {
       }),
       icon: "bell",
       onSelect: async () => {
-        await ctx.schedule.cancel(reminder.id);
-        const remaining = (await getReminders(ctx)).filter((r) => r.id !== reminder.id);
-        await saveReminders(ctx, remaining);
-        await ctx.pet.speak(ctx.t("speech.cancelled", { message: reminder.message }));
+        const removed = await removeReminder(ctx, reminder.id);
+        if (removed) await ctx.pet.speak(ctx.t("speech.cancelled", { message: removed.message }));
         await showReminderList(ctx);
       },
     })),
+  );
+}
+
+const assistantSchemas = {
+  create: {
+    type: "object",
+    description: "Create a reminder for an absolute ISO timestamp with an explicit timezone or UTC offset.",
+    properties: {
+      message: { type: "string", minLength: 1, maxLength: MAX_MESSAGE_LENGTH },
+      dueAt: {
+        type: "string",
+        minLength: 1,
+        maxLength: 40,
+        description: "ISO timestamp ending in Z or containing a numeric UTC offset, for example 2026-08-22T15:30:00-04:00.",
+      },
+    },
+    required: ["message", "dueAt"],
+    additionalProperties: false,
+  },
+  list: { type: "object", additionalProperties: false },
+  byId: {
+    type: "object",
+    properties: { id: { type: "string", minLength: 1, maxLength: 64 } },
+    required: ["id"],
+    additionalProperties: false,
+  },
+};
+
+function assistantNotFound(id) {
+  return { ok: false, error: "not_found", id };
+}
+
+async function registerAssistantCapabilities(ctx) {
+  await ctx.assistant.registerCapability(
+    {
+      id: "reminders.create",
+      description: "Create a reminder at an absolute timestamp with an explicit timezone or UTC offset.",
+      inputSchema: assistantSchemas.create,
+    },
+    async (input) => {
+      const reminder = await createReminder(
+        ctx,
+        input.message,
+        parseDueAt(input.dueAt),
+      );
+      return { ok: true, reminder: reminderResult(reminder) };
+    },
+  );
+
+  await ctx.assistant.registerCapability(
+    {
+      id: "reminders.list",
+      description: "List active reminders and their stable identifiers and due times.",
+      inputSchema: assistantSchemas.list,
+    },
+    async () => ({
+      ok: true,
+      reminders: (await listPendingReminders(ctx)).map(reminderResult),
+    }),
+  );
+
+  await ctx.assistant.registerCapability(
+    {
+      id: "reminders.complete",
+      description: "Complete an active reminder by its stable identifier.",
+      inputSchema: assistantSchemas.byId,
+    },
+    async ({ id }) => {
+      const reminder = await removeReminder(ctx, id);
+      return reminder ? { ok: true, reminder: reminderResult(reminder) } : assistantNotFound(id);
+    },
+  );
+
+  await ctx.assistant.registerCapability(
+    {
+      id: "reminders.snooze",
+      description: "Snooze an active reminder by five minutes using its stable identifier.",
+      inputSchema: assistantSchemas.byId,
+    },
+    async ({ id }) => {
+      const result = await snoozeReminder(ctx, id);
+      return result
+        ? { ok: true, reminder: reminderResult(result.reminder) }
+        : assistantNotFound(id);
+    },
+  );
+
+  await ctx.assistant.registerCapability(
+    {
+      id: "reminders.remove",
+      description: "Remove an active reminder by its stable identifier.",
+      inputSchema: assistantSchemas.byId,
+    },
+    async ({ id }) => {
+      const reminder = await removeReminder(ctx, id);
+      return reminder ? { ok: true, reminder: reminderResult(reminder) } : assistantNotFound(id);
+    },
   );
 }
 
@@ -231,6 +456,7 @@ export function register(OpenPetsPlugin) {
   OpenPetsPlugin.register({
     async start(ctx) {
       await reconcile(ctx);
+      await registerAssistantCapabilities(ctx);
 
       await ctx.commands.register(
         {
@@ -326,8 +552,7 @@ export function register(OpenPetsPlugin) {
           icon: "check",
         },
         async () => {
-          await ctx.schedule.cancelAll();
-          await saveReminders(ctx, []);
+          await clearReminders(ctx);
           await ctx.ui.menu.setItems([]);
           await ctx.pet.speak(ctx.t("speech.cleared"));
         },
