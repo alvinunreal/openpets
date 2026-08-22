@@ -14,6 +14,21 @@ export const SNOOZE_MS = 5 * 60 * 1000;
 export const REMINDER_ID_PREFIX = "reminder-";
 
 let nextReminderSequence = 0;
+const reminderOperationQueues = new WeakMap();
+
+/**
+ * Serialize durable reminder operations per plugin context. The queue keeps
+ * moving after a failed operation while still returning that operation's
+ * original rejection to its caller.
+ */
+function withReminderOperation(ctx, operation) {
+  const previous = reminderOperationQueues.get(ctx) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(operation);
+  reminderOperationQueues.set(ctx, current);
+  return current.finally(() => {
+    if (reminderOperationQueues.get(ctx) === current) reminderOperationQueues.delete(ctx);
+  });
+}
 
 /**
  * Normalize a free-text reminder message: collapse whitespace, strip newlines,
@@ -92,7 +107,7 @@ export function reminderResult(reminder) {
 
 // --- storage -------------------------------------------------------------
 
-export async function getReminders(ctx) {
+async function readReminders(ctx) {
   const reminders = await ctx.storage.get("reminders");
   return Array.isArray(reminders)
     ? reminders
@@ -106,6 +121,10 @@ export async function getReminders(ctx) {
         )
         .slice(0, MAX_REMINDERS)
     : [];
+}
+
+export function getReminders(ctx) {
+  return withReminderOperation(ctx, () => readReminders(ctx));
 }
 
 async function saveReminders(ctx, reminders) {
@@ -125,10 +144,14 @@ async function updateStatus(ctx, count) {
 
 // --- scheduling + delivery ----------------------------------------------
 
-export async function scheduleReminder(ctx, reminder) {
+async function scheduleReminderUnsafe(ctx, reminder) {
   // schedule.once min delay is 1ms; never schedule in the past.
   const delay = Math.max(1, reminder.dueAt - Date.now());
   await ctx.schedule.once(reminder.id, delay, () => fireReminder(ctx, reminder.id));
+}
+
+export function scheduleReminder(ctx, reminder) {
+  return withReminderOperation(ctx, () => scheduleReminderUnsafe(ctx, reminder));
 }
 
 export async function addReminder(ctx, message, delayMs) {
@@ -141,11 +164,11 @@ export async function addReminder(ctx, message, delayMs) {
  * Store and schedule a reminder without producing direct-control speech.
  * Assistant capabilities use this domain operation directly.
  */
-export async function createReminder(ctx, message, dueAt) {
+async function createReminderUnsafe(ctx, message, dueAt) {
   if (!Number.isFinite(dueAt) || dueAt <= Date.now()) {
     throw new Error("Reminder dueAt must be a valid future timestamp.");
   }
-  const reminders = (await getReminders(ctx)).filter((r) => r.dueAt > Date.now());
+  const reminders = (await readReminders(ctx)).filter((r) => r.dueAt > Date.now());
   if (reminders.length >= MAX_REMINDERS) {
     throw new Error(ctx.t("error.tooMany", { max: MAX_REMINDERS }));
   }
@@ -156,12 +179,16 @@ export async function createReminder(ctx, message, dueAt) {
   };
   reminders.push(reminder);
   await saveReminders(ctx, reminders);
-  await scheduleReminder(ctx, reminder);
+  await scheduleReminderUnsafe(ctx, reminder);
   return reminder;
 }
 
-export async function removeReminder(ctx, id) {
-  const reminders = await getReminders(ctx);
+export function createReminder(ctx, message, dueAt) {
+  return withReminderOperation(ctx, () => createReminderUnsafe(ctx, message, dueAt));
+}
+
+async function removeReminderUnsafe(ctx, id) {
+  const reminders = await readReminders(ctx);
   const item = reminders.find((reminder) => reminder.id === id);
   if (!item) return null;
   await ctx.schedule.cancel(item.id);
@@ -169,30 +196,42 @@ export async function removeReminder(ctx, id) {
   return item;
 }
 
+export function removeReminder(ctx, id) {
+  return withReminderOperation(ctx, () => removeReminderUnsafe(ctx, id));
+}
+
 /**
  * Move a pending reminder five minutes into the future. `fallbackMessage` is
  * only used by the already-fired alert action, whose reminder was removed
  * before delivery; assistant callers must omit it so invalid IDs stay inert.
  */
-export async function snoozeReminder(ctx, id, fallbackMessage) {
-  const item = await removeReminder(ctx, id);
-  if (!item && fallbackMessage === undefined) return null;
-  const reminder = await createReminder(
-    ctx,
-    item?.message ?? fallbackMessage,
-    Date.now() + SNOOZE_MS,
-  );
-  return { previous: item, reminder };
+export function snoozeReminder(ctx, id, fallbackMessage) {
+  return withReminderOperation(ctx, async () => {
+    const item = await removeReminderUnsafe(ctx, id);
+    if (!item && fallbackMessage === undefined) return null;
+    const reminder = await createReminderUnsafe(
+      ctx,
+      item?.message ?? fallbackMessage,
+      Date.now() + SNOOZE_MS,
+    );
+    return { previous: item, reminder };
+  });
 }
 
-export async function clearReminders(ctx) {
+async function clearRemindersUnsafe(ctx) {
   await ctx.schedule.cancelAll();
   await saveReminders(ctx, []);
 }
 
-export async function listPendingReminders(ctx) {
-  const now = Date.now();
-  return (await getReminders(ctx)).filter((reminder) => reminder.dueAt > now);
+export function clearReminders(ctx) {
+  return withReminderOperation(ctx, () => clearRemindersUnsafe(ctx));
+}
+
+export function listPendingReminders(ctx) {
+  return withReminderOperation(ctx, async () => {
+    const now = Date.now();
+    return (await readReminders(ctx)).filter((reminder) => reminder.dueAt > now);
+  });
 }
 
 /**
@@ -259,9 +298,12 @@ async function deliver(ctx, message, { missed = false, id } = {}) {
 }
 
 export async function fireReminder(ctx, id) {
-  const reminders = await getReminders(ctx);
-  const item = reminders.find((r) => r.id === id);
-  await saveReminders(ctx, reminders.filter((r) => r.id !== id));
+  const item = await withReminderOperation(ctx, async () => {
+    const reminders = await readReminders(ctx);
+    const found = reminders.find((r) => r.id === id);
+    await saveReminders(ctx, reminders.filter((r) => r.id !== id));
+    return found;
+  });
   if (!item) return false;
   await deliver(ctx, item.message, { id: item.id });
   return true;
@@ -273,13 +315,16 @@ export async function fireReminder(ctx, id) {
  * ones (fired while OpenPets was closed) are delivered as "missed".
  */
 export async function reconcile(ctx) {
-  await ctx.schedule.cancelAll();
-  const now = Date.now();
-  const reminders = await getReminders(ctx);
-  const future = reminders.filter((r) => r.dueAt > now);
-  const overdue = reminders.filter((r) => r.dueAt <= now);
-  await saveReminders(ctx, future);
-  for (const item of future) await scheduleReminder(ctx, item);
+  const overdue = await withReminderOperation(ctx, async () => {
+    await ctx.schedule.cancelAll();
+    const now = Date.now();
+    const reminders = await readReminders(ctx);
+    const future = reminders.filter((r) => r.dueAt > now);
+    const overdueItems = reminders.filter((r) => r.dueAt <= now);
+    await saveReminders(ctx, future);
+    for (const item of future) await scheduleReminderUnsafe(ctx, item);
+    return overdueItems;
+  });
   for (const item of overdue) await deliver(ctx, item.message, { missed: true, id: item.id });
 }
 

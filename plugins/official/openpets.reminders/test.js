@@ -311,4 +311,59 @@ assert.equal(MAX_REMINDERS, 10);
   h.expectNoErrors();
 }
 
+// 10) A scheduled fire and an overlapping assistant removal serialize their
+// read/replace transactions instead of resurrecting or losing a reminder.
+{
+  const now = Date.now();
+  const h = createTestHarness(register, {
+    permissions: PERMISSIONS,
+    config: { soundEnabled: false, osNotification: false },
+    locales: LOCALES,
+    nowMs: now,
+  });
+  await h.start();
+  const first = await h.runCapability("reminders.create", {
+    message: "Fire me",
+    dueAt: new Date(now + 60_000).toISOString(),
+  });
+  const second = await h.runCapability("reminders.create", {
+    message: "Remove me",
+    dueAt: new Date(now + 3 * 60_000).toISOString(),
+  });
+
+  const originalGet = h.ctx.storage.get;
+  let signalFirstRead;
+  const firstReadEntered = new Promise((resolve) => { signalFirstRead = resolve; });
+  let releaseRead;
+  const blockedRead = new Promise((resolve) => { releaseRead = resolve; });
+  h.ctx.storage.get = async (key) => {
+    if (key === "reminders" && signalFirstRead) {
+      const signal = signalFirstRead;
+      signalFirstRead = undefined;
+      signal();
+      await blockedRead;
+    }
+    return originalGet(key);
+  };
+
+  try {
+    const fire = h.clock.advance("1m");
+    await firstReadEntered;
+    const remove = h.runCapability("reminders.remove", { id: second.reminder.id });
+    releaseRead();
+    await Promise.all([fire, remove]);
+  } finally {
+    h.ctx.storage.get = originalGet;
+  }
+
+  h.expectStored("reminders", (value) => Array.isArray(value) && value.length === 0);
+  assert.equal(h.calls.schedules.size, 0, "serialized fire/remove must leave no stale schedules");
+  assert.equal(
+    h.calls.bubbles.filter((bubble) => bubble.spec.text?.includes(first.reminder.message)).length,
+    1,
+    "the fired reminder should be delivered exactly once",
+  );
+  h.expectNoErrors();
+}
+
 console.log("openpets.reminders: all checks passed.");
