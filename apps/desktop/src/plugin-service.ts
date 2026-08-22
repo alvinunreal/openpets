@@ -14,7 +14,7 @@ import { ensureLoaded as ensurePluginLocales, resolvePluginText } from "./plugin
 import { downloadCatalogPluginZip, installCatalogPluginPackage, readCatalogPluginManifestFromZip, resolveSafePluginInstallDir } from "./plugin-package.js";
 import type { PluginPetApi } from "./plugin-pet-api.js";
 import { JsonPluginStorageStore, type PluginCommand, type PluginHostCapabilities, type PluginLogLevel, type PluginStatus } from "./plugin-sdk-bridge.js";
-import type { PluginAssistantCapability } from "./plugin-sdk-assistant.js";
+import type { PluginAssistantCapability, PluginAssistantCapabilityExecutionOutcome, PluginAssistantCapabilityHandle } from "./plugin-sdk-assistant.js";
 import { PluginRuntime, type PluginRuntimeOptions, type PluginRuntimeScheduler } from "./plugin-runtime.js";
 import { PluginStateStore, type PluginSource, type PluginStateRecord } from "./plugin-state.js";
 import { getAppStateSnapshot } from "./app-state.js";
@@ -267,8 +267,8 @@ export class PluginService {
   }
 
   /** Host-internal assistant execution; not exposed through plugin SDK routes. */
-  executeAssistantCapability(pluginId: string, capabilityId: string, input: unknown): Promise<Record<string, unknown>> {
-    return this.runtime.executeAssistantCapability(pluginId, capabilityId, input);
+  executeAssistantCapability(handle: PluginAssistantCapabilityHandle, input: unknown): Promise<PluginAssistantCapabilityExecutionOutcome> {
+    return this.runtime.executeAssistantCapability(handle, input);
   }
 
   async getCatalogSnapshot(refresh = false): Promise<PluginCatalogSnapshot> {

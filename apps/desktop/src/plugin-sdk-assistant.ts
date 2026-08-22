@@ -42,7 +42,59 @@ export type PluginAssistantCapabilityRegistration = {
 export type PluginAssistantCapability = {
   readonly pluginId: string;
   readonly capability: OpenPetsAssistantCapability;
+  readonly handle: PluginAssistantCapabilityHandle;
 };
+
+/**
+ * An opaque reference to one registration in one plugin runtime generation.
+ * The bridge is the only authority that can resolve or execute this value.
+ */
+declare const pluginAssistantCapabilityHandleBrand: unique symbol;
+export type PluginAssistantCapabilityHandle = {
+  readonly [pluginAssistantCapabilityHandleBrand]: true;
+};
+
+export type PluginAssistantCapabilityErrorStage = "handle" | "lifecycle" | "input" | "handler" | "result";
+export type PluginAssistantCapabilityErrorCode =
+  | "invalid_handle"
+  | "inactive_plugin"
+  | "stale_generation"
+  | "invalid_input"
+  | "handler_failed"
+  | "timeout"
+  | "invalid_result"
+  | "internal_error";
+
+export class PluginAssistantCapabilityError extends Error {
+  readonly name = "PluginAssistantCapabilityError";
+
+  constructor(
+    readonly stage: PluginAssistantCapabilityErrorStage,
+    readonly code: PluginAssistantCapabilityErrorCode,
+    message: string,
+    options?: { readonly cause?: unknown },
+  ) {
+    super(message, options);
+  }
+}
+
+export type PluginAssistantCapabilityErrorInfo = {
+  readonly stage: PluginAssistantCapabilityErrorStage;
+  readonly code: PluginAssistantCapabilityErrorCode;
+  readonly message: string;
+};
+
+export type PluginAssistantCapabilityExecutionOutcome =
+  | { readonly ok: true; readonly result: Record<string, unknown> }
+  | { readonly ok: false; readonly error: PluginAssistantCapabilityErrorInfo };
+
+export function assistantCapabilityFailure(error: unknown, fallbackStage: PluginAssistantCapabilityErrorStage = "handler"): PluginAssistantCapabilityExecutionOutcome {
+  if (error instanceof PluginAssistantCapabilityError) return { ok: false, error: { stage: error.stage, code: error.code, message: error.message } };
+  return {
+    ok: false,
+    error: { stage: fallbackStage, code: "internal_error", message: error instanceof Error ? error.message : "Plugin assistant capability failed." },
+  };
+}
 
 type ParsedSchema = { readonly schema: ValidatedAssistantSchema; readonly raw: JsonObject };
 

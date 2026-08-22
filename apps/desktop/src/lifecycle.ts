@@ -7,6 +7,7 @@ import { stopLocalIpcServer } from "./local-ipc.js";
 import { stopRemoteControlService } from "./remote-control-service.js";
 import { closeAllLanVisitingPets } from "./lan-pet-controller.js";
 import { stopPluginService } from "./plugin-service.js";
+import { stopPetAssistantHost } from "./pet-assistant-host.js";
 import { shutdownPluginVoice } from "./plugin-voice.js";
 import { focusOpenTaskWindows } from "./windows.js";
 
@@ -43,6 +44,7 @@ export function installAppLifecycle(): void {
     info("app", "before quit cleanup begin");
     scheduleHardExitFallback("before-quit");
     void (async () => {
+      await stopPetAssistantHost().catch(() => undefined);
       await shutdownPluginVoice().catch(() => undefined);
       await stopPluginService().catch(() => undefined);
       await stopRemoteControlService().catch(() => undefined);

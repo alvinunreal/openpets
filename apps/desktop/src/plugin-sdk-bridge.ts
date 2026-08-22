@@ -22,7 +22,7 @@ import type { ScheduleSpec, PluginInspectorState } from "./plugin-sdk-state.js";
 import { WindowCounter, type PluginRuntimeState } from "./plugin-sdk-state.js";
 import { createPluginStorageApi } from "./plugin-sdk-storage.js";
 import { createPluginUiApi } from "./plugin-sdk-ui.js";
-import { normalizeAssistantResult, validateAssistantCapability, validateAssistantInput, type PluginAssistantCapability, type PluginAssistantCapabilityRegistration } from "./plugin-sdk-assistant.js";
+import { normalizeAssistantResult, PluginAssistantCapabilityError, validateAssistantCapability, validateAssistantInput, type PluginAssistantCapability, type PluginAssistantCapabilityHandle, type PluginAssistantCapabilityRegistration } from "./plugin-sdk-assistant.js";
 import type { PluginStateRecord, PluginStateStore } from "./plugin-state.js";
 import { classifyPluginError, logPluginDiagnostic } from "./plugin-diagnostics.js";
 
@@ -353,6 +353,8 @@ export class PluginSdkBridge {
   readonly #capabilities: PluginHostCapabilities;
   readonly #states = new Map<string, PluginRuntimeState>();
   readonly #apiGenerations = new Map<string, number>();
+  readonly #assistantHandles = new WeakMap<object, { readonly pluginId: string; readonly registration: PluginAssistantCapabilityRegistration; readonly generation: number }>();
+  readonly #assistantHandleByRegistration = new WeakMap<object, PluginAssistantCapabilityHandle>();
   readonly #busTopics = new Map<string, Set<PluginBusTopicEntry>>();
 
   constructor(options: { stateStore: PluginStateStore; petApi: PluginPetApi; scheduler: PluginRuntimeScheduler; storage?: PluginStorageStore; onError?: (id: string, reason: string) => void; logger?: PluginRuntimeLogger; capabilities?: PluginHostCapabilities }) {
@@ -808,35 +810,66 @@ export class PluginSdkBridge {
     const state = this.#pluginState(id);
     return [...state.assistantCapabilities.values()]
       .filter((registration) => registration.generation === currentGeneration)
-      .map((registration) => ({ pluginId: id, capability: registration.capability }));
+      .map((registration) => {
+        let handle = this.#assistantHandleByRegistration.get(registration);
+        if (!handle) {
+          handle = Object.freeze({}) as PluginAssistantCapabilityHandle;
+          this.#assistantHandleByRegistration.set(registration, handle);
+          this.#assistantHandles.set(handle, { pluginId: id, registration, generation: currentGeneration });
+        }
+        return { pluginId: id, capability: registration.capability, handle };
+      });
   }
 
-  async executeAssistantCapability(id: string, capabilityId: string, input: unknown, expectedGeneration?: number): Promise<Record<string, unknown>> {
-    const state = this.#pluginState(id);
-    const registration = state.assistantCapabilities.get(String(capabilityId));
-    if (!registration) throw new Error(`Assistant capability "${capabilityId}" is not registered for plugin "${id}".`);
-    this.#assertAssistantRegistration(id, registration, expectedGeneration);
-    const normalizedInput = validateAssistantInput(registration.schema, input);
-    this.#assertAssistantRegistration(id, registration, expectedGeneration);
-    const result = await withTimeout(
-      Promise.resolve().then(() => {
-        this.#assertAssistantRegistration(id, registration, expectedGeneration);
-        return registration.handler(normalizedInput);
-      }),
-      quotas.assistantExecutionTimeoutMs,
-      "Plugin assistant capability timed out.",
-    );
-    this.#assertAssistantRegistration(id, registration, expectedGeneration);
-    const normalizedResult = normalizeAssistantResult(result);
-    this.#assertAssistantRegistration(id, registration, expectedGeneration);
-    return normalizedResult;
+  async executeAssistantCapability(handle: PluginAssistantCapabilityHandle, input: unknown): Promise<Record<string, unknown>> {
+    const info = this.#assistantHandles.get(handle as object);
+    if (!info) throw new PluginAssistantCapabilityError("handle", "invalid_handle", "Assistant capability handle is invalid.");
+
+    const { pluginId, registration, generation } = info;
+    this.#assertAssistantRegistration(pluginId, registration, generation);
+
+    let normalizedInput: Record<string, unknown>;
+    try {
+      normalizedInput = validateAssistantInput(registration.schema, input);
+    } catch (error) {
+      throw new PluginAssistantCapabilityError("input", "invalid_input", error instanceof Error ? error.message : "Assistant capability input is invalid.", { cause: error });
+    }
+
+    this.#assertAssistantRegistration(pluginId, registration, generation);
+    let result: unknown;
+    try {
+      result = await withTimeout(
+        Promise.resolve().then(() => {
+          this.#assertAssistantRegistration(pluginId, registration, generation);
+          return registration.handler(normalizedInput);
+        }),
+        quotas.assistantExecutionTimeoutMs,
+        "Plugin assistant capability timed out.",
+        () => new AssistantCapabilityTimeoutError("Plugin assistant capability timed out."),
+      );
+    } catch (error) {
+      if (error instanceof PluginAssistantCapabilityError) throw error;
+      throw new PluginAssistantCapabilityError("handler", error instanceof AssistantCapabilityTimeoutError ? "timeout" : "handler_failed", error instanceof Error ? error.message : "Assistant capability handler failed.", { cause: error });
+    }
+
+    this.#assertAssistantRegistration(pluginId, registration, generation);
+    try {
+      const normalizedResult = normalizeAssistantResult(result);
+      this.#assertAssistantRegistration(pluginId, registration, generation);
+      return normalizedResult;
+    } catch (error) {
+      if (error instanceof PluginAssistantCapabilityError) throw error;
+      throw new PluginAssistantCapabilityError("result", "invalid_result", error instanceof Error ? error.message : "Assistant capability result is invalid.", { cause: error });
+    }
   }
 
-  #assertAssistantRegistration(id: string, registration: PluginAssistantCapabilityRegistration, expectedGeneration?: number): void {
+  #assertAssistantRegistration(id: string, registration: PluginAssistantCapabilityRegistration, expectedGeneration: number): void {
     const currentGeneration = this.#apiGenerations.get(id) ?? 0;
-    if (expectedGeneration !== undefined && currentGeneration !== expectedGeneration) throw new Error("Plugin is no longer active.");
+    const record = this.#stateStore.getRecord(id);
+    if (!record || !record.enabled || record.catalogDisabled || record.brokenReason) throw new PluginAssistantCapabilityError("lifecycle", "inactive_plugin", "Plugin is no longer active.");
+    if (currentGeneration !== expectedGeneration) throw new PluginAssistantCapabilityError("lifecycle", "stale_generation", "Plugin is no longer active.");
     const current = this.#pluginState(id).assistantCapabilities.get(registration.capability.id);
-    if (registration.generation !== currentGeneration || current !== registration) throw new Error("Plugin is no longer active.");
+    if (registration.generation !== currentGeneration || current !== registration) throw new PluginAssistantCapabilityError("lifecycle", "stale_generation", "Plugin is no longer active.");
   }
 
   async executeCommand(id: string, commandId: string, args?: Record<string, unknown>, timeoutMs = 5_000): Promise<void> {
@@ -1472,6 +1505,7 @@ export function nextCronRunMs(expr: string, fromMs: number): number | null {
   return null;
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage = "Plugin command timed out."): Promise<T> { return new Promise((resolve, reject) => { const timeout = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs); promise.then((v) => { clearTimeout(timeout); resolve(v); }, (e) => { clearTimeout(timeout); reject(e); }); }); }
+class AssistantCapabilityTimeoutError extends Error {}
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage = "Plugin command timed out.", timeoutError: () => Error = () => new Error(timeoutMessage)): Promise<T> { return new Promise((resolve, reject) => { const timeout = setTimeout(() => reject(timeoutError()), timeoutMs); promise.then((v) => { clearTimeout(timeout); resolve(v); }, (e) => { clearTimeout(timeout); reject(e); }); }); }
 function safeError(error: unknown): string { return error instanceof Error ? error.message : "Plugin SDK callback failed."; }
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }

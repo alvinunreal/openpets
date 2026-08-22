@@ -9,7 +9,7 @@ import { defaultMaxPluginManifestBytes, readSafePluginManifest } from "./plugin-
 import { type OpenPetsJavascriptPluginManifest, type OpenPetsPluginManifest, type PluginAction } from "./plugin-manifest.js";
 import type { PluginPetApi } from "./plugin-pet-api.js";
 import { PluginSdkBridge, type PluginHostCapabilities, type PluginLogLevel, type PluginRuntimePublicState, type PluginStorageStore } from "./plugin-sdk-bridge.js";
-import type { PluginAssistantCapability } from "./plugin-sdk-assistant.js";
+import { assistantCapabilityFailure, PluginAssistantCapabilityError, type PluginAssistantCapability, type PluginAssistantCapabilityExecutionOutcome, type PluginAssistantCapabilityHandle } from "./plugin-sdk-assistant.js";
 import type { PluginInspectorState } from "./plugin-sdk-state.js";
 import type { PluginStateRecord, PluginStateStore } from "./plugin-state.js";
 import { classifyPluginError, logPluginDiagnostic } from "./plugin-diagnostics.js";
@@ -99,12 +99,13 @@ export class PluginRuntime {
     }
     return capabilities;
   }
-  executeAssistantCapability(pluginId: string, capabilityId: string, input: unknown): Promise<Record<string, unknown>> {
-    if (!this.#active) return Promise.reject(new Error("Plugin runtime is not active."));
-    const record = this.#stateStore.getRecord(pluginId);
-    const slot = this.#slots.get(pluginId);
-    if (!record || !slot?.active || !record.enabled || record.catalogDisabled || record.brokenReason) return Promise.reject(new Error("Plugin is no longer active."));
-    return this.#sdkBridge.executeAssistantCapability(pluginId, capabilityId, input, slot.generation);
+  async executeAssistantCapability(handle: PluginAssistantCapabilityHandle, input: unknown): Promise<PluginAssistantCapabilityExecutionOutcome> {
+    if (!this.#active) return assistantCapabilityFailure(new PluginAssistantCapabilityError("lifecycle", "inactive_plugin", "Plugin runtime is not active."));
+    try {
+      return { ok: true, result: await this.#sdkBridge.executeAssistantCapability(handle, input) };
+    } catch (error) {
+      return assistantCapabilityFailure(error, "handler");
+    }
   }
   executeMenuSelect(id: string, itemId: string): Promise<void> { return this.#sdkBridge.executeMenuSelect(id, itemId); }
   notifyConfigChanged(id: string): void { this.#sdkBridge.notifyConfigChanged(id); }

@@ -39,9 +39,11 @@ launching a second one.
 `main.ts` runs a deterministic bootstrap (see `src/codemap.md` for the exact
 order): install lifecycle handlers → initialize app state → initialize the
 logger → create the tray → start the local IPC server → start the persisted,
-opt-in remote-control service if enabled → initialize the plugin service (with
-the Electron JS host) → optionally show the default pet. Shutdown stops the
-plugin service, remote-control listener, local IPC server, and pet windows.
+opt-in remote-control service if enabled → initialize and start the plugin
+service (with the Electron JS host) → construct the host Pet Assistant service
+→ optionally show the default pet. Shutdown stops the bounded Pet Assistant
+turns before plugin teardown, then stops the plugin service, remote-control
+listener, local IPC server, and pet windows.
 
 Key files: `main.ts` (entry/bootstrap), `lifecycle.ts` (app events + cleanup),
 `state.ts` (shell pause flag).
@@ -247,6 +249,25 @@ tools. This phase intentionally has no visible conversation status, UI, tray
 control, pet indicator, settings, public SDK method, plugin permission, plugin
 tool, transcript, memory, or generic TTS behavior. Those are deferred until the
 host lifecycle and protocol are reviewed for Phase 2.
+
+#### Pet Assistant host integration (#138)
+
+Once `PluginService.start()` resolves, `pet-assistant-host.ts` constructs the
+single host-owned `PetAssistantService`. `text-model-client.ts` translates the
+current Anthropic or OpenAI-compatible OpenAI/Ollama/MiniMax settings and host
+secret into the provider-neutral model contract. The adapter never uses the
+plugin `ctx.ai` gateway. Capability discovery and execution call the
+generation-pinned `PluginService` APIs; pre-invocation lifecycle rejection is
+unavailable, while a disable/reload after invocation is indeterminate.
+
+The service keeps only bounded in-memory conversation state, validates whole
+tool batches before side effects, bounds context/tool/final payloads, and
+cancels active model/capability waits during idempotent shutdown. Missing model
+configuration fails a turn clearly and does not prevent desktop startup. This
+is an internal integration with no chat UI, voice UI, transcript persistence,
+personality settings, or provider-profile UI yet. Callers may supply bounded
+curated context and personality-style guidance after the immutable host rules;
+those inputs are not persisted or granted authority.
 
 The plugin subsystem also owns **display deliveries**: a lazy, transparent,
 host-owned surface used by `ctx.ui.delivery`. A delivery is rendered as a single
