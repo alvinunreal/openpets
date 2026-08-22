@@ -176,7 +176,7 @@ async function scheduleDisplayRefresh(ctx, session, token) {
   }
 }
 
-async function updatePinned(ctx, session, token) {
+async function updatePinned(ctx, session, token, { create = true } = {}) {
   if (!isCurrent(ctx, token)) return;
   const pinnedBubble = getPinnedBubble(ctx);
   if (!active(session)) {
@@ -211,6 +211,7 @@ async function updatePinned(ctx, session, token) {
     }
   }
   if (!isCurrent(ctx, token)) return;
+  if (!create) return;
   const nextBubble = await ctx.ui.bubble(spec);
   if (!isCurrent(ctx, token)) {
     try { await nextBubble.dismiss(); } catch {}
@@ -223,12 +224,18 @@ async function updatePinned(ctx, session, token) {
   setPinnedBubble(ctx, nextBubble);
 }
 
-async function startMode(ctx, mode, durationMs, completedFocusCount, token, { showPinned = true } = {}) {
+async function updateExistingPinned(ctx, session, token) {
+  if (!getPinnedBubble(ctx)) return;
+  await updatePinned(ctx, session, token, { create: false });
+}
+
+async function startMode(ctx, mode, durationMs, completedFocusCount, token, { showPinned = true, syncExistingPinned = false } = {}) {
   const now = Date.now();
   const session = await saveSession(ctx, { mode, startedAt: now, endsAt: now + durationMs, pausedRemainingMs: null, completedFocusCount }, token);
   if (!session || !isCurrent(ctx, token)) return undefined;
   await scheduleEnd(ctx, session, token);
   if (showPinned) await updatePinned(ctx, session, token);
+  else if (syncExistingPinned) await updateExistingPinned(ctx, session, token);
   await scheduleDisplayRefresh(ctx, session, token);
   return session;
 }
@@ -253,7 +260,7 @@ export async function startBreak(ctx, completedFocusCount) {
   return lifecycle(ctx, (token) => startBreakImpl(ctx, completedFocusCount, token));
 }
 
-async function changePauseStateImpl(ctx, action, token, { showPinned = true } = {}) {
+async function changePauseStateImpl(ctx, action, token, { showPinned = true, syncExistingPinned = false } = {}) {
   const session = await getSession(ctx);
   if (!isCurrent(ctx, token)) return;
   if (!active(session)) return { kind: "invalid", session, error: "no_active_session" };
@@ -273,6 +280,7 @@ async function changePauseStateImpl(ctx, action, token, { showPinned = true } = 
   if (!isCurrent(ctx, token)) return;
   await scheduleEnd(ctx, session, token);
   if (showPinned) await updatePinned(ctx, session, token);
+  else if (syncExistingPinned) await updateExistingPinned(ctx, session, token);
   await scheduleDisplayRefresh(ctx, session, token);
   return { kind: "updated", session };
 }
@@ -287,7 +295,7 @@ export async function pauseOrResume(ctx) {
   return lifecycle(ctx, (token) => pauseOrResumeImpl(ctx, token));
 }
 
-async function endSessionImpl(ctx, token, { showPinned = true } = {}) {
+async function endSessionImpl(ctx, token, { showPinned = true, syncExistingPinned = false } = {}) {
   const session = await getSession(ctx);
   if (!isCurrent(ctx, token)) return;
   await ctx.schedule.cancel(SCHEDULE_ID);
@@ -297,6 +305,7 @@ async function endSessionImpl(ctx, token, { showPinned = true } = {}) {
   const cleared = await saveSession(ctx, null, token);
   if (cleared === undefined || !isCurrent(ctx, token)) return;
   if (showPinned) await updatePinned(ctx, null, token);
+  else if (syncExistingPinned) await updateExistingPinned(ctx, null, token);
   return session;
 }
 
@@ -418,7 +427,7 @@ async function assistantStart(ctx, input) {
     if (!isCurrent(ctx, token)) return;
     const minutes = assistantFocusMinutes(input);
     if (minutes === null) return assistantInvalid("invalid_duration", current);
-    const session = await startMode(ctx, "focus", minutes * 60_000, current?.completedFocusCount ?? 0, token, { showPinned: false });
+    const session = await startMode(ctx, "focus", minutes * 60_000, current?.completedFocusCount ?? 0, token, { showPinned: false, syncExistingPinned: true });
     return session ? assistantSuccess(session) : assistantInvalid("session_unavailable", current);
   });
 }
@@ -432,7 +441,7 @@ async function assistantStatus(ctx) {
 
 async function assistantPauseOrResume(ctx, action) {
   return lifecycle(ctx, async (token) => {
-    const result = await changePauseStateImpl(ctx, action, token, { showPinned: false });
+    const result = await changePauseStateImpl(ctx, action, token, { showPinned: false, syncExistingPinned: true });
     if (!result || result.kind === "invalid") return assistantInvalid(result?.error ?? "session_unavailable", result?.session);
     return assistantSuccess(result.session);
   });
@@ -443,7 +452,7 @@ async function assistantEnd(ctx) {
     const current = await getSession(ctx);
     if (!isCurrent(ctx, token)) return;
     if (!active(current)) return assistantInvalid("no_active_session", current);
-    const ended = await endSessionImpl(ctx, token, { showPinned: false });
+    const ended = await endSessionImpl(ctx, token, { showPinned: false, syncExistingPinned: true });
     return ended ? assistantSuccess(null) : assistantInvalid("session_unavailable", current);
   });
 }

@@ -191,7 +191,44 @@ const LOCALES = { en: JSON.parse(await readFile(new URL("./locales/en.json", imp
   h.expectNoErrors();
 }
 
-// 1c) The harness follows the host's zero-argument stop contract.
+// 1e) Assistant actions reconcile an existing direct-control bubble without creating speech or duplicates.
+{
+  const h = createTestHarness(register, { permissions: PERMISSIONS, locales: LOCALES, config: { focusLength: "25", breakStyle: "normal" }, nowMs: 1_900_000 });
+  await h.start();
+  await h.runCommand("start-focus");
+  const bubble = h.calls.bubbles.at(-1);
+  const speechCount = h.calls.speak.length;
+  assert.ok(bubble, "direct start should create a pinned bubble");
+  assert.equal(bubble.updates.length, 0);
+
+  await h.runCapability("focus.start", { minutes: 10 });
+  assert.equal(h.calls.bubbles.length, 1, "assistant start must reuse the existing pinned bubble");
+  assert.equal(h.calls.speak.length, speechCount, "assistant start must not speak");
+  assert.match(bubble.spec.text, /Focus · 10 min left/);
+  assert.equal(bubble.updates.length, 1);
+
+  await h.runCapability("focus.pause", {});
+  assert.equal(h.calls.bubbles.length, 1, "assistant pause must not create a second bubble");
+  assert.equal(h.calls.speak.length, speechCount, "assistant pause must not speak");
+  assert.match(bubble.spec.text, /Focus paused · 10 min left/);
+  assert.equal(bubble.updates.length, 2);
+
+  await h.runCapability("focus.resume", {});
+  assert.equal(h.calls.bubbles.length, 1, "assistant resume must not create a second bubble");
+  assert.equal(h.calls.speak.length, speechCount, "assistant resume must not speak");
+  assert.match(bubble.spec.text, /Focus · 10 min left/);
+  assert.equal(bubble.updates.length, 3);
+
+  await h.runCapability("focus.end", {});
+  assert.equal(h.calls.bubbles.length, 1, "assistant end must not create a replacement bubble");
+  assert.equal(h.calls.speak.length, speechCount, "assistant end must not speak");
+  assert.equal(bubble.dismissed, true, "assistant end must dismiss the existing pinned bubble");
+  assert.ok(h.calls.dismissedBubbles.includes(bubble.handle.id));
+  h.expectStored("session", null);
+  h.expectNoErrors();
+}
+
+// 1f) The harness follows the host's zero-argument stop contract.
 {
   let stopArgumentCount = -1;
   const h = createTestHarness({
