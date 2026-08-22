@@ -146,6 +146,21 @@ then the voice adapters and chat UI; finally history management and the
 pet-owned Talk controls. OpenAI Realtime is an optimized optional adapter, not
 the provider-neutral basis for voice.
 
+## Two-developer GitHub workflow
+
+The [v4 epic](https://github.com/alvinunreal/openpets/issues/142) is the shared
+coordination point for v4 work.
+
+1. Before coding, claim one unclaimed child issue: comment on the epic with the
+   issue number and intended scope, assign the child issue to yourself, and ask
+   for a handoff if another developer has already claimed it.
+2. Work on a branch named for that issue. Keep the PR focused, link it to the
+   child issue, run the relevant checks and review, then commit and push it.
+3. Merge only after the PR is ready. The PR closes its child issue; then comment
+   on the epic with the merged PR link, delivered behavior, and validation.
+4. Update the epic checklist and this delivery tracker only for merged work.
+   Claim the next issue through the epic before starting it.
+
 ## Decisions made for v4
 
 - Text/reasoning, speech-to-text, and text-to-speech providers are selected
