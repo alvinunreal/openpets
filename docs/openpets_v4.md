@@ -34,7 +34,8 @@ it only changes the input and output modality.
 
 Voice conversations include live transcription, so spoken requests and the
 pet's responses are available in the conversation UI as text. The persistence
-and memory policy for that text is a separate design decision.
+policy is bounded, recent local history that the owner can inspect and delete;
+v4 does not infer or retain long-term semantic memory.
 
 OpenPets connects the experience to configured AI, speech-to-text, and
 text-to-speech providers through host-owned integrations. The product contract
@@ -101,9 +102,43 @@ v4 is complete only when:
 6. New plugins can add assistant capabilities through the defined plugin
    contract rather than changes to a central list of supported spoken phrases.
 
-## Intentionally not decided here
+## Delivery tracker
 
-This document sets the product destination, not the implementation plan. The
-exact capability schema, confirmation policy, provider strategy, transcript and
-memory retention model, chat UI, and phased execution plan remain design work
-for v4.
+The [v4 epic](https://github.com/alvinunreal/openpets/issues/142) is the
+implementation tracker. It turns this product direction into independently
+verifiable delivery work:
+
+- [#137](https://github.com/alvinunreal/openpets/issues/137) — plugin assistant
+  capability SDK/runtime (complete).
+- [#138](https://github.com/alvinunreal/openpets/issues/138) — provider-neutral
+  Pet Assistant conversation and tool loop.
+- [#143](https://github.com/alvinunreal/openpets/issues/143) and
+  [#144](https://github.com/alvinunreal/openpets/issues/144) — Focus Buddy and
+  Quick Reminders assistant capabilities.
+- [#145](https://github.com/alvinunreal/openpets/issues/145) — independent text,
+  speech-to-text, and text-to-speech provider profiles.
+- [#146](https://github.com/alvinunreal/openpets/issues/146) — editable pet
+  personality and layered prompt composition.
+- [#147](https://github.com/alvinunreal/openpets/issues/147) — composable
+  speech-to-text → Pet Assistant → text-to-speech conversations.
+- [#139](https://github.com/alvinunreal/openpets/issues/139) — optional OpenAI
+  Realtime adapter for the same assistant contract.
+- [#148](https://github.com/alvinunreal/openpets/issues/148),
+  [#149](https://github.com/alvinunreal/openpets/issues/149), and
+  [#150](https://github.com/alvinunreal/openpets/issues/150) — shared
+  chat/transcript UI, recent-history management, and pet Talk controls.
+
+The initial implementation order is #138 alongside #143 and #144; then #145
+and #146; then the voice adapters and chat UI; finally history management and
+the pet-owned Talk controls. OpenAI Realtime is an optimized optional adapter,
+not the provider-neutral basis for voice.
+
+## Decisions made for v4
+
+- Text/reasoning, speech-to-text, and text-to-speech providers are selected
+  independently, allowing local and remote combinations.
+- Pet personality is owner-editable, but only affects communication style; it
+  cannot bypass host rules, permissions, or authoritative capability outcomes.
+- Focus and Reminder actions execute without a confirmation step in v4.
+- Calendar, wake words, long-term semantic memory, unrestricted machine access,
+  and a universal confirmation framework are outside v4.
