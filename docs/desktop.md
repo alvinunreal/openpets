@@ -276,8 +276,10 @@ conversation messages follow the system message, while the current structured
 capability definitions and authoritative results remain provider-neutral tool
 data. Personality is explicitly communication-only and cannot grant capabilities,
 change permissions, or rewrite failed, rejected, unavailable, or indeterminate
-outcomes. Chat/voice UI, transcript persistence, and provider-profile UI remain
-separate v4 work.
+outcomes. When any such non-completed outcome exists, the terminal response is a
+deterministic host-generated status summary rather than model prose; all-completed
+turns preserve the model response. Chat/voice UI, transcript persistence, and
+provider-profile UI remain separate v4 work.
 
 The plugin subsystem also owns **display deliveries**: a lazy, transparent,
 host-owned surface used by `ctx.ui.delivery`. A delivery is rendered as a single

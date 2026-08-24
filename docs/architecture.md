@@ -101,8 +101,11 @@ definitions/results. Personality values are communication preferences only and
 cannot change host rules, permissions, available capabilities, or authoritative
 capability outcomes. The profile is persisted with app state and captured at
 turn start, so a Settings edit applies to the next turn without changing an
-already-running turn. Chat/voice UI, transcript/history persistence, and
-provider-profile UI remain separate v4 work.
+already-running turn. If any structured capability outcome is rejected,
+unavailable, or indeterminate, the terminal user-visible response is a
+deterministic host-generated status summary instead of untrusted model prose;
+turns whose outcomes all complete retain the model response. Chat/voice UI,
+transcript/history persistence, and provider-profile UI remain separate v4 work.
 
 These are the flows worth holding in memory. Each links to the doc that details it.
 

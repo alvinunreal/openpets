@@ -191,11 +191,36 @@ function model(responses: readonly PetAssistantTextModelResponse[], requests: Pe
   });
   const result = await service.startTurn("truth-boundary", "Start focus.");
   assert.equal(result.toolOutcomes?.[0]?.result.status, "rejected");
+  assert.equal(result.response, "Capability outcomes: completed=0, rejected=1, unavailable=0, indeterminate=0.");
   assert.deepEqual((requests[1]?.messages.find((message) => message.role === "tool") as { result: unknown } | undefined)?.result, {
     status: "rejected",
     reason: "The duration is invalid.",
   });
   assert.equal(requests[0]?.tools.length, 1, "personality must not add or change capability definitions");
+}
+
+// Mixed capability outcomes replace an overconfident model response with a truthful summary.
+{
+  const requests: PetAssistantTextModelRequest[] = [];
+  const service = new PetAssistantService(model([
+    { type: "tool-calls", toolCalls: [
+      { id: "completed-call", name: petAssistantToolName("focus.buddy", "start"), arguments: { minutes: 25 } },
+      { id: "rejected-call", name: petAssistantToolName("focus.buddy", "second"), arguments: { mode: "reject" } },
+      { id: "unavailable-call", name: petAssistantToolName("missing.buddy", "start"), arguments: {} },
+      { id: "indeterminate-call", name: petAssistantToolName("focus.buddy", "second"), arguments: { mode: "indeterminate" } },
+    ] },
+    { type: "text", text: "All capability actions succeeded." },
+  ], requests), runtime(async (receivedHandle, input) => {
+    if (receivedHandle === secondHandle) {
+      return (input as { mode?: string }).mode === "reject"
+        ? { ok: false, error: { stage: "input", code: "invalid_input", message: "Rejected by test." } }
+        : { ok: false, error: { stage: "provider", code: "timeout", message: "Provider timed out." } };
+    }
+    return { ok: true, result: {} };
+  }, [capability, secondCapability]));
+  const result = await service.startTurn("mixed-truth-boundary", "Run all actions.");
+  assert.equal(result.response, "Capability outcomes: completed=1, rejected=1, unavailable=1, indeterminate=1.");
+  assert.deepEqual(result.toolOutcomes?.map((outcome) => outcome.result.status), ["completed", "rejected", "unavailable", "indeterminate"]);
 }
 
 // Settings edits are read on the next turn, while an already-started turn keeps its snapshot.

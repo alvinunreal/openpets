@@ -74,6 +74,20 @@ type RemoteControlClientSummary = { id: string; name: string; scopes: RemoteCont
 type RemoteControlSnapshot = { config: RemoteControlConfigSnapshot; clients: RemoteControlClientSummary[] };
 type RemotePairingResult = { clientId: string; token: string };
 
+const utf8Encoder = new TextEncoder();
+
+function limitUtf8Bytes(value: string, maxBytes: number): string {
+  let result = "";
+  let bytes = 0;
+  for (const character of value) {
+    const characterBytes = utf8Encoder.encode(character).byteLength;
+    if (bytes + characterBytes > maxBytes) break;
+    result += character;
+    bytes += characterBytes;
+  }
+  return result;
+}
+
 type ControlCenterApi = {
   getPetsState(): Promise<StateSnapshot>;
   getDashboardSnapshot(): Promise<DashboardSnapshot>;
@@ -1389,7 +1403,7 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
                   spellCheck={false}
                   value={personalityDraft?.petName ?? ""}
                   disabled={!personalityDraft || !!busy}
-                  onChange={(event) => setPersonalityDraft((current) => current ? { ...current, petName: event.target.value } : current)}
+                  onChange={(event) => setPersonalityDraft((current) => current ? { ...current, petName: limitUtf8Bytes(event.target.value, 64) } : current)}
                 />
               </div>
               <div className="settings-row">
@@ -1403,7 +1417,7 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
                   maxLength={96}
                   value={personalityDraft?.tone ?? ""}
                   disabled={!personalityDraft || !!busy}
-                  onChange={(event) => setPersonalityDraft((current) => current ? { ...current, tone: event.target.value } : current)}
+                  onChange={(event) => setPersonalityDraft((current) => current ? { ...current, tone: limitUtf8Bytes(event.target.value, 96) } : current)}
                 />
               </div>
               <div className="settings-row">
@@ -1418,7 +1432,7 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
                   spellCheck={false}
                   value={personalityDraft?.ownerAddress ?? ""}
                   disabled={!personalityDraft || !!busy}
-                  onChange={(event) => setPersonalityDraft((current) => current ? { ...current, ownerAddress: event.target.value } : current)}
+                  onChange={(event) => setPersonalityDraft((current) => current ? { ...current, ownerAddress: limitUtf8Bytes(event.target.value, 96) } : current)}
                 />
               </div>
               <div className="settings-row">
@@ -1447,7 +1461,7 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
                   maxLength={1024}
                   value={personalityDraft?.style ?? ""}
                   disabled={!personalityDraft || !!busy}
-                  onChange={(event) => setPersonalityDraft((current) => current ? { ...current, style: event.target.value } : current)}
+                  onChange={(event) => setPersonalityDraft((current) => current ? { ...current, style: limitUtf8Bytes(event.target.value, 1024) } : current)}
                 />
               </div>
             </div>
