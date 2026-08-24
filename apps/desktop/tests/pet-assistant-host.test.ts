@@ -50,7 +50,7 @@ try {
   const pluginService = new PluginService({ userDataPath, stateStore: new PluginStateStore({ userDataPath }), runtime: runtime as unknown as PluginRuntime });
   await pluginService.start();
   const secrets = { get: async () => "host-test-key" } as unknown as PluginSecretsStore;
-  startPetAssistantHost(pluginService, secrets);
+  startPetAssistantHost(pluginService, secrets, { compositionProvider: () => ({}) });
   const assistant = getPetAssistantService();
   assert.ok(assistant);
   const result = await assistant.startTurn("host-conversation", "Start focus for 25 minutes.");

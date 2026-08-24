@@ -158,4 +158,30 @@ for (const { key, errMsg } of booleanKeys) {
   console.log("validatePreferencePatch: waitingAnimationDurationMs validation — PASS");
 }
 
+// ---------------------------------------------------------------------------
+// Pet Assistant personality — nested renderer values are validated and bounded
+// ---------------------------------------------------------------------------
+{
+  const patch = validatePreferencePatch({
+    personality: {
+      petName: "Nova",
+      tone: "calm",
+      style: "Friendly and concise.",
+      ownerAddress: "chief",
+      responseLength: "balanced",
+    },
+  });
+  assert.deepEqual(patch.personality, {
+    petName: "Nova",
+    tone: "calm",
+    style: "Friendly and concise.",
+    ownerAddress: "chief",
+    responseLength: "balanced",
+  });
+  assert.throws(() => validatePreferencePatch({ personality: { style: "x".repeat(1025) } }), /Style is too large/);
+  assert.throws(() => validatePreferencePatch({ personality: { ownerAddress: "" } }), /Invalid owner address/);
+  assert.throws(() => validatePreferencePatch({ personality: { responseLength: "verbose" } }), /Invalid response-length/);
+  console.log("validatePreferencePatch: personality validation and bounds — PASS");
+}
+
 console.log("\nAll preference-patch tests passed.");

@@ -1,5 +1,7 @@
 /** Provider-neutral contracts for the host-owned Pet Assistant. */
 
+import type { PetAssistantPersonality } from "./pet-assistant-personality.js";
+
 export type AssistantJsonObject = Record<string, unknown>;
 
 export type PetAssistantCapability = {
@@ -63,6 +65,13 @@ export type PetAssistantMessage =
 export type PetAssistantTextModelRequest = {
   readonly messages: readonly PetAssistantMessage[];
   readonly tools: readonly PetAssistantTool[];
+};
+
+/** Host-owned prompt inputs captured once at the beginning of each turn. */
+export type PetAssistantComposition = {
+  readonly curatedContext?: string;
+  readonly personalityStyle?: string;
+  readonly personality?: PetAssistantPersonality;
 };
 
 export type PetAssistantTextModelResponse =

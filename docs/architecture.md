@@ -88,16 +88,24 @@ default pet and ignores remote configuration.
 
 After `PluginService.start()` resolves, the desktop constructs one canonical
 in-memory Pet Assistant service. Each turn reads the current host text-provider
-configuration, discovers enabled generation-pinned capabilities, and routes
-validated tool calls back through `PluginService`. Provider codecs and the
-lifecycle enforce bounded context, payloads, results, timeouts, cancellation,
-and final output. Assistant requests do not use the plugin `ctx.ai` gateway.
+configuration and the current host-owned personality profile, discovers enabled
+generation-pinned capabilities, and routes validated tool calls back through
+`PluginService`. Provider codecs and the lifecycle enforce bounded context,
+payloads, results, timeouts, cancellation, and final output. Assistant requests
+do not use the plugin `ctx.ai` gateway.
 
-This is an internal integration only: no chat UI, voice UI, transcript or
-conversation persistence, personality settings, or provider-profile UI exists
-yet. Bounded curated context and personality-style guidance can be composed
-after the immutable host rules for later surfaces; they are not persisted and
-cannot change capability authority.
+The host composes each request in a fixed order: immutable host rules, optional
+curated context, a serialized owner-authored personality data block, recent
+bounded conversation messages, and the current provider-neutral capability
+definitions/results. Personality values are communication preferences only and
+cannot change host rules, permissions, available capabilities, or authoritative
+capability outcomes. The profile is persisted with app state and captured at
+turn start, so a Settings edit applies to the next turn without changing an
+already-running turn. If any structured capability outcome is rejected,
+unavailable, or indeterminate, the terminal user-visible response is a
+deterministic host-generated status summary instead of untrusted model prose;
+turns whose outcomes all complete retain the model response. Chat/voice UI,
+transcript/history persistence, and provider-profile UI remain separate v4 work.
 
 These are the flows worth holding in memory. Each links to the doc that details it.
 

@@ -164,13 +164,14 @@ late results from an old generation.
 Existing right-click commands remain direct menu controls. They are not
 implicitly AI-callable and are not a substitute for a capability descriptor.
 Issue #137 owns only the plugin capability contract and generation-pinned
-runtime boundary. Issue #138 now owns the canonical host-internal in-memory
+runtime boundary. Issue #138 owns the canonical host-internal in-memory
 conversation/tool loop, provider adapter, generation-pinned routing adapter,
-and bounded lifecycle. It does not route assistant requests through `ctx.ai`
-or add unrestricted plugin authority. The #138 integration has no chat/voice
-UI, transcript or conversation persistence, personality settings,
-provider-profile UI, or sensitive-action confirmation UX yet; later issues add
-those product surfaces.
+and bounded lifecycle. Issue #146 adds a host-owned persisted personality
+profile, but it does not move personality or authority into plugins. Assistant
+requests do not route through `ctx.ai` or gain unrestricted plugin authority.
+The current integration has no chat/voice UI, transcript or conversation
+persistence, provider-profile UI, or sensitive-action confirmation UX; later
+issues add those product surfaces.
 
 Network access is gated per call by the **intersection** of manifest-declared
 permissions and the user's persisted approvals. A stale approval never grants a

@@ -14,7 +14,7 @@ OpenPets desktop companion application. Tray-first Electron app providing animat
   - CSP: `default-src 'none'`, inline styles only
   - Mock keychain to prevent OS credential prompts
   - IPC network security: loopback/private address filtering for TCP mode
-- **State Management**: File-based JSON state with atomic writes (temp + rename)
+- **State Management**: File-based JSON state with atomic writes (temp + rename), including bounded Pet Assistant personality preferences
 - **Pet Architecture**: 
   - Default pet (always visible when enabled)
   - Agent pets (lease-based, appear on explicit agent requests)
@@ -35,7 +35,7 @@ OpenPets desktop companion application. Tray-first Electron app providing animat
 
 **Agent Setup**: UI → `agent-setup.ts` → Claude/OpenCode/Cursor CLI detection → MCP config modification → hooks installation → memory file management
 
-**Control Center**: Tray route → `openControlCenterWindow(route)` → `windows.ts` loads Vite renderer and sends route events → `control-center-preload.cjs` exposes narrow page APIs → React Dashboard/Pets/Integrations/Plugins/Settings routes render snapshots and invoke actions.
+**Control Center**: Tray route → `openControlCenterWindow(route)` → `windows.ts` loads Vite renderer and sends route events → `control-center-preload.cjs` exposes narrow page APIs → React Dashboard/Pets/Integrations/Plugins/Settings routes render snapshots and invoke actions, including host-owned personality preferences.
 
 **Plugins**: Control Center plugins route → `plugin-service.ts` → catalog or local manifest/entry loader → permission approval/state update → `plugin-runtime.ts` schedules declarative timers or starts `plugin-js-host.ts` → `plugin-sdk-bridge.ts` applies approved SDK calls to pet/schedule/storage/command/status/network APIs
 

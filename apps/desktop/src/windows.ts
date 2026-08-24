@@ -74,7 +74,7 @@ function getPetsStateSnapshot(): { preferences: { defaultPetId: string }; pets: 
 }
 
 function getSettingsStateSnapshot(): {
-  preferences: Pick<ReturnType<typeof getAppStateSnapshot>["preferences"], "openDefaultPetOnLaunch" | "appearanceTheme" | "petScale" | "waitingAnimationDurationMs" | "reactionAnimationOverrides" | "petPoolOrder" | "petPoolEnabled" | "petConfinementEnabled" | "petCrossDisplayEnabled" | "petGravityEnabled">;
+  preferences: Pick<ReturnType<typeof getAppStateSnapshot>["preferences"], "openDefaultPetOnLaunch" | "appearanceTheme" | "petScale" | "waitingAnimationDurationMs" | "reactionAnimationOverrides" | "petPoolOrder" | "petPoolEnabled" | "petConfinementEnabled" | "petCrossDisplayEnabled" | "petGravityEnabled" | "personality">;
   petScaleOptions: typeof petScaleOptions;
   /** Non-broken, non-built-in installed pets available for pool selection. */
   petPoolCandidates: ReadonlyArray<{ readonly id: string; readonly displayName: string }>;
@@ -92,6 +92,7 @@ function getSettingsStateSnapshot(): {
       petConfinementEnabled: state.preferences.petConfinementEnabled,
       petCrossDisplayEnabled: state.preferences.petCrossDisplayEnabled,
       petGravityEnabled: state.preferences.petGravityEnabled,
+      personality: state.preferences.personality,
     },
     petScaleOptions,
     petPoolCandidates: state.pets.installed
@@ -358,7 +359,9 @@ export function installInternalUiHandlers(): void {
     const previousOverrides = JSON.stringify(getAppStateSnapshot().preferences.reactionAnimationOverrides ?? {});
     const previousLocale = getActiveLocale();
     const previousPoolEnabled = getAppStateSnapshot().preferences.petPoolEnabled;
-    const state = updatePreferences(validatePreferencePatch(patch));
+    const validatedPatch = validatePreferencePatch(patch);
+    const state = updatePreferences(validatedPatch);
+    if (validatedPatch.personality) debug("ui", "Pet Assistant personality preferences updated", { fields: Object.keys(validatedPatch.personality) });
     const nextOverrides = JSON.stringify(state.preferences.reactionAnimationOverrides ?? {});
     if (state.preferences.petScale !== previousScale || state.preferences.waitingAnimationDurationMs !== previousWaitingAnimationDurationMs || nextOverrides !== previousOverrides) {
       refreshDefaultPetContent();

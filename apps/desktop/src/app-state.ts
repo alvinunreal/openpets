@@ -12,6 +12,7 @@ import { assertSafePetId, getInstalledPetDir } from "./pet-paths.js";
 import { normalizePetPoolOrder } from "./pet-pool.js";
 import { publishPluginAgentActivity } from "./plugin-events-source.js";
 import { normalizeReactionAnimationOverrides, type ReactionAnimationOverrides } from "./reaction-animation-mapping.js";
+import { defaultPetAssistantPersonality, mergePetAssistantPersonality, normalizePetAssistantPersonality, type PetAssistantPersonality, type PetAssistantPersonalityPatch } from "./pet-assistant-personality.js";
 
 export { normalizePetPoolOrder } from "./pet-pool.js";
 
@@ -72,6 +73,8 @@ export interface OpenPetsStateV1 {
      * pet (default + agent). When false (default), no gravity is applied — the
      * Walkabout plugin's per-session physics path governs gravity instead. */
     readonly petGravityEnabled: boolean;
+    /** Owner-authored communication preferences for the host Pet Assistant. */
+    readonly personality: PetAssistantPersonality;
   };
   readonly pets: {
     readonly installed: readonly InstalledPetState[];
@@ -102,6 +105,11 @@ export type OpenPetsActivityRecord =
   | { readonly kind: "react"; readonly reaction: OpenPetsReaction; readonly petId?: string; readonly surface?: "default" | "agent" };
 
 export { defaultAppearanceTheme, defaultPetScale, defaultWaitingAnimationDurationMs, normalizeAppearanceTheme, normalizePetScale, normalizeWaitingAnimationDurationMs, petScaleOptions, waitingAnimationDurationOptions, type AppearanceTheme, type PetScaleValue, type WaitingAnimationDurationMs };
+export { defaultPetAssistantPersonality, normalizePetAssistantPersonality, type PetAssistantPersonality, type PetAssistantPersonalityPatch } from "./pet-assistant-personality.js";
+
+export type OpenPetsPreferencePatch = Omit<Partial<OpenPetsStateV1["preferences"]>, "personality"> & {
+  readonly personality?: PetAssistantPersonalityPatch;
+};
 
 const stateFileName = "openpets-state.json";
 const directInstallLockName = ".install-pet.lock";
@@ -131,9 +139,15 @@ export function getAppStateSnapshot(): OpenPetsStateV1 {
   return cloneState(getInitializedState());
 }
 
-export function updatePreferences(patch: Partial<OpenPetsStateV1["preferences"]>): OpenPetsStateV1 {
+export function updatePreferences(patch: OpenPetsPreferencePatch): OpenPetsStateV1 {
   const state = getInitializedState();
-  const preferences = normalizePreferences({ ...state.preferences, ...patch });
+  const preferences = normalizePreferences({
+    ...state.preferences,
+    ...patch,
+    personality: patch.personality === undefined
+      ? state.preferences.personality
+      : mergePetAssistantPersonality(state.preferences.personality, patch.personality),
+  });
 
   const nextState = normalizeState({
     ...state,
@@ -535,6 +549,7 @@ function normalizePreferences(value: Partial<OpenPetsStateV1["preferences"]>): O
     petConfinementEnabled: normalizePetConfinementEnabled(value.petConfinementEnabled, defaultState.preferences.petConfinementEnabled),
     petCrossDisplayEnabled: normalizePetCrossDisplayEnabled(value.petCrossDisplayEnabled, defaultState.preferences.petCrossDisplayEnabled),
     petGravityEnabled: normalizePetGravityEnabled(value.petGravityEnabled, defaultState.preferences.petGravityEnabled),
+    personality: normalizePetAssistantPersonality(value.personality),
   };
 }
 
@@ -615,6 +630,7 @@ function createDefaultState(): OpenPetsStateV1 {
       petConfinementEnabled: true,
       petCrossDisplayEnabled: false,
       petGravityEnabled: false,
+      personality: defaultPetAssistantPersonality,
     },
     pets: {
       installed: [builtInPet],

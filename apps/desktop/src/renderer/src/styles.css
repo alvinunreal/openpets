@@ -24,6 +24,7 @@ body.theme-dark::-webkit-scrollbar-thumb {
 body.theme-dark .hero h1,
 body.theme-dark .settings-section-title,
 body.theme-dark .settings-row-info strong,
+body.theme-dark .personality-boundary strong,
 body.theme-dark .settings-panel h2,
 body.theme-dark .reaction-info strong,
 body.theme-dark .card-title,
@@ -50,6 +51,8 @@ body.theme-dark .hero-desc,
 body.theme-dark .desc,
 body.theme-dark .card-desc,
 body.theme-dark .settings-row-info small,
+body.theme-dark .personality-boundary p,
+body.theme-dark .personality-actions p,
 body.theme-dark .settings-system-info,
 body.theme-dark .reaction-info small,
 body.theme-dark .plugin-card-content small,
@@ -86,6 +89,8 @@ body.theme-dark .update-card-eyebrow {
 
 body.theme-dark .glass,
 body.theme-dark .settings-group,
+body.theme-dark .personality-boundary,
+body.theme-dark .personality-actions,
 body.theme-dark .pet-card,
 body.theme-dark .plugin-card,
 body.theme-dark .integration-card,
@@ -380,7 +385,7 @@ body.theme-dark .plugin-config-backdrop {
   .settings-layout { @apply relative flex flex-col gap-6 overflow-y-auto pr-2 h-full; overscroll-behavior: contain; }
   .settings-container { @apply grid grid-cols-[280px_1fr] gap-6 min-h-0 flex-1; }
   .settings-sidebar { @apply flex flex-col gap-2; }
-  .settings-content { @apply flex flex-col gap-6 overflow-y-auto pr-2 pb-8; overscroll-behavior: contain; }
+  .settings-content { @apply flex min-w-0 flex-col gap-6 overflow-y-auto pr-2 pb-8; overscroll-behavior: contain; }
   .settings-nav-item { @apply flex items-center gap-3 px-4 py-3 rounded-2xl border border-transparent text-sm font-bold text-slatecopy transition-[transform,background-color,border-color,box-shadow,color] duration-150 cursor-pointer select-none; }
   .settings-nav-item:hover { @apply bg-white/50 text-brand border-blue-100/50; }
   .settings-nav-item.active { @apply bg-white text-brand border-blue-200 shadow-sm ring-4 ring-blue-100/30; }
@@ -389,6 +394,16 @@ body.theme-dark .plugin-config-backdrop {
 
   .settings-section { @apply flex flex-col gap-4; }
   .settings-section-title { @apply m-0 font-monoDisplay text-2xl font-black text-navy; }
+
+  .personality-boundary { @apply flex items-start gap-3 rounded-2xl border border-blue-200/60 bg-blue-50/55 p-4 text-brand shadow-inner; }
+  .personality-boundary svg { @apply mt-0.5 h-5 w-5 shrink-0; }
+  .personality-boundary strong { @apply block text-sm font-black text-navy; }
+  .personality-boundary p { @apply m-0 mt-1 text-xs leading-relaxed text-slatecopy; }
+  .personality-actions { @apply flex items-center justify-between gap-4 rounded-2xl border border-blue-100/60 bg-white/45 p-4; }
+  .personality-actions p { @apply m-0 max-w-xl text-xs leading-relaxed text-slatecopy; }
+  .settings-text-input { @apply w-[min(320px,48%)]; }
+  .settings-textarea { @apply min-h-28 resize-y font-sans leading-relaxed; }
+  .personality-style-row { @apply items-start; }
 
   .settings-group { @apply flex flex-col overflow-hidden rounded-[24px] border border-blue-100/70 bg-white/55 shadow-sm; }
   .settings-row { @apply flex items-center justify-between gap-4 p-5 transition-colors hover:bg-white/80 border-b border-blue-50 last:border-b-0; }
@@ -521,7 +536,24 @@ body.theme-dark .plugin-config-backdrop {
   .plugin-actions-section .btn-secondary { @apply bg-blue-50/70; }
   .plugin-actions-section .btn-primary { @apply min-w-[96px]; }
   .plugin-actions-section .btn-danger { @apply min-w-[112px]; }
-  @media (max-width: 900px) { .plugins-layout, .plugins-hub, .plugin-grid { @apply overflow-visible; } .plugin-developer-body { @apply flex-col items-stretch; } .plugin-actions-section { @apply grid-cols-1; } }
+  @media (max-width: 900px) {
+    .plugins-layout, .plugins-hub, .plugin-grid { @apply overflow-visible; }
+    .plugin-developer-body { @apply flex-col items-stretch; }
+    .plugin-actions-section { @apply grid-cols-1; }
+    .settings-container { @apply grid-cols-1; }
+    .settings-sidebar { @apply flex-row overflow-x-auto pb-1; scrollbar-width: thin; }
+    .settings-nav-item { @apply shrink-0; }
+    .settings-content { @apply overflow-visible pr-0; }
+    .settings-row { @apply items-start; }
+    .settings-row > .settings-select { @apply max-w-[48%]; }
+    .personality-actions { @apply items-stretch; }
+  }
+  @media (max-width: 600px) {
+    .settings-row { @apply flex-col; }
+    .settings-row > .settings-select,
+    .settings-row > .settings-text-input { @apply w-full max-w-none; }
+    .personality-actions { @apply flex-col; }
+  }
 
   .integration-grid { @apply grid grid-cols-2 gap-3.5 max-[850px]:grid-cols-1; }
   .integration-card { @apply flex min-h-[138px] flex-col justify-between rounded-2xl border border-blue-100/70 bg-white/70 p-0 text-left shadow-sm transition-[transform,border-color,background-color,box-shadow] active:scale-[0.96]; }

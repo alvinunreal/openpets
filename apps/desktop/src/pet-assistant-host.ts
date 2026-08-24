@@ -1,4 +1,5 @@
 import { info, warn } from "./logger.js";
+import { getAppStateSnapshot } from "./app-state.js";
 import type { PluginAssistantCapabilityExecutionOutcome, PluginAssistantCapabilityHandle } from "./plugin-sdk-assistant.js";
 import type { PluginService } from "./plugin-service.js";
 import type { PluginSecretsStore } from "./plugin-secrets.js";
@@ -6,6 +7,7 @@ import { PetAssistantService } from "./pet-assistant-service.js";
 import { TextModelClient } from "./text-model-client.js";
 import type {
   AssistantJsonObject,
+  PetAssistantComposition,
   PetAssistantCapabilityRuntime,
   PetAssistantGenerationHandle,
 } from "./pet-assistant-types.js";
@@ -14,9 +16,10 @@ let assistantService: PetAssistantService | null = null;
 let stopping: Promise<void> | null = null;
 
 type HostCapabilityHandle = PetAssistantGenerationHandle & { readonly pluginHandle: PluginAssistantCapabilityHandle };
+export type PetAssistantHostOptions = { readonly compositionProvider?: () => PetAssistantComposition };
 
 /** Construct the host assistant only after the plugin runtime has started. */
-export function startPetAssistantHost(pluginService: PluginService, secrets: PluginSecretsStore): PetAssistantService {
+export function startPetAssistantHost(pluginService: PluginService, secrets: PluginSecretsStore, options: PetAssistantHostOptions = {}): PetAssistantService {
   if (assistantService) return assistantService;
   if (stopping) throw new Error("Pet Assistant shutdown is in progress.");
   const runtime: PetAssistantCapabilityRuntime = {
@@ -32,7 +35,11 @@ export function startPetAssistantHost(pluginService: PluginService, secrets: Plu
     },
     execute: (handle, input, signal) => executeCapability(pluginService, handle, input, signal),
   };
-  const service = new PetAssistantService(new TextModelClient(secrets), runtime);
+  const service = new PetAssistantService(new TextModelClient(secrets), runtime, {
+    // App state is host-owned and synchronous; the service snapshots this
+    // profile before each turn without coupling itself to Electron state.
+    compositionProvider: options.compositionProvider ?? (() => ({ personality: getAppStateSnapshot().preferences.personality })),
+  });
   service.subscribe((event) => {
     if (event.type === "terminal" && event.result.status === "failed") warn("app", "Pet Assistant turn failed", { reason: event.result.error });
   });

@@ -11,7 +11,7 @@ React/Tailwind source for the Control Center management UI. This renderer presen
 - **Pets**: Combines installed pets, catalog v3 pages/search, Codex imports, filters, detail panes, set-default/install/import/remove actions, and animated sprite previews.
 - **Integrations**: Card-first setup UI for Claude Code, OpenCode, Cursor, and Pi guidance, including command mode/path controls and preview/action flows.
 - **Plugins**: Gallery-first plugin hub for installed/catalog/local/broken filters, catalog refresh, local load, install/update/uninstall, enable/disable, config modal, command execution, runtime/status display, and broken-state feedback.
-- **Settings**: Startup, launch-at-login, pet scale, reaction-animation mapping, update check, default-pet position reset, and pet reaction previews.
+- **Settings**: Startup, launch-at-login, pet scale, host Pet Assistant personality, reaction-animation mapping, update check, default-pet position reset, and pet reaction previews.
 - **Bridge Contract**: All data and actions go through `window.openPetsControlCenter`; page snapshots intentionally omit raw install paths and unrelated app state.
 
 ## Key Files

@@ -25,7 +25,10 @@ type UserSelectableAnimationState = "idle" | "review" | "running" | "waiting" | 
 type ReactionAnimationOverrides = Record<string, UserSelectableAnimationState>;
 type PetPoolCandidate = { id: string; displayName: string };
 type AppearanceTheme = "system" | "light" | "dark";
-type SettingsState = { preferences: { openDefaultPetOnLaunch: boolean; appearanceTheme: AppearanceTheme; locale?: "system" | string; petScale: number; waitingAnimationDurationMs: number; reactionAnimationOverrides?: ReactionAnimationOverrides; petPoolEnabled: boolean; petPoolOrder?: readonly string[]; petConfinementEnabled: boolean; petCrossDisplayEnabled: boolean; petGravityEnabled: boolean }; petScaleOptions: PetScaleOption[]; petPoolCandidates: ReadonlyArray<PetPoolCandidate> };
+type PetAssistantResponseLength = "concise" | "balanced" | "detailed";
+type PetAssistantPersonality = { petName: string; tone: string; style: string; ownerAddress: string; responseLength: PetAssistantResponseLength };
+type SettingsState = { preferences: { openDefaultPetOnLaunch: boolean; appearanceTheme: AppearanceTheme; locale?: "system" | string; petScale: number; waitingAnimationDurationMs: number; reactionAnimationOverrides?: ReactionAnimationOverrides; petPoolEnabled: boolean; petPoolOrder?: readonly string[]; petConfinementEnabled: boolean; petCrossDisplayEnabled: boolean; petGravityEnabled: boolean; personality: PetAssistantPersonality }; petScaleOptions: PetScaleOption[]; petPoolCandidates: ReadonlyArray<PetPoolCandidate> };
+type PreferencePatch = Omit<Partial<SettingsState["preferences"]>, "personality"> & { personality?: Partial<PetAssistantPersonality> };
 type LaunchAtLoginState = { supported: boolean; enabled: boolean };
 type LanTopologyIssue = { code: "self_reference" | "missing_reverse"; host: string; edge: "left" | "right" | "up" | "down"; neighbor: string };
 type LanStatusSnapshot = { mode: "off" | "server" | "client"; localHost: string; serverUrl: string; port: number; auth: "token" | "none"; authSource: "env" | "stored" | "generated" | "none"; authInsecure: boolean; tokenHint: string | null; topologyHosts: number; topologyLinks: number; topologyIssues: LanTopologyIssue[]; currentHost: string | null; clients: Array<{ host: string; lastSeen: number; position?: { x: number; y: number } }>; updatedAt: number; persistedCurrentHost: string | null; persistedUpdatedAt: number | null };
@@ -71,13 +74,27 @@ type RemoteControlClientSummary = { id: string; name: string; scopes: RemoteCont
 type RemoteControlSnapshot = { config: RemoteControlConfigSnapshot; clients: RemoteControlClientSummary[] };
 type RemotePairingResult = { clientId: string; token: string };
 
+const utf8Encoder = new TextEncoder();
+
+function limitUtf8Bytes(value: string, maxBytes: number): string {
+  let result = "";
+  let bytes = 0;
+  for (const character of value) {
+    const characterBytes = utf8Encoder.encode(character).byteLength;
+    if (bytes + characterBytes > maxBytes) break;
+    result += character;
+    bytes += characterBytes;
+  }
+  return result;
+}
+
 type ControlCenterApi = {
   getPetsState(): Promise<StateSnapshot>;
   getDashboardSnapshot(): Promise<DashboardSnapshot>;
   getSettingsState(): Promise<SettingsState>;
   getLanStatus(): Promise<LanStatusSnapshot>;
   getI18n(): Promise<I18nSnapshot>;
-  updatePreferences(patch: Partial<SettingsState["preferences"]>): Promise<SettingsState>;
+  updatePreferences(patch: PreferencePatch): Promise<SettingsState>;
   getReactionAnimationSettings(): Promise<ReactionAnimationSettings>;
   getLaunchAtLogin(): Promise<LaunchAtLoginState>;
   setLaunchAtLogin(enabled: boolean): Promise<LaunchAtLoginState>;
@@ -343,8 +360,8 @@ const FilterCodexIcon = () => (
   </svg>
 );
 
-const MessageIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+const MessageIcon = ({ className }: { className?: string } = {}) => (
+  <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
   </svg>
 );
@@ -1074,11 +1091,12 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
   const [launchAtLogin, setLaunchAtLogin] = useState<LaunchAtLoginState | null>(null);
   const [lanStatus, setLanStatus] = useState<LanStatusSnapshot | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
-  const [activeTab, setActiveTab] = useState<"general" | "reactions" | "plugins" | "lan" | "remote">("general");
+  const [activeTab, setActiveTab] = useState<"general" | "personality" | "reactions" | "plugins" | "lan" | "remote">("general");
   const [pluginsSnapshot, setPluginsSnapshot] = useState<PluginServiceSnapshot | null>(null);
   const [platformSettings, setPlatformSettings] = useState<PluginPlatformSettings | null>(null);
   const [aiKeyStatus, setAiKeyStatus] = useState<{ hasKey: boolean }>({ hasKey: false });
   const [aiKeyDraft, setAiKeyDraft] = useState("");
+  const [personalityDraft, setPersonalityDraft] = useState<PetAssistantPersonality | null>(null);
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -1097,6 +1115,7 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
       api.getPluginsSnapshot().catch(() => null),
     ]);
     setSettings(nextSettings);
+    setPersonalityDraft(nextSettings.preferences.personality);
     onAppearanceThemeChange(nextSettings.preferences.appearanceTheme);
     setReactionSettings(nextReactions);
     setLaunchAtLogin(nextLaunch);
@@ -1128,10 +1147,11 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
     finally { setBusy(""); }
   }
 
-  function patchPreferences(patch: Partial<SettingsState["preferences"]>, success: string) {
+  function patchPreferences(patch: PreferencePatch, success: string) {
     void run(t("settings.busy.saving"), async () => {
       const next = await api.updatePreferences(patch);
       setSettings(next);
+      if ("personality" in patch) setPersonalityDraft(next.preferences.personality);
       if ("appearanceTheme" in patch) onAppearanceThemeChange(next.preferences.appearanceTheme);
       if ("reactionAnimationOverrides" in patch) {
         setReactionSettings((current) => current ? { ...current, overrides: next.preferences.reactionAnimationOverrides ?? {} } : current);
@@ -1183,6 +1203,16 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
     });
   }
 
+  function savePersonality() {
+    if (!personalityDraft) return;
+    void run(t("settings.busy.saving"), async () => {
+      const next = await api.updatePreferences({ personality: personalityDraft });
+      setSettings(next);
+      setPersonalityDraft(next.preferences.personality);
+      setMessage(t("settings.toast.personalitySaved"));
+    });
+  }
+
   const isMoverActive = (pluginsSnapshot?.plugins ?? []).some(
     (p) => p.enabled && p.approvedPermissions.includes("pet:move")
   );
@@ -1196,6 +1226,10 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
         <button className={`settings-nav-item ${activeTab === "general" ? "active" : ""}`} onClick={() => setActiveTab("general")}>
           <SettingsIcon />
           <span>{t("settings.nav.general")}</span>
+        </button>
+        <button className={`settings-nav-item ${activeTab === "personality" ? "active" : ""}`} onClick={() => setActiveTab("personality")}>
+          <MessageIcon className="settings-nav-icon" />
+          <span>{t("settings.nav.personality")}</span>
         </button>
         <button className={`settings-nav-item ${activeTab === "reactions" ? "active" : ""}`} onClick={() => setActiveTab("reactions")}>
           <PetsIcon />
@@ -1340,6 +1374,105 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
               </div>
             </div>
           </>
+        )}
+
+        {activeTab === "personality" && (
+          <div className="settings-section">
+            <p className="eyebrow">{t("settings.personality.eyebrow")}</p>
+            <h2 className="settings-section-title">{t("settings.personality.title")}</h2>
+            <p className="text-sm text-slatecopy -mt-2 mb-2">{t("settings.personality.description")}</p>
+
+            <div className="personality-boundary">
+              <ShieldIcon />
+              <div>
+                <strong>{t("settings.personality.boundary.title")}</strong>
+                <p>{t("settings.personality.boundary.description")}</p>
+              </div>
+            </div>
+
+            <div className="settings-group">
+              <div className="settings-row">
+                <div className="settings-row-info">
+                  <strong>{t("settings.personality.petName.title")}</strong>
+                  <small>{t("settings.personality.petName.description")}</small>
+                </div>
+                <input
+                  className="settings-select settings-text-input"
+                  type="text"
+                  maxLength={64}
+                  spellCheck={false}
+                  value={personalityDraft?.petName ?? ""}
+                  disabled={!personalityDraft || !!busy}
+                  onChange={(event) => setPersonalityDraft((current) => current ? { ...current, petName: limitUtf8Bytes(event.target.value, 64) } : current)}
+                />
+              </div>
+              <div className="settings-row">
+                <div className="settings-row-info">
+                  <strong>{t("settings.personality.tone.title")}</strong>
+                  <small>{t("settings.personality.tone.description")}</small>
+                </div>
+                <input
+                  className="settings-select settings-text-input"
+                  type="text"
+                  maxLength={96}
+                  value={personalityDraft?.tone ?? ""}
+                  disabled={!personalityDraft || !!busy}
+                  onChange={(event) => setPersonalityDraft((current) => current ? { ...current, tone: limitUtf8Bytes(event.target.value, 96) } : current)}
+                />
+              </div>
+              <div className="settings-row">
+                <div className="settings-row-info">
+                  <strong>{t("settings.personality.ownerAddress.title")}</strong>
+                  <small>{t("settings.personality.ownerAddress.description")}</small>
+                </div>
+                <input
+                  className="settings-select settings-text-input"
+                  type="text"
+                  maxLength={96}
+                  spellCheck={false}
+                  value={personalityDraft?.ownerAddress ?? ""}
+                  disabled={!personalityDraft || !!busy}
+                  onChange={(event) => setPersonalityDraft((current) => current ? { ...current, ownerAddress: limitUtf8Bytes(event.target.value, 96) } : current)}
+                />
+              </div>
+              <div className="settings-row">
+                <div className="settings-row-info">
+                  <strong>{t("settings.personality.responseLength.title")}</strong>
+                  <small>{t("settings.personality.responseLength.description")}</small>
+                </div>
+                <select
+                  className="settings-select"
+                  value={personalityDraft?.responseLength ?? "balanced"}
+                  disabled={!personalityDraft || !!busy}
+                  onChange={(event) => setPersonalityDraft((current) => current ? { ...current, responseLength: event.target.value as PetAssistantResponseLength } : current)}
+                >
+                  <option value="concise">{t("settings.personality.responseLength.concise")}</option>
+                  <option value="balanced">{t("settings.personality.responseLength.balanced")}</option>
+                  <option value="detailed">{t("settings.personality.responseLength.detailed")}</option>
+                </select>
+              </div>
+              <div className="settings-row personality-style-row">
+                <div className="settings-row-info">
+                  <strong>{t("settings.personality.style.title")}</strong>
+                  <small>{t("settings.personality.style.description")}</small>
+                </div>
+                <textarea
+                  className="settings-select settings-textarea"
+                  maxLength={1024}
+                  value={personalityDraft?.style ?? ""}
+                  disabled={!personalityDraft || !!busy}
+                  onChange={(event) => setPersonalityDraft((current) => current ? { ...current, style: limitUtf8Bytes(event.target.value, 1024) } : current)}
+                />
+              </div>
+            </div>
+
+            <div className="personality-actions">
+              <p>{t("settings.personality.saveHint")}</p>
+              <Button variant="primary" disabled={!personalityDraft || !!busy} onClick={savePersonality} icon={<SaveIcon />}>
+                {busy === t("settings.busy.saving") ? t("settings.busy.saving") : t("settings.personality.save")}
+              </Button>
+            </div>
+          </div>
         )}
 
         {activeTab === "reactions" && (

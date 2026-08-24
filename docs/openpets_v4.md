@@ -14,13 +14,12 @@ the same conversation.
 
 This is a v4 delivery commitment. It is not a speculative post-v4 direction.
 
-Issue #138 now supplies the host-owned provider adapter, canonical in-memory
+Issue #138 supplies the host-owned provider adapter, canonical in-memory
 conversation/tool loop, generation-pinned capability routing, and bounded
-turn/lifecycle behavior. It is an internal foundation only: there is not yet a
-chat surface, voice surface, transcript/history persistence, personality
-settings, or provider-profile/settings UI. The host contract accepts bounded
-curated context and style guidance, but no personality setting is persisted or
-user-editable yet.
+turn/lifecycle behavior. Issue #146 adds the persisted, owner-editable
+personality profile and deterministic prompt composition on that same host
+foundation. There is not yet a chat surface, voice surface, transcript/history
+persistence, or provider-profile/settings UI.
 
 ## The product experience
 
@@ -93,10 +92,11 @@ accepts, and the result it returns.
 - Realtime voice transport is infrastructure, not the product by itself. The
   product is a pet that can converse and act.
 
-The current #138 implementation has no UI, voice, chat, persistence,
-personality, or editable provider-profile surface. Later v4 issues add those
-surfaces on top of the host contract rather than moving provider or capability
-authority into plugins.
+The current #138/#146 implementation has no voice, chat, transcript/history
+persistence, or editable provider-profile surface. The #146 Settings surface
+stores only communication preferences on the host. Later v4 issues add
+conversation surfaces on top of the host contract rather than moving provider or
+capability authority into plugins.
 
 ## v4 outcomes
 
