@@ -8,6 +8,7 @@
 import { normalizeAppearanceTheme, normalizePetScale, normalizeWaitingAnimationDurationMs, type AppearanceTheme, type WaitingAnimationDurationMs } from "./app-state-core.js";
 import { isSupportedLocale, type LocalePreference } from "./i18n/index.js";
 import { validateReactionAnimationOverrides } from "./reaction-animation-mapping.js";
+import { validatePetAssistantPersonalityPatch, type PetAssistantPersonalityPatch } from "./pet-assistant-personality.js";
 
 export type PreferencePatch = {
   openDefaultPetOnLaunch?: boolean;
@@ -20,6 +21,7 @@ export type PreferencePatch = {
   petConfinementEnabled?: boolean;
   petCrossDisplayEnabled?: boolean;
   petGravityEnabled?: boolean;
+  personality?: PetAssistantPersonalityPatch;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -88,6 +90,10 @@ export function validatePreferencePatch(value: unknown): PreferencePatch {
 
   if ("reactionAnimationOverrides" in value) {
     patch.reactionAnimationOverrides = validateReactionAnimationOverrides(value.reactionAnimationOverrides);
+  }
+
+  if ("personality" in value) {
+    patch.personality = validatePetAssistantPersonalityPatch(value.personality);
   }
 
   return patch;

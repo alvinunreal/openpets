@@ -69,7 +69,7 @@ export const en = {
   "route.pets.title": "Pets",
   "route.pets.description": "Install, import, preview, and choose your default desktop companion.",
   "route.settings.title": "Settings",
-  "route.settings.description": "Configure startup behaviors, scale preferences, and animation settings.",
+  "route.settings.description": "Configure startup behavior, companion personality, and animation settings.",
   "route.plugins.title": "Plugins",
   "route.plugins.description": "Extend your desktop experience with custom tools and behaviors.",
   "route.integrations.title": "Integrations",
@@ -198,6 +198,7 @@ export const en = {
 
   // --- Settings: general (renderer) ---
   "settings.nav.general": "General",
+  "settings.nav.personality": "Personality",
   "settings.nav.reactions": "Reaction Mapping",
   "settings.nav.plugins": "Plugin Platform",
   "settings.nav.lan": "LAN",
@@ -230,6 +231,7 @@ export const en = {
   "settings.toast.crossDisplaySaved": "Cross-display roaming saved.",
   "settings.toast.gravitySaved": "Gravity setting saved.",
   "settings.toast.petPoolSaved": "Session pool saved.",
+  "settings.toast.personalitySaved": "Personality saved. It will guide the next assistant turn.",
   "settings.petConfinement.label": "Limit pet to its window",
   "settings.petConfinement.description": "When on, a pet stays within its terminal window while that window is visible.",
   "settings.petCrossDisplay.label": "Allow pets on multiple monitors",
@@ -244,6 +246,28 @@ export const en = {
   "settings.busy.resetting": "Resetting",
   "settings.busy.opening": "Opening",
   "settings.busy.checking": "Checking",
+
+  // --- Settings: Pet Assistant personality (renderer) ---
+  "settings.personality.eyebrow": "Conversation",
+  "settings.personality.title": "Pet Personality",
+  "settings.personality.description": "Give your companion a recognizable voice without changing what it can do.",
+  "settings.personality.boundary.title": "Communication preferences only",
+  "settings.personality.boundary.description": "These values shape wording and address. Host rules, permissions, available capabilities, and capability results always remain authoritative.",
+  "settings.personality.petName.title": "Pet name",
+  "settings.personality.petName.description": "The name your companion uses for itself.",
+  "settings.personality.tone.title": "Tone",
+  "settings.personality.tone.description": "A short description of the voice you want to hear.",
+  "settings.personality.style.title": "Style guidance",
+  "settings.personality.style.description": "Optional communication guidance. Write preferences, not commands or access requests.",
+  "settings.personality.ownerAddress.title": "Address me as",
+  "settings.personality.ownerAddress.description": "The name or form of address the pet should use for you.",
+  "settings.personality.responseLength.title": "Response length",
+  "settings.personality.responseLength.description": "Set the usual amount of detail in the pet's replies.",
+  "settings.personality.responseLength.concise": "Concise",
+  "settings.personality.responseLength.balanced": "Balanced",
+  "settings.personality.responseLength.detailed": "Detailed",
+  "settings.personality.saveHint": "Changes are stored in the desktop profile and take effect on the next assistant turn.",
+  "settings.personality.save": "Save personality",
 
   // --- Settings: LAN mode (renderer) ---
   "settings.lan.eyebrow": "Office Pet",

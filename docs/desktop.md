@@ -180,12 +180,12 @@ installed.
 `userData/openpets-state.json` using atomic temp-write + rename. It holds
 installed pets, the default-pet config, reaction→animation overrides, onboarding
 state, locale preference, the pet pool preference (ordered pet list +
-`petPoolEnabled` toggle), and display-roaming preferences (`petConfinementEnabled`,
+`petPoolEnabled` toggle), the host Pet Assistant personality profile, and display-roaming preferences (`petConfinementEnabled`,
 `petCrossDisplayEnabled`), plus the global `waitingAnimationDurationMs`
 preference. That duration is normalized to `1010` ms (Normal) or `2200` ms
-(Relaxed), with `1010` ms as the default. `app-state-core.ts` holds pure helpers
-(scale options, waiting-duration options, onboarding normalization) that are
-testable without Electron.
+(Relaxed), with `1010` ms as the default. `app-state-core.ts` and
+`pet-assistant-personality.ts` hold pure normalization helpers that are testable
+without Electron.
 
 #### Pet pool preference
 
@@ -250,7 +250,7 @@ control, pet indicator, settings, public SDK method, plugin permission, plugin
 tool, transcript, memory, or generic TTS behavior. Those are deferred until the
 host lifecycle and protocol are reviewed for Phase 2.
 
-#### Pet Assistant host integration (#138)
+#### Pet Assistant host integration (#138, #146)
 
 Once `PluginService.start()` resolves, `pet-assistant-host.ts` constructs the
 single host-owned `PetAssistantService`. `text-model-client.ts` translates the
@@ -263,11 +263,21 @@ unavailable, while a disable/reload after invocation is indeterminate.
 The service keeps only bounded in-memory conversation state, validates whole
 tool batches before side effects, bounds context/tool/final payloads, and
 cancels active model/capability waits during idempotent shutdown. Missing model
-configuration fails a turn clearly and does not prevent desktop startup. This
-is an internal integration with no chat UI, voice UI, transcript persistence,
-personality settings, or provider-profile UI yet. Callers may supply bounded
-curated context and personality-style guidance after the immutable host rules;
-those inputs are not persisted or granted authority.
+configuration fails a turn clearly and does not prevent desktop startup. The
+host injects a synchronous composition provider backed by `app-state.ts`.
+`PetAssistantService` captures the returned profile at the beginning of each
+turn, so Settings edits are visible to the next turn while an active turn keeps
+one stable composition snapshot. The profile contains bounded `petName`, `tone`,
+`style`, `ownerAddress`, and `responseLength` fields with neutral defaults.
+
+The system prompt order is immutable host rules, optional curated context, and a
+fixed-order JSON personality data block with escaped prompt markers. Recent
+conversation messages follow the system message, while the current structured
+capability definitions and authoritative results remain provider-neutral tool
+data. Personality is explicitly communication-only and cannot grant capabilities,
+change permissions, or rewrite failed, rejected, unavailable, or indeterminate
+outcomes. Chat/voice UI, transcript persistence, and provider-profile UI remain
+separate v4 work.
 
 The plugin subsystem also owns **display deliveries**: a lazy, transparent,
 host-owned surface used by `ctx.ui.delivery`. A delivery is rendered as a single
