@@ -8,6 +8,12 @@ import { pluginSdkQuotas } from "../src/plugin-sdk-quotas.js";
 import { PluginStateStore, type PluginStateRecord } from "../src/plugin-state.js";
 import type { OpenPetsJavascriptPluginManifest } from "../src/plugin-manifest.js";
 import { sanitizePluginDiagnosticsFields } from "../src/plugin-diagnostics.js";
+import { PetAssistantService } from "../src/pet-assistant-service.js";
+import { feedbackForAssistantEvent } from "../src/pet-assistant-feedback.js";
+import { PET_ASSISTANT_CONVERSATION_ID } from "../src/pet-assistant-conversation.js";
+import { petAssistantToolName } from "../src/pet-assistant-tools.js";
+import { assistantCapabilityFailure } from "../src/plugin-sdk-assistant.js";
+import type { PetAssistantCapabilityRuntime } from "../src/pet-assistant-types.js";
 
 await scenario("storage.subscribe receives set value and delete as undefined", async ({ api }) => {
   const values: unknown[] = [];
@@ -437,6 +443,13 @@ await scenario("assistant schema validates input before invoking the handler", a
   }, async () => { calls += 1; return { ok: true }; });
 
   await assert.rejects(() => bridge.executeAssistantCapability(assistantHandle(bridge, "reminder.create"), { minutes: 20 }), /title is required/);
+  let missingError: unknown;
+  try {
+    await bridge.executeAssistantCapability(assistantHandle(bridge, "reminder.create"), { minutes: 20 });
+  } catch (error) {
+    missingError = error;
+  }
+  assert.equal((missingError as { missingInformation?: boolean }).missingInformation, true, "required input errors are explicitly classified");
   await assert.rejects(() => bridge.executeAssistantCapability(assistantHandle(bridge, "reminder.create"), { title: "x", minutes: 0 }), /below minimum/);
   await assert.rejects(() => bridge.executeAssistantCapability(assistantHandle(bridge, "reminder.create"), { title: "x", minutes: "20" }), /must be a number/);
   await assert.rejects(() => bridge.executeAssistantCapability(assistantHandle(bridge, "reminder.create"), { title: "x", minutes: 20, extra: true }), /unsupported property/);
@@ -450,6 +463,29 @@ await scenario("assistant schema validates input before invoking the handler", a
   assert.equal(calls, 0);
   assert.deepEqual(await bridge.executeAssistantCapability(assistantHandle(bridge, "reminder.create"), { title: "x", minutes: 20, tags: ["work"] }), { ok: true });
   assert.equal(calls, 1);
+
+  const runtime: PetAssistantCapabilityRuntime = {
+    snapshot: () => ({ capabilities: bridge.getAssistantCapabilities("plug") as never }),
+    execute: async (handle, input) => {
+      try {
+        return { ok: true, result: await bridge.executeAssistantCapability(handle as never, input) };
+      } catch (error) {
+        return assistantCapabilityFailure(error);
+      }
+    },
+  };
+  const discovered = bridge.getAssistantCapabilities("plug");
+  const service = new PetAssistantService({
+    generate: (request) => request.messages.some((message) => message.role === "tool")
+      ? { type: "text" as const, text: "I need the title." }
+      : { type: "tool-calls" as const, toolCalls: [{ id: "missing-title", name: petAssistantToolName("plug", "reminder.create"), arguments: { minutes: 20 } }] },
+  }, runtime);
+  const result = await service.startTurn(PET_ASSISTANT_CONVERSATION_ID, "Create a reminder.");
+  assert.equal(result.toolOutcomes?.[0]?.result.status, "rejected");
+  const toolResult = result.toolOutcomes?.[0]?.result;
+  assert.equal(toolResult?.status === "rejected" && toolResult.missingInformation, true, "bridge error metadata reaches the canonical service outcome");
+  assert.equal(feedbackForAssistantEvent({ type: "terminal", sequence: 1, result })?.state, "missing-information", "canonical feedback uses the preserved discriminator");
+  assert.equal(discovered.length, 1);
 });
 
 await scenario("assistant capability quota and unregister/re-register semantics are enforced", async ({ api, bridge }) => {

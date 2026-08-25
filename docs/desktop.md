@@ -38,12 +38,13 @@ launching a second one.
 
 `main.ts` runs a deterministic bootstrap (see `src/codemap.md` for the exact
 order): install lifecycle handlers → initialize app state → initialize the
-logger → create the tray → start the local IPC server → start the persisted,
-opt-in remote-control service if enabled → initialize and start the plugin
-service (with the Electron JS host) → construct the host Pet Assistant service
-→ optionally show the default pet. Shutdown stops the bounded Pet Assistant
-turns before plugin teardown, then stops the plugin service, remote-control
-listener, local IPC server, and pet windows.
+logger → register the configured Talk shortcut → create the tray → start the
+local IPC server → start the persisted, opt-in remote-control service if enabled
+→ initialize and start the plugin service (with the Electron JS host) → construct
+the host Pet Assistant service → optionally show the default pet. Shutdown
+unregisters the exact shortcut before stopping voice, then stops the bounded Pet
+Assistant turns before plugin teardown, remote-control listener, local IPC
+server, and pet windows.
 
 Key files: `main.ts` (entry/bootstrap), `lifecycle.ts` (app events + cleanup),
 `state.ts` (shell pause flag).
@@ -137,6 +138,33 @@ Provider updates use sparse patches: omitted fields preserve current values,
 `null` clears `baseUrl`, `secretRef`, or `auth`, omitted `headers` preserves the
 redacted header list, and `headers: []` intentionally clears it.
 
+Talk controls are exposed through narrow preload methods (`getVoiceAssistantSnapshot`,
+`startVoiceAssistant`, `muteVoiceAssistant`, `unmuteVoiceAssistant`,
+`interruptVoiceAssistant`, `endVoiceAssistant`, and `onVoiceAssistantEvent`).
+The shortcut accelerator is persisted in Settings and its runtime status and
+reason are part of the authoritative Talk snapshot/event contract. Runtime
+status is `registered`, `conflict`, `unavailable`, or `invalid`; registration and
+unregistration failures are never presented as active, and a failed unregister
+retains ownership so a replacement cannot create an untracked shortcut. The
+default is the canonical `CommandOrControl+Shift+Space`. Replacing a preference
+unregisters the exact previous accelerator before attempting the new one. Pet,
+tray, and shortcut entry points all use one host-owned toggle (start when
+inactive, end when active). The contract reports only host-observed session
+state, not fabricated microphone device metadata. Ending voice releases
+voice-only state while preserving the shared assistant conversation.
+Canonical voice terminal feedback is held by `turnId` until synthesis and
+playback settle, then applied once; late activity snapshots cannot overwrite
+the settled result. The tray subscribes to the same authoritative Talk
+snapshots so its Talk/End Talk label follows session transitions without
+duplicating lifecycle state.
+Typed chat and Talk share one host-owned modality lease for the current
+conversation. A competing turn is rejected before capture or model work with
+an actionable busy error; leases release on terminal settlement, end, or
+shutdown. Terminal feedback is the only failure/missing-information trigger;
+the latter is shown only when the structured capability boundary explicitly
+declares `missingInformation: true`, including a missing required field at the
+host-owned capability input validator.
+
 ### Pet windows
 
 Pet rendering lives in `pet-window.ts` plus the two controllers
@@ -198,7 +226,7 @@ installed pets, the default-pet config, reaction→animation overrides, onboardi
 state, locale preference, the pet pool preference (ordered pet list +
 `petPoolEnabled` toggle), the host Pet Assistant personality profile, and display-roaming preferences (`petConfinementEnabled`,
 `petCrossDisplayEnabled`), plus the global `waitingAnimationDurationMs`
-preference. That duration is normalized to `1010` ms (Normal) or `2200` ms
+preference and canonical `voiceAssistantShortcut` accelerator. That duration is normalized to `1010` ms (Normal) or `2200` ms
 (Relaxed), with `1010` ms as the default. `app-state-core.ts` and
 `pet-assistant-personality.ts` hold pure normalization helpers that are testable
 without Electron.
@@ -264,15 +292,22 @@ The renderer owns `getUserMedia`, WebRTC, the data channel, and remote audio; th
 host keeps the OpenAI credential and performs bounded SDP negotiation. Realtime
 protocol work remains deferred to #139.
 
-#### Generic host voice session (#147)
+#### Generic host voice session and Talk controls (#147, #150)
 
 `voice-assistant-host.ts` exposes a host controller/factory, not an app-lifetime
 terminal session. Each activation creates one `VoiceAssistantSession`; ending it
 releases the microphone reservation and the next activation creates a fresh
 session. The composition is bounded final-only capture/transcription → canonical
 Pet Assistant → authoritative TTS. Text, STT, and TTS provider profiles are
-independent, with the STT profile snapshotted before capture begins. No Talk
-control, shortcut, chat UI, retained history, or Realtime protocol is added here.
+independent, with the STT profile snapshotted before capture begins. #150 adds
+bounded host controls and a pet-owned Talk entry, but no provider protocol,
+retained history, or Realtime behavior. Session transcript events are normalized
+into the #148 current-session Conversation projection; voice lifecycle itself
+remains host-owned. A single app-lifetime feedback reducer consumes typed and
+voice canonical events plus listening and actual playback transitions. Canonical
+`responding` remains thinking, speaking is emitted only after playback starts,
+cancellation is not failure, and missing-information is shown only when the
+canonical outcome explicitly marks it.
 
 Pet-window playback is request-scoped by `{ requestId, kind }`. Renderer audio and
 system speech settle replacement, matching/unscoped stop, error, close, renderer

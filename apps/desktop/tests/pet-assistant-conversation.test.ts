@@ -127,6 +127,27 @@ async function flush(): Promise<void> {
   projection.dispose();
 }
 
+// The canonical assistant transcript can arrive before the session adapter's
+// normalized voice event; the shared projection must replace it, not duplicate it.
+{
+  const projection = new PetAssistantConversationProjection();
+  assert.equal(projection.applyAssistantEvent({ type: "transcript", sequence: 1, conversationId: PET_ASSISTANT_CONVERSATION_ID, turnId: "voice-turn", message: { role: "assistant", content: "spoken answer" } }), true);
+  assert.equal(projection.applyNormalizedVoiceTranscript({ type: "transcript", sequence: 3, conversationId: PET_ASSISTANT_CONVERSATION_ID, turnId: "voice-turn", entryId: "voice-answer", speaker: "assistant", status: "final", text: "spoken answer" }), true);
+  assert.equal(projection.getSnapshot().items.length, 1);
+  const item = projection.getSnapshot().items[0];
+  assert.equal(item?.kind === "message" ? item.source : "", "voice");
+  projection.dispose();
+}
+
+// Voice correlation never falls back to matching text from another turn.
+{
+  const projection = new PetAssistantConversationProjection();
+  assert.equal(projection.applyNormalizedVoiceTranscript({ type: "transcript", sequence: 1, conversationId: PET_ASSISTANT_CONVERSATION_ID, turnId: "voice-turn-a", entryId: "entry-a", speaker: "user", status: "final", text: "same words" }), true);
+  assert.equal(projection.applyAssistantEvent({ type: "transcript", sequence: 2, conversationId: PET_ASSISTANT_CONVERSATION_ID, turnId: "canonical-turn-b", message: { role: "user", content: "same words" } }), true);
+  assert.equal(projection.getSnapshot().items.length, 2);
+  projection.dispose();
+}
+
 // The host projection keeps a bounded current-session transcript.
 {
   const projection = new PetAssistantConversationProjection();

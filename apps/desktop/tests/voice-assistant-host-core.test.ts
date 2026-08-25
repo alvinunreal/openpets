@@ -99,10 +99,13 @@ async function main(): Promise<void> {
   const assistant = new PetAssistantService({ generate: async () => ({ type: "text", text: "done" }) }, { snapshot: () => ({ capabilities: [] }), execute: async () => ({ ok: true, result: {} }) });
   const adapter = new PetAssistantVoiceAdapter(assistant);
   const activity: string[] = [];
-  const unsubscribe = adapter.subscribe((event) => activity.push(event.activity));
-  const result = await adapter.startTurn("voice", "hello", new AbortController().signal);
+  const canonicalTurnIds: string[] = [];
+  const unsubscribe = adapter.subscribe((event) => { activity.push(event.activity); canonicalTurnIds.push(event.turnId); });
+  const result = await adapter.startTurn("voice", "hello", new AbortController().signal, "voice-owned-turn-1");
   unsubscribe();
   assert.equal(result.status, "completed");
+  assert.equal(result.turnId, "voice-owned-turn-1");
+  assert.deepEqual(new Set(canonicalTurnIds), new Set(["voice-owned-turn-1"]), "the real adapter forwards the host-owned voice correlation id through canonical service events");
   assert.deepEqual(activity, ["thinking", "responding"], "the adapter forwards canonical assistant activity events");
   await assistant.stop();
 
@@ -118,7 +121,7 @@ async function main(): Promise<void> {
     const session = new VoiceAssistantSession({
       microphoneArbiter: sessionArbiter,
       input,
-      assistant: { startTurn: async () => ({ status: "cancelled" as const }), subscribe: () => () => {}, clearConversation: () => undefined },
+      assistant: { startTurn: async () => ({ status: "cancelled" as const }), subscribe: () => () => {} },
       synthesizer: { synthesize: async () => ({ kind: "system" as const, text: "" }) },
       player: { play: async () => undefined, stop: async () => undefined },
     });
@@ -134,6 +137,24 @@ async function main(): Promise<void> {
   assert.equal(created, 2);
   await controller.shutdown();
   assert.equal(sessionArbiter.activeOwner, null);
+
+  let raceCreated = 0;
+  const raceController = new VoiceAssistantHostController(() => {
+    raceCreated += 1;
+    const session = new VoiceAssistantSession({
+      microphoneArbiter: new VoiceMicrophoneArbiter(),
+      input: { listen: async () => ({ status: "cancelled" as const }), cancel: async () => undefined },
+      assistant: { startTurn: async () => ({ status: "cancelled" as const }), subscribe: () => () => {} },
+      synthesizer: { synthesize: async () => ({ kind: "system" as const, text: "" }) },
+      player: { play: async () => undefined, stop: async () => undefined },
+    });
+    return { session, shutdown: () => session.shutdown() };
+  });
+  const queuedActivation = raceController.activate();
+  const raceShutdown = raceController.shutdown();
+  await assert.rejects(queuedActivation, /host has stopped/);
+  await raceShutdown;
+  assert.equal(raceCreated, 0, "shutdown rejects a queued activation before creating a session");
 
   let indicatorDestroyed = 0;
   let indicatorTracks = 0;
@@ -157,12 +178,14 @@ async function main(): Promise<void> {
   const composedRoles: string[] = [];
   let utterance = 0;
   let textCall = 0;
+  const composedBodies: Array<Record<string, unknown>> = [];
   const capabilityHandle = { generation: 1 } as object;
   const capabilityInvocations: unknown[] = [];
   const composedProvider: HostProviderOperations = {
     snapshot: async (role) => { composedRoles.push(role); return { ...snapshot(role === "realtime" ? "text" : role), profile: { ...snapshot(role === "realtime" ? "text" : role).profile, id: `${role}-selected` } }; },
-    json: async (_snapshot, path) => {
+    json: async (_snapshot, path, body) => {
       assert.equal(path, "/chat/completions");
+      composedBodies.push(body);
       textCall += 1;
       if (textCall === 1) return { choices: [{ message: { tool_calls: [{ id: "call-1", function: { name: petAssistantToolName("focus.buddy", "start"), arguments: JSON.stringify({ minutes: 25 }) } }] } }] };
       return { choices: [{ message: { content: textCall === 2 ? "Focus capability completed." : "Second authoritative answer." } }] };
@@ -188,7 +211,7 @@ async function main(): Promise<void> {
     input: composedInput,
     assistant: new PetAssistantVoiceAdapter(composedAssistant),
     synthesizer: composedOutput,
-    player: { play: async () => { await flush(); }, stop: async () => undefined },
+    player: { play: async (_requestId, _speech, _signal, onStarted) => { onStarted?.(); await flush(); }, stop: async () => undefined },
   });
   composedSession.subscribe((event) => {
     if (event.type === "snapshot" && event.snapshot.activity && composedActivities.at(-1) !== event.snapshot.activity) composedActivities.push(event.snapshot.activity);
@@ -199,6 +222,9 @@ async function main(): Promise<void> {
   await composedSession.start();
   await waitFor(() => assistantTranscripts.length === 2);
   await composedSession.end();
+  await composedAssistant.startTurn("voice-assistant", "after voice ended");
+  const followupMessages = composedBodies.at(-1)?.messages as Array<{ role: string; content?: string }>;
+  assert.equal(followupMessages.some((message) => message.role === "user" && message.content === "selected request 1"), true, "ending voice preserves the canonical assistant context for a later turn");
   await composedAssistant.stop();
   assert.deepEqual(capabilityInvocations, [{ minutes: 25 }]);
   assert.deepEqual(assistantTranscripts, ["Focus capability completed.", "Second authoritative answer."]);

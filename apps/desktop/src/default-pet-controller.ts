@@ -6,6 +6,7 @@ import { defaultPetWindowSize, getAllDisplayKeys, getDefaultPetInitialPosition, 
 import { motionMoveTo } from "./pet-motion-engine.js";
 import { registerRoamingPet } from "./pet-roaming-controller.js";
 import { debug, info } from "./logger.js";
+import { t } from "./i18n/index.js";
 import { transientDisplayMs, type OpenPetsReaction } from "./local-ipc-protocol.js";
 import { clearTransientReaction, createDefaultPetWindow, getSafeDefaultPetPosition, getTransientDisplayDurationMs, getTransientReactionAnimationMs, isPetWindowDragging, loadDefaultPetContent, mergePetTransientDisplay, readWindowPosition, recoverPetMouseInterop, setPetReactionState, type PetPluginBubbles, type PetShowMediaOptions, type PetStatusBadgeReaction, type PetTransientDisplay } from "./pet-window.js";
 import { PetBubbleArbiter, type ActiveBubble, type PetBubbleSink } from "./plugin-bubble-arbiter.js";
@@ -20,9 +21,11 @@ let paused = false;
 let transientDisplay: PetTransientDisplay | null = null;
 let statusBadge: PetStatusBadgeReaction | null = null;
 let voiceActivityReaction: OpenPetsReaction | null = null;
+let voiceTerminalReaction: OpenPetsReaction | null = null;
 let transientDisplayTimeout: NodeJS.Timeout | null = null;
 let transientAnimationTimeout: NodeJS.Timeout | null = null;
 let statusBadgeTimeout: NodeJS.Timeout | null = null;
+let voiceTerminalReactionTimeout: NodeJS.Timeout | null = null;
 let displayGeneration = 0;
 const busyStatusBadgeMs = 120_000;
 const maxPluginMoveDistance = 160;
@@ -113,7 +116,10 @@ export function isDefaultPetVisible(): boolean {
 
 export function setDefaultPetPaused(nextPaused: boolean): void {
   paused = nextPaused;
-  if (paused) voiceActivityReaction = null;
+  if (paused) {
+    voiceActivityReaction = null;
+    clearVoiceTerminalFeedback();
+  }
   info("pet.default", "pause changed", { paused });
 
   if (!defaultPetWindow || defaultPetWindow.isDestroyed()) {
@@ -194,6 +200,21 @@ export function setDefaultPetVoiceActivity(reaction: OpenPetsReaction | null): v
   voiceActivityReaction = paused || reaction === "idle" ? null : reaction;
   debug("pet.default", "voice activity slot changed", { reaction: voiceActivityReaction });
   if (voiceActivityReaction) showDefaultPetForExternalEvent();
+  refreshDefaultPetContent();
+}
+
+/** Keep terminal Talk feedback above the next listening activity for one bounded display window. */
+export function setDefaultPetVoiceTerminalFeedback(reaction: OpenPetsReaction | null): void {
+  clearVoiceTerminalFeedback();
+  if (reaction === null || reaction === "idle" || paused) {
+    refreshDefaultPetContent();
+    return;
+  }
+  voiceTerminalReaction = reaction;
+  voiceTerminalReactionTimeout = setTimeout(() => {
+    clearVoiceTerminalFeedback();
+    refreshDefaultPetContent();
+  }, 2_500);
   refreshDefaultPetContent();
 }
 
@@ -313,6 +334,13 @@ function getOrCreateDefaultPetWindow(): BrowserWindow {
     pluginBubbles: getDefaultPetPluginBubbles(),
     onPositionChanged: handlePositionChanged,
     onHideRequested: hideDefaultPet,
+    onTalkRequested: () => {
+      void import("./voice-assistant-host.js").then(({ toggleVoiceAssistant }) => toggleVoiceAssistant()).catch((error: unknown) => debug("pet.default", "talk toggle failed", { reason: error instanceof Error ? error.message : String(error) }));
+    },
+    onTalkLabelRequested: async () => {
+      const { getVoiceAssistantSnapshot } = await import("./voice-assistant-host.js");
+      return getVoiceAssistantSnapshot().status === "ended" ? t("pet.menu.talk") : t("tray.endTalk");
+    },
     onBubbleDismissed: handleBubbleDismissed,
     onBubbleAction: (token, actionId) => defaultPetBubbleArbiter.handleAction(token, actionId),
     onBubbleSubmit: (token, values) => defaultPetBubbleArbiter.handleSubmit(token, values),
@@ -458,6 +486,7 @@ function clearDefaultPetDisplayTimers(): void {
   if (transientDisplayTimeout) clearTimeout(transientDisplayTimeout);
   if (transientAnimationTimeout) clearTimeout(transientAnimationTimeout);
   if (statusBadgeTimeout) clearTimeout(statusBadgeTimeout);
+  clearVoiceTerminalFeedback();
   transientDisplayTimeout = null;
   transientAnimationTimeout = null;
   statusBadgeTimeout = null;
@@ -466,11 +495,17 @@ function clearDefaultPetDisplayTimers(): void {
 }
 
 function getRenderedDisplay(): PetTransientDisplay | null {
-  return composeVoiceActivityDisplay(transientDisplay, voiceActivityReaction) as PetTransientDisplay | null;
+  return composeVoiceActivityDisplay(transientDisplay, voiceActivityReaction, voiceTerminalReaction) as PetTransientDisplay | null;
 }
 
 function getRenderedBadge(): PetStatusBadgeReaction | null {
-  return composeVoiceActivityBadge(statusBadge, voiceActivityReaction) as PetStatusBadgeReaction | null;
+  return composeVoiceActivityBadge(statusBadge, voiceActivityReaction, voiceTerminalReaction) as PetStatusBadgeReaction | null;
+}
+
+function clearVoiceTerminalFeedback(): void {
+  voiceTerminalReaction = null;
+  if (voiceTerminalReactionTimeout) clearTimeout(voiceTerminalReactionTimeout);
+  voiceTerminalReactionTimeout = null;
 }
 
 function getCurrentDismissToken(): string | undefined {

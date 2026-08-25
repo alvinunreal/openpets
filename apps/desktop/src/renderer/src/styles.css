@@ -581,6 +581,24 @@ body.theme-dark .plugin-config-backdrop {
   .conversation-composer-footer .btn { @apply min-w-24; }
   .conversation-error { @apply flex items-center justify-between gap-3; }
   .conversation-retry { @apply shrink-0 rounded-lg border border-current bg-transparent px-2 py-1 text-xs font-bold; }
+  .conversation-voice-card { @apply flex flex-col gap-3 rounded-[24px] border border-blue-100/70 bg-white/60 p-4 shadow-sm; }
+  .conversation-voice-header { @apply flex flex-wrap items-center justify-between gap-3; }
+  .conversation-voice-badges { @apply flex flex-wrap items-center gap-2 text-xs font-semibold; }
+  .conversation-voice-controls { @apply flex flex-wrap items-center gap-2; }
+  .voice-badge { @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-bold; }
+  .voice-badge-neutral { @apply border-slate-200 bg-slate-100/80 text-slate-700; }
+  .voice-badge-active { @apply border-blue-200 bg-blue-50 text-brand; }
+  .voice-badge-speaking { @apply border-emerald-200 bg-emerald-50 text-emerald-700; }
+  .voice-badge-muted { @apply border-amber-200 bg-amber-50 text-amber-700; }
+  .voice-badge-conflict { @apply border-amber-300 bg-amber-100 text-amber-900; }
+  .voice-badge-error { @apply border-red-200 bg-red-50 text-red-700; }
+  .shortcut-kbd { @apply inline-block rounded-md border border-slate-300 bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] font-bold text-slate-800 shadow-sm; }
+  .voice-banner { @apply flex items-center justify-between gap-3 rounded-xl border p-2.5 text-xs font-medium; }
+  .voice-banner-conflict { @apply border-amber-300 bg-amber-50/90 text-amber-900; }
+  .voice-banner-warning { @apply border-amber-200 bg-amber-50 text-amber-800; }
+  .voice-banner-error { @apply border-red-200 bg-red-50 text-red-700; }
+  .voice-transcript-preview { @apply rounded-xl border border-blue-100/80 bg-blue-50/40 p-2.5 text-xs text-slatecopy; }
+  .voice-transcript-preview strong { @apply font-mono text-navy; }
   body.theme-dark .conversation-header h2,
   body.theme-dark .conversation-empty strong,
   body.theme-dark .conversation-message-assistant,
@@ -595,6 +613,11 @@ body.theme-dark .plugin-config-backdrop {
   body.theme-dark .conversation-action,
   body.theme-dark .conversation-composer-footer > span { color: #a9b6ca; }
   body.theme-dark .conversation-composer textarea { border-color: rgba(116, 159, 221, 0.36); background: rgba(15, 23, 42, 0.82); color: #f8fbff; }
+  body.theme-dark .conversation-voice-card { border-color: rgba(116, 159, 221, 0.24); background: rgba(15, 23, 42, 0.65); }
+  body.theme-dark .shortcut-kbd { border-color: rgba(116, 159, 221, 0.4); background: rgba(30, 41, 59, 0.9); color: #f8fbff; }
+  body.theme-dark .voice-badge-neutral { border-color: rgba(116, 159, 221, 0.3); background: rgba(30, 41, 59, 0.6); color: #a9b6ca; }
+  body.theme-dark .voice-transcript-preview { border-color: rgba(116, 159, 221, 0.3); background: rgba(15, 23, 42, 0.5); color: #a9b6ca; }
+  body.theme-dark .voice-transcript-preview strong { color: #f8fbff; }
   @media (max-width: 900px) {
     .plugins-layout, .plugins-hub, .plugin-grid { @apply overflow-visible; }
     .plugin-developer-body { @apply flex-col items-stretch; }

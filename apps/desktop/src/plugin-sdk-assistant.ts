@@ -72,16 +72,20 @@ export class PluginAssistantCapabilityError extends Error {
     readonly stage: PluginAssistantCapabilityErrorStage,
     readonly code: PluginAssistantCapabilityErrorCode,
     message: string,
-    options?: { readonly cause?: unknown },
+    options?: { readonly cause?: unknown; readonly missingInformation?: boolean },
   ) {
     super(message, options);
+    this.missingInformation = options?.missingInformation === true;
   }
+
+  readonly missingInformation: boolean;
 }
 
 export type PluginAssistantCapabilityErrorInfo = {
   readonly stage: PluginAssistantCapabilityErrorStage;
   readonly code: PluginAssistantCapabilityErrorCode;
   readonly message: string;
+  readonly missingInformation?: boolean;
 };
 
 export type PluginAssistantCapabilityExecutionOutcome =
@@ -89,7 +93,7 @@ export type PluginAssistantCapabilityExecutionOutcome =
   | { readonly ok: false; readonly error: PluginAssistantCapabilityErrorInfo };
 
 export function assistantCapabilityFailure(error: unknown, fallbackStage: PluginAssistantCapabilityErrorStage = "handler"): PluginAssistantCapabilityExecutionOutcome {
-  if (error instanceof PluginAssistantCapabilityError) return { ok: false, error: { stage: error.stage, code: error.code, message: error.message } };
+  if (error instanceof PluginAssistantCapabilityError) return { ok: false, error: { stage: error.stage, code: error.code, message: error.message, ...(error.missingInformation ? { missingInformation: true } : {}) } };
   return {
     ok: false,
     error: { stage: fallbackStage, code: "internal_error", message: error instanceof Error ? error.message : "Plugin assistant capability failed." },
@@ -272,7 +276,11 @@ function validateSchemaValue(schema: ValidatedAssistantSchema, value: unknown, l
         else if (schema.additionalProperties) result[key] = cloneJson(value[key], `${label}.${key}`, depth + 1, new Set<object>(), counters);
         else throw new Error(`${label} contains an unsupported property: ${key}.`);
       }
-      for (const required of schema.required) if (!Object.prototype.hasOwnProperty.call(value, required)) throw new Error(`${label}.${required} is required.`);
+      for (const required of schema.required) {
+        if (!Object.prototype.hasOwnProperty.call(value, required)) {
+          throw new PluginAssistantCapabilityError("input", "invalid_input", `${label}.${required} is required.`, { missingInformation: true });
+        }
+      }
       return result;
     }
   }

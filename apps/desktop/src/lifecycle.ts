@@ -11,6 +11,7 @@ import { stopPetAssistantHost } from "./pet-assistant-host.js";
 import { stopVoiceAssistantHost } from "./voice-assistant-host.js";
 import { shutdownPluginVoice } from "./plugin-voice.js";
 import { focusOpenTaskWindows } from "./windows.js";
+import { shutdownVoiceAssistantShortcut } from "./voice-assistant-shortcut.js";
 
 let intentionalQuit = false;
 let cleanupStarted = false;
@@ -45,6 +46,7 @@ export function installAppLifecycle(): void {
     info("app", "before quit cleanup begin");
     scheduleHardExitFallback("before-quit");
     void (async () => {
+      shutdownVoiceAssistantShortcut();
       await stopVoiceAssistantHost().catch(() => undefined);
       await stopPetAssistantHost().catch(() => undefined);
       await shutdownPluginVoice().catch(() => undefined);

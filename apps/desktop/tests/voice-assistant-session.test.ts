@@ -66,13 +66,12 @@ class FakeInput implements VoiceAssistantInput {
 }
 
 class FakeAssistant implements VoiceAssistantTurnAdapter {
-  readonly calls: Array<{ conversationId: string; text: string; signal: AbortSignal; result: Deferred<VoiceAssistantTurnResult> }> = [];
+  readonly calls: Array<{ conversationId: string; text: string; signal: AbortSignal; turnId?: string; result: Deferred<VoiceAssistantTurnResult> }> = [];
   #listener: ((event: VoiceAssistantActivityEvent) => void) | null = null;
-  clearCount = 0;
 
-  startTurn(conversationId: string, text: string, signal: AbortSignal): Promise<VoiceAssistantTurnResult> {
+  startTurn(conversationId: string, text: string, signal: AbortSignal, turnId?: string): Promise<VoiceAssistantTurnResult> {
     const result = deferred<VoiceAssistantTurnResult>();
-    this.calls.push({ conversationId, text, signal, result });
+    this.calls.push({ conversationId, text, signal, turnId, result });
     signal.addEventListener("abort", () => result.resolve({ status: "cancelled" }), { once: true });
     return result.promise;
   }
@@ -85,10 +84,9 @@ class FakeAssistant implements VoiceAssistantTurnAdapter {
   activity(activity: VoiceAssistantActivityEvent["activity"]): void {
     const call = this.calls.at(-1);
     if (!call) return;
-    this.#listener?.({ conversationId: call.conversationId, turnId: `adapter-${this.calls.length}`, activity });
+    this.#listener?.({ conversationId: call.conversationId, turnId: call.turnId ?? `adapter-${this.calls.length}`, activity });
   }
 
-  clearConversation(_conversationId: string): void { this.clearCount += 1; }
 }
 
 class FakeSynthesizer implements VoiceAssistantSynthesizer {
@@ -106,9 +104,10 @@ class FakePlayer implements VoiceAssistantPlayer {
   readonly calls: Array<{ requestId: string; speech: VoiceAssistantSpeech; signal: AbortSignal; result: Deferred<void> }> = [];
   readonly stopIds: string[] = [];
 
-  play(requestId: string, speech: VoiceAssistantSpeech, signal: AbortSignal): Promise<void> {
+  play(requestId: string, speech: VoiceAssistantSpeech, signal: AbortSignal, onStarted?: () => void): Promise<void> {
     const result = deferred<void>();
     this.calls.push({ requestId, speech, signal, result });
+    onStarted?.();
     signal.addEventListener("abort", () => result.resolve(undefined), { once: true });
     return result.promise;
   }
@@ -146,6 +145,7 @@ function distinctActivities(events: readonly VoiceAssistantSessionEvent[]): Arra
   current.input.partial("same");
   current.input.finish("same");
   await flush();
+  assert.equal(current.assistant.calls[0]?.turnId, "voice-turn-1", "the voice session passes its host-owned correlation id to the adapter");
   current.assistant.activity("thinking");
   current.assistant.activity("acting");
   current.assistant.calls[0]!.result.resolve({ status: "completed", response: "Capability outcomes: completed=1, rejected=0, unavailable=0, indeterminate=0." });
@@ -182,7 +182,6 @@ function distinctActivities(events: readonly VoiceAssistantSessionEvent[]): Arra
   assert.deepEqual(distinctActivities(current.sessionEvents), ["listening", "thinking", "acting", "thinking", "speaking", "listening", "thinking", "speaking", "listening"]);
   assert.ok(current.sessionEvents.every((event) => Object.isFrozen(event)));
   await current.session.end();
-  assert.equal(current.assistant.clearCount, 1);
 }
 
 // Final-only STT emits only its one nonblank final.
@@ -225,7 +224,6 @@ for (const stage of ["input", "assistant", "synthesis", "playback"] as const) {
   assert.equal(current.microphoneArbiter.activeOwner, "assistant-session");
   assert.equal(current.sessionEvents.filter((event) => event.type === "interrupted").length, 1);
   assert.equal(current.sessionEvents.some((event) => event.type === "ended"), false);
-  assert.equal(current.assistant.clearCount, 0);
   assert.equal(current.input.calls.length, 2);
   if (stage === "assistant") assert.equal(current.assistant.calls[0]!.signal.aborted, true);
   if (stage === "synthesis") assert.equal(current.synthesizer.calls[0]!.signal.aborted, true);

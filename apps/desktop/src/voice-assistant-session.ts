@@ -1,4 +1,5 @@
 import type { VoiceMicrophoneArbiter, VoiceMicrophoneReservation } from "./voice-microphone-arbiter.js";
+import type { PetAssistantModalityCoordinator, PetAssistantModalityLease } from "./pet-assistant-modality.js";
 
 export type VoiceAssistantActivity = "listening" | "thinking" | "acting" | "speaking";
 export type VoiceAssistantSessionStatus = "idle" | "active" | "muted" | "paused" | "ending" | "ended";
@@ -29,15 +30,17 @@ export type VoiceAssistantTranscriptEvent = {
 export type VoiceAssistantSessionEvent =
   | { readonly type: "snapshot"; readonly sequence: number; readonly snapshot: VoiceAssistantSessionSnapshot }
   | VoiceAssistantTranscriptEvent
-  | { readonly type: "error"; readonly sequence: number; readonly scope: VoiceAssistantErrorScope; readonly message: string }
+  | { readonly type: "error"; readonly sequence: number; readonly scope: VoiceAssistantErrorScope; readonly message: string; readonly turnId?: string }
   | { readonly type: "interrupted"; readonly sequence: number; readonly generation: number; readonly turnId: string | null }
+  | { readonly type: "turn-settled"; readonly sequence: number; readonly turnId: string; readonly outcome: "completed" | "cancelled" | "failed" }
   | { readonly type: "ended"; readonly sequence: number; readonly reason: "ended" | "shutdown" };
 
 type VoiceAssistantSessionEventInput =
   | { readonly type: "snapshot"; readonly snapshot: VoiceAssistantSessionSnapshot }
   | Omit<VoiceAssistantTranscriptEvent, "sequence">
-  | { readonly type: "error"; readonly scope: VoiceAssistantErrorScope; readonly message: string }
+  | { readonly type: "error"; readonly scope: VoiceAssistantErrorScope; readonly message: string; readonly turnId?: string }
   | { readonly type: "interrupted"; readonly generation: number; readonly turnId: string | null }
+  | { readonly type: "turn-settled"; readonly turnId: string; readonly outcome: "completed" | "cancelled" | "failed" }
   | { readonly type: "ended"; readonly reason: "ended" | "shutdown" };
 
 export type VoiceAssistantSessionListener = (event: VoiceAssistantSessionEvent) => void;
@@ -61,6 +64,7 @@ export interface VoiceAssistantInput {
 
 export type VoiceAssistantTurnResult = {
   readonly status: "completed" | "cancelled" | "failed";
+  readonly turnId?: string;
   /** The terminal response after all capability outcomes have been applied. */
   readonly response?: string;
   readonly error?: string;
@@ -73,9 +77,8 @@ export type VoiceAssistantActivityEvent = {
 };
 
 export interface VoiceAssistantTurnAdapter {
-  startTurn(conversationId: string, text: string, signal: AbortSignal): Promise<VoiceAssistantTurnResult>;
+  startTurn(conversationId: string, text: string, signal: AbortSignal, turnId?: string): Promise<VoiceAssistantTurnResult>;
   subscribe(listener: (event: VoiceAssistantActivityEvent) => void): () => void;
-  clearConversation(conversationId: string): void | Promise<void>;
 }
 
 export type VoiceAssistantSpeech =
@@ -89,17 +92,19 @@ export interface VoiceAssistantSynthesizer {
 
 /** The player owns both decoded audio and eventual system speech, per request. */
 export interface VoiceAssistantPlayer {
-  play(requestId: string, speech: VoiceAssistantSpeech, signal: AbortSignal): Promise<void>;
+  play(requestId: string, speech: VoiceAssistantSpeech, signal: AbortSignal, onStarted?: () => void): Promise<void>;
   stop(requestId: string): Promise<void>;
 }
 
 export type VoiceAssistantSessionOptions = {
   readonly conversationId?: string;
+  readonly turnIdPrefix?: string;
   readonly microphoneArbiter: VoiceMicrophoneArbiter;
   readonly input: VoiceAssistantInput;
   readonly assistant: VoiceAssistantTurnAdapter;
   readonly synthesizer: VoiceAssistantSynthesizer;
   readonly player: VoiceAssistantPlayer;
+  readonly modalityCoordinator?: PetAssistantModalityCoordinator;
 };
 
 type InputStage = {
@@ -135,6 +140,7 @@ const DEFAULT_CONVERSATION_ID = "voice-assistant";
 export class VoiceAssistantSession {
   readonly #options: VoiceAssistantSessionOptions;
   readonly #conversationId: string;
+  readonly #turnIdPrefix: string;
   readonly #listeners = new Set<VoiceAssistantSessionListener>();
   #microphoneReservation: VoiceMicrophoneReservation | null = null;
   #input: InputStage | null = null;
@@ -150,10 +156,12 @@ export class VoiceAssistantSession {
   #muted = false;
   #nextRequest = 1;
   #nextTurnOrdinal = 0;
+  #modalityLease: PetAssistantModalityLease | null = null;
 
   constructor(options: VoiceAssistantSessionOptions) {
     this.#options = options;
     this.#conversationId = normalizeConversationId(options.conversationId ?? DEFAULT_CONVERSATION_ID);
+    this.#turnIdPrefix = normalizeTurnIdPrefix(options.turnIdPrefix ?? "voice-turn");
     this.#snapshot = freeze({
       status: "idle",
       activity: null,
@@ -189,7 +197,7 @@ export class VoiceAssistantSession {
     this.#microphoneReservation = this.#options.microphoneArbiter.reserve("assistant-session");
     this.#started = true;
     this.#setSnapshot({ status: "active", activity: "listening", muted: false, error: null });
-    this.#beginListen();
+    this.#beginListen(true);
     await Promise.resolve();
   }
 
@@ -197,7 +205,7 @@ export class VoiceAssistantSession {
     if (!this.#started) throw new Error("Voice assistant session has not started.");
     if (this.#ended || this.#muted || this.#snapshot.status !== "paused") return;
     this.#setSnapshot({ status: "active", activity: "listening", error: null });
-    this.#beginListen();
+    this.#beginListen(true);
     await Promise.resolve();
   }
 
@@ -212,6 +220,10 @@ export class VoiceAssistantSession {
       await this.#cancelInput(input);
       this.#input = null;
     }
+    if (!this.#turn && !this.#speech) {
+      this.#modalityLease?.release();
+      this.#modalityLease = null;
+    }
     if (!this.#turn && !this.#speech) this.#setSnapshot({ activity: null });
   }
 
@@ -220,7 +232,7 @@ export class VoiceAssistantSession {
     if (this.#ended || !this.#muted) return;
     this.#muted = false;
     this.#setSnapshot({ muted: false, status: "active" });
-    if (!this.#input && !this.#turn && !this.#speech) this.#beginListen();
+    if (!this.#input && !this.#turn && !this.#speech) this.#beginListen(true);
     await Promise.resolve();
   }
 
@@ -237,6 +249,8 @@ export class VoiceAssistantSession {
     this.#input = null;
     this.#turn = null;
     this.#speech = null;
+    this.#modalityLease?.release();
+    this.#modalityLease = null;
     if (this.#muted) this.#setSnapshot({ status: "muted", activity: null });
     else {
       this.#setSnapshot({ status: "active", activity: "listening" });
@@ -244,11 +258,20 @@ export class VoiceAssistantSession {
     }
   }
 
-  #beginListen(): void {
+  #beginListen(throwOnBusy = false): void {
     if (this.#ended || !this.#started || !this.#microphoneReservation || this.#muted || this.#input || this.#turn || this.#speech) return;
+    let lease: PetAssistantModalityLease | null = null;
+    try {
+      lease = this.#options.modalityCoordinator?.acquire("voice") ?? null;
+    } catch (error) {
+      if (throwOnBusy) throw error;
+      this.#pauseInput(errorMessage(error), true, "assistant");
+      return;
+    }
+    this.#modalityLease = lease;
     const generation = ++this.#generation;
     const ordinal = ++this.#nextTurnOrdinal;
-    const turnId = `voice-turn-${ordinal}`;
+    const turnId = `${this.#turnIdPrefix}-${ordinal}`;
     const requestId = `voice-input-${this.#nextRequest++}`;
     const controller = new AbortController();
     this.#setSnapshot({ status: "active", activity: "listening", turnId, userTranscript: null, assistantTranscript: null, error: null });
@@ -269,7 +292,7 @@ export class VoiceAssistantSession {
       if (!this.#isCurrentInput(stage)) return;
       this.#finishInput(stage);
       if (result.status === "cancelled") {
-        this.#pauseInput(result.reason ?? "Voice input was cancelled.");
+        this.#pauseInput(result.reason ?? "Voice input was cancelled.", false);
         return;
       }
       const text = normalizeTranscript(result.final);
@@ -297,31 +320,35 @@ export class VoiceAssistantSession {
     this.#turn = stage;
     try {
       stage.unsubscribe = this.#options.assistant.subscribe((event) => {
-        if (!this.#isCurrentTurn(stage) || event.conversationId !== this.#conversationId) return;
+        if (!this.#isCurrentTurn(stage) || event.conversationId !== this.#conversationId || event.turnId !== stage.turnId) return;
         this.#setSnapshot({ activity: this.#muted ? null : event.activity === "acting" ? "acting" : "thinking", error: null });
       });
     } catch (error) {
       this.#finishTurn(stage);
-      this.#emitError("assistant", errorMessage(error));
+      this.#emitError("assistant", errorMessage(error), turnId);
+      this.#settleTurn(turnId, "failed");
       this.#resumeAfterTurn();
       return;
     }
-    stage.promise = Promise.resolve().then(() => this.#options.assistant.startTurn(this.#conversationId, text, controller.signal));
+    stage.promise = Promise.resolve().then(() => this.#options.assistant.startTurn(this.#conversationId, text, controller.signal, turnId));
     void stage.promise.then((result) => {
       if (!this.#isCurrentTurn(stage)) return;
       this.#finishTurn(stage);
       if (result.status === "cancelled") {
+        this.#settleTurn(turnId, "cancelled");
         this.#resumeAfterTurn();
         return;
       }
       if (result.status === "failed") {
-        this.#emitError("assistant", result.error ?? "Pet Assistant turn failed.");
+        this.#emitError("assistant", result.error ?? "Pet Assistant turn failed.", turnId);
+        this.#settleTurn(turnId, "failed");
         this.#resumeAfterTurn();
         return;
       }
       const response = normalizeTranscript(result.response ?? "");
       if (!response) {
-        this.#emitError("assistant", "Pet Assistant returned no response.");
+        this.#emitError("assistant", "Pet Assistant returned no response.", turnId);
+        this.#settleTurn(turnId, "failed");
         this.#resumeAfterTurn();
         return;
       }
@@ -331,7 +358,8 @@ export class VoiceAssistantSession {
     }, (error: unknown) => {
       if (!this.#isCurrentTurn(stage)) return;
       this.#finishTurn(stage);
-      this.#emitError("assistant", errorMessage(error));
+      this.#emitError("assistant", errorMessage(error), turnId);
+      this.#settleTurn(turnId, "failed");
       this.#resumeAfterTurn();
     });
   }
@@ -346,22 +374,26 @@ export class VoiceAssistantSession {
     this.#speech = stage;
     void stage.synthesis.then((speech) => {
       if (!this.#isCurrentSpeech(stage)) return;
-      this.#setSnapshot({ activity: this.#muted ? null : "speaking", error: null });
-      stage.playback = Promise.resolve().then(() => this.#options.player.play(requestId, speech, controller.signal));
+      stage.playback = Promise.resolve().then(() => this.#options.player.play(requestId, speech, controller.signal, () => {
+        if (this.#isCurrentSpeech(stage)) this.#setSnapshot({ activity: this.#muted ? null : "speaking", error: null });
+      }));
       void stage.playback.then(() => {
         if (!this.#isCurrentSpeech(stage)) return;
         this.#finishSpeech(stage);
+        this.#settleTurn(turnId, "completed");
         this.#resumeAfterTurn();
       }, (error: unknown) => {
         if (!this.#isCurrentSpeech(stage)) return;
         this.#finishSpeech(stage);
-        this.#emitError("playback", errorMessage(error));
+        this.#emitError("playback", errorMessage(error), turnId);
+        this.#settleTurn(turnId, "failed");
         this.#resumeAfterTurn();
       });
     }, (error: unknown) => {
       if (!this.#isCurrentSpeech(stage)) return;
       this.#finishSpeech(stage);
-      this.#emitError("synthesis", errorMessage(error));
+      this.#emitError("synthesis", errorMessage(error), turnId);
+      this.#settleTurn(turnId, "failed");
       this.#resumeAfterTurn();
     });
   }
@@ -375,10 +407,12 @@ export class VoiceAssistantSession {
     this.#beginListen();
   }
 
-  #pauseInput(message: string): void {
+  #pauseInput(message: string, emitError = true, scope: VoiceAssistantErrorScope = "input"): void {
     const normalized = message.trim() || "Voice input failed.";
-    this.#setSnapshot({ status: "paused", activity: null, error: { scope: "input", message: normalized } });
-    this.#emit({ type: "error", scope: "input", message: normalized });
+    this.#setSnapshot({ status: "paused", activity: null, error: { scope, message: normalized } });
+    if (emitError) this.#emit({ type: "error", scope, message: normalized });
+    this.#modalityLease?.release();
+    this.#modalityLease = null;
   }
 
   async #end(reason: "ended" | "shutdown"): Promise<void> {
@@ -398,11 +432,8 @@ export class VoiceAssistantSession {
       turn.unsubscribe?.();
       turn.unsubscribe = null;
     }
-    try {
-      await this.#options.assistant.clearConversation(this.#conversationId);
-    } catch (error) {
-      this.#emitError("session", errorMessage(error));
-    }
+    // Voice owns only its capture and playback stages. The canonical
+    // conversation is shared with typed chat and survives voice teardown.
     if (this.#microphoneReservation) {
       this.#options.microphoneArbiter.releaseReservation(this.#microphoneReservation);
       this.#microphoneReservation = null;
@@ -410,6 +441,8 @@ export class VoiceAssistantSession {
     this.#input = null;
     this.#turn = null;
     this.#speech = null;
+    this.#modalityLease?.release();
+    this.#modalityLease = null;
     this.#setSnapshot({ status: "ended", activity: null });
     this.#emit({ type: "ended", reason });
   }
@@ -440,6 +473,12 @@ export class VoiceAssistantSession {
   #finishTurn(stage: TurnStage): void { stage.unsubscribe?.(); stage.unsubscribe = null; if (this.#turn === stage) this.#turn = null; }
   #finishSpeech(stage: SpeechStage): void { if (this.#speech === stage) this.#speech = null; }
 
+  #settleTurn(turnId: string, outcome: "completed" | "cancelled" | "failed"): void {
+    this.#emit({ type: "turn-settled", turnId, outcome });
+    this.#modalityLease?.release();
+    this.#modalityLease = null;
+  }
+
   #isCurrentInput(stage: InputStage): boolean { return this.#input === stage && !this.#ended && this.#generation === stage.generation; }
   #isCurrentTurn(stage: TurnStage): boolean { return this.#turn === stage && !this.#ended && this.#generation === stage.generation; }
   #isCurrentSpeech(stage: SpeechStage): boolean { return this.#speech === stage && !this.#ended && this.#generation === stage.generation; }
@@ -455,10 +494,10 @@ export class VoiceAssistantSession {
     this.#emit({ type: "snapshot", snapshot: this.#snapshot });
   }
 
-  #emitError(scope: VoiceAssistantErrorScope, message: string): void {
+  #emitError(scope: VoiceAssistantErrorScope, message: string, turnId?: string): void {
     const normalized = message.trim() || "Voice assistant operation failed.";
     this.#setSnapshot({ error: { scope, message: normalized } });
-    this.#emit({ type: "error", scope, message: normalized });
+    this.#emit({ type: "error", scope, message: normalized, ...(turnId ? { turnId } : {}) });
   }
 
   #emit(event: VoiceAssistantSessionEventInput): void {
@@ -472,6 +511,12 @@ export class VoiceAssistantSession {
 function normalizeConversationId(value: string): string {
   const normalized = value.trim();
   if (!normalized) throw new Error("Voice assistant conversation id must not be empty.");
+  return normalized;
+}
+
+function normalizeTurnIdPrefix(value: string): string {
+  const normalized = value.trim();
+  if (!normalized || !/^[A-Za-z0-9_-]{1,64}$/.test(normalized)) throw new Error("Voice assistant turn id prefix is invalid.");
   return normalized;
 }
 

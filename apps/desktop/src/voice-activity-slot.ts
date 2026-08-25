@@ -12,15 +12,16 @@ export type ComposablePetTransientDisplay = {
 };
 
 /** Overlay voice animation without taking ownership of another display's content. */
-export function composeVoiceActivityDisplay(external: ComposablePetTransientDisplay | null, voiceReaction: OpenPetsReaction | null): ComposablePetTransientDisplay | null {
-  if (!voiceReaction) return external;
+export function composeVoiceActivityDisplay(external: ComposablePetTransientDisplay | null, voiceReaction: OpenPetsReaction | null, terminalReaction: OpenPetsReaction | null = null): ComposablePetTransientDisplay | null {
+  const reaction = terminalReaction ?? voiceReaction;
+  if (!reaction) return external;
   return {
     ...(external ?? {}),
-    reaction: voiceReaction,
+    reaction,
     suppressReactionMessage: true,
   };
 }
 
-export function composeVoiceActivityBadge(external: OpenPetsReaction | null, voiceReaction: OpenPetsReaction | null): OpenPetsReaction | null {
-  return voiceReaction ?? external;
+export function composeVoiceActivityBadge(external: OpenPetsReaction | null, voiceReaction: OpenPetsReaction | null, terminalReaction: OpenPetsReaction | null = null): OpenPetsReaction | null {
+  return terminalReaction ?? voiceReaction ?? external;
 }

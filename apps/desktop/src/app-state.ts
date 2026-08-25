@@ -13,6 +13,7 @@ import { normalizePetPoolOrder } from "./pet-pool.js";
 import { publishPluginAgentActivity } from "./plugin-events-source.js";
 import { normalizeReactionAnimationOverrides, type ReactionAnimationOverrides } from "./reaction-animation-mapping.js";
 import { defaultPetAssistantPersonality, mergePetAssistantPersonality, normalizePetAssistantPersonality, type PetAssistantPersonality, type PetAssistantPersonalityPatch } from "./pet-assistant-personality.js";
+import { DEFAULT_VOICE_ASSISTANT_SHORTCUT, isCanonicalVoiceAssistantShortcut } from "./voice-assistant-shortcut.js";
 
 export { normalizePetPoolOrder } from "./pet-pool.js";
 
@@ -75,6 +76,8 @@ export interface OpenPetsStateV1 {
     readonly petGravityEnabled: boolean;
     /** Owner-authored communication preferences for the host Pet Assistant. */
     readonly personality: PetAssistantPersonality;
+    /** Canonical Electron accelerator used to start the bounded Talk session. */
+    readonly voiceAssistantShortcut: string;
   };
   readonly pets: {
     readonly installed: readonly InstalledPetState[];
@@ -550,6 +553,7 @@ function normalizePreferences(value: Partial<OpenPetsStateV1["preferences"]>): O
     petCrossDisplayEnabled: normalizePetCrossDisplayEnabled(value.petCrossDisplayEnabled, defaultState.preferences.petCrossDisplayEnabled),
     petGravityEnabled: normalizePetGravityEnabled(value.petGravityEnabled, defaultState.preferences.petGravityEnabled),
     personality: normalizePetAssistantPersonality(value.personality),
+    voiceAssistantShortcut: isCanonicalVoiceAssistantShortcut(value.voiceAssistantShortcut) ? value.voiceAssistantShortcut : defaultState.preferences.voiceAssistantShortcut,
   };
 }
 
@@ -631,6 +635,7 @@ function createDefaultState(): OpenPetsStateV1 {
       petCrossDisplayEnabled: false,
       petGravityEnabled: false,
       personality: defaultPetAssistantPersonality,
+      voiceAssistantShortcut: DEFAULT_VOICE_ASSISTANT_SHORTCUT,
     },
     pets: {
       installed: [builtInPet],

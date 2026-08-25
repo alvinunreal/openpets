@@ -184,4 +184,12 @@ for (const { key, errMsg } of booleanKeys) {
   console.log("validatePreferencePatch: personality validation and bounds — PASS");
 }
 
+// Talk shortcut preferences accept only canonical Electron accelerators.
+{
+  assert.equal(validatePreferencePatch({ voiceAssistantShortcut: "CommandOrControl+Shift+Space" }).voiceAssistantShortcut, "CommandOrControl+Shift+Space");
+  assert.throws(() => validatePreferencePatch({ voiceAssistantShortcut: "Ctrl+Shift+Space" }), /Invalid voice assistant shortcut/);
+  assert.throws(() => validatePreferencePatch({ voiceAssistantShortcut: "Space" }), /Invalid voice assistant shortcut/);
+  console.log("validatePreferencePatch: Talk shortcut validation — PASS");
+}
+
 console.log("\nAll preference-patch tests passed.");

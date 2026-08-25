@@ -11,6 +11,8 @@ import type {
   PetAssistantTextModelResponse,
 } from "../src/pet-assistant-types.js";
 import { PET_ASSISTANT_HOST_RULES } from "../src/pet-assistant-types.js";
+import { feedbackForAssistantEvent } from "../src/pet-assistant-feedback.js";
+import { PET_ASSISTANT_CONVERSATION_ID } from "../src/pet-assistant-conversation.js";
 
 const handle = { generation: 7 } as PetAssistantGenerationHandle;
 const capability = { pluginId: "focus.buddy", capability: { id: "start", description: "Start focus", inputSchema: { type: "object" } }, handle };
@@ -200,6 +202,19 @@ function model(responses: readonly PetAssistantTextModelResponse[], requests: Pe
     reason: "The duration is invalid.",
   });
   assert.equal(requests[0]?.tools.length, 1, "personality must not add or change capability definitions");
+}
+
+// The bridge preserves only an explicitly declared missing-information signal.
+{
+  const service = new PetAssistantService(model([
+    { type: "tool-calls", toolCalls: [{ id: "missing-call", name: petAssistantToolName("focus.buddy", "start"), arguments: {} }] },
+    { type: "text", text: "I need the duration." },
+  ]), runtime(async () => ({ ok: false, error: { stage: "input", code: "invalid_input", message: "Duration is required.", missingInformation: true } })));
+  const result = await service.startTurn(PET_ASSISTANT_CONVERSATION_ID, "Start focus.");
+  const terminal = { type: "terminal" as const, sequence: 99, result };
+  const toolResult = result.toolOutcomes?.[0]?.result;
+  assert.equal(toolResult?.status === "rejected" && toolResult.missingInformation, true);
+  assert.equal(feedbackForAssistantEvent(terminal)?.state, "missing-information");
 }
 
 // Mixed capability outcomes replace an overconfident model response with a truthful summary.

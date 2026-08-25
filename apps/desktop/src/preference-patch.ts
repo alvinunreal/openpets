@@ -9,6 +9,7 @@ import { normalizeAppearanceTheme, normalizePetScale, normalizeWaitingAnimationD
 import { isSupportedLocale, type LocalePreference } from "./i18n/index.js";
 import { validateReactionAnimationOverrides } from "./reaction-animation-mapping.js";
 import { validatePetAssistantPersonalityPatch, type PetAssistantPersonalityPatch } from "./pet-assistant-personality.js";
+import { validateVoiceAssistantShortcut } from "./voice-assistant-shortcut.js";
 
 export type PreferencePatch = {
   openDefaultPetOnLaunch?: boolean;
@@ -22,6 +23,7 @@ export type PreferencePatch = {
   petCrossDisplayEnabled?: boolean;
   petGravityEnabled?: boolean;
   personality?: PetAssistantPersonalityPatch;
+  voiceAssistantShortcut?: string;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -94,6 +96,10 @@ export function validatePreferencePatch(value: unknown): PreferencePatch {
 
   if ("personality" in value) {
     patch.personality = validatePetAssistantPersonalityPatch(value.personality);
+  }
+
+  if ("voiceAssistantShortcut" in value) {
+    patch.voiceAssistantShortcut = validateVoiceAssistantShortcut(value.voiceAssistantShortcut);
   }
 
   return patch;

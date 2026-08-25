@@ -15,6 +15,7 @@ import {
   type PetAssistantToolCall,
   type PetAssistantToolOutcome,
   type PetAssistantToolResult,
+  type PetAssistantTurnOptions,
   type PetAssistantTurnResult,
 } from "./pet-assistant-types.js";
 import { buildPetAssistantTools, type PetAssistantToolSet } from "./pet-assistant-tools.js";
@@ -79,15 +80,16 @@ export class PetAssistantService {
     return () => { this.#listeners.delete(listener); };
   }
 
-  startTurn(conversationId: string, text: string, signal: AbortSignal = new AbortController().signal): Promise<PetAssistantTurnResult> {
+  startTurn(conversationId: string, text: string, signal: AbortSignal = new AbortController().signal, options: PetAssistantTurnOptions = {}): Promise<PetAssistantTurnResult> {
     if (this.#stopped) throw new Error("Pet Assistant service is stopped.");
     if (conversationId.trim() === "") throw new Error("Conversation id must not be empty.");
     if (this.#active.has(conversationId)) throw new Error(`Conversation ${conversationId} already has an active turn.`);
+    const turnId = options.turnId === undefined ? `turn-${this.#nextTurn++}` : validateTurnId(options.turnId);
     const controller = new AbortController();
     const abortFromCaller = () => controller.abort();
     if (signal.aborted) controller.abort();
     else signal.addEventListener("abort", abortFromCaller, { once: true });
-    const active: ActiveTurn = { turnId: `turn-${this.#nextTurn++}`, controller, terminal: {}, invocationStarted: false, composition: this.#compositionProvider(), model: this.#model };
+    const active: ActiveTurn = { turnId, controller, terminal: {}, invocationStarted: false, composition: this.#compositionProvider(), model: this.#model };
     this.#active.set(conversationId, active);
     const pending = this.#runTurn(conversationId, text, controller.signal, active).finally(() => {
       signal.removeEventListener("abort", abortFromCaller);
@@ -266,7 +268,7 @@ export class PetAssistantService {
       }, signal);
       if (active.terminal.value) return deepFreeze({ status: "indeterminate", reason: "Capability result arrived after the turn ended." });
       if (!result || typeof result !== "object" || result.ok !== true && result.ok !== false) return deepFreeze({ status: "indeterminate", reason: "Capability returned a malformed execution outcome." });
-      if (result.ok === false) return deepFreeze({ status: executionOutcomeStatus(result), reason: result.error.message });
+      if (result.ok === false) return deepFreeze({ status: executionOutcomeStatus(result), reason: result.error.message, ...(result.error.missingInformation === true ? { missingInformation: true } : {}) });
       const pluginResult = result.result;
       if (!isPlainObject(pluginResult)) return deepFreeze({ status: "indeterminate", reason: "Capability returned a non-object result." });
       if (jsonByteLength(pluginResult) > this.#limits.maxToolResultBytes) return deepFreeze({ status: "indeterminate", reason: "Capability result is too large." });
@@ -447,6 +449,11 @@ function executionOutcomeStatus(outcome: Extract<PetAssistantCapabilityExecution
 
 function safeError(error: unknown): string {
   return error instanceof Error && error.message ? error.message : "Assistant operation failed.";
+}
+
+function validateTurnId(value: string): string {
+  if (typeof value !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(value)) throw new Error("Assistant turn id is invalid.");
+  return value;
 }
 
 function deepFreeze<T>(value: T): T {
