@@ -121,7 +121,8 @@ local-only, and stores only terminal user/assistant text from the canonical
 shared voice/chat conversation. It retains at most 200 messages for 30 days and
 512 KiB total, with a 64 KiB per-entry cap and newest entries preserved. Corrupt
 or malformed data is quarantined when possible, replaced with an empty archive,
-and never partially trusted. A most-recent archive window of at most 24 entries
+and never partially trusted. If the archive cannot be opened or repaired, it is
+disabled for that session without blocking the Pet Assistant. A most-recent archive window of at most 24 entries
 and 128 KiB may be added to the next assistant prompt; tool definitions/results,
 provider payloads, and personality data never enter that archive window. Owner
 delete-one/delete-all operations are exposed only through a narrow main-process

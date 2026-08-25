@@ -8,6 +8,7 @@ import {
   LOCAL_CONVERSATION_ARCHIVE_MAX_BYTES,
   LOCAL_CONVERSATION_ARCHIVE_MAX_MESSAGES,
   LocalPetAssistantConversationArchive,
+  openLocalPetAssistantConversationArchive,
   PET_ASSISTANT_ARCHIVE_FILE_NAME,
   PET_ASSISTANT_CONVERSATION_ID,
 } from "../src/pet-assistant-archive.js";
@@ -24,6 +25,23 @@ const emptyRuntime: PetAssistantCapabilityRuntime = {
 
 function messageContent(message: PetAssistantTextModelRequest["messages"][number]): string | undefined {
   return message.role === "tool" ? undefined : message.content;
+}
+
+// Archive unavailability is local-history degradation, never a prerequisite for the assistant host.
+{
+  const root = temporaryDirectory();
+  try {
+    const diagnostics: string[] = [];
+    const archive = openLocalPetAssistantConversationArchive({
+      archivePath: join(root, "unavailable.json"),
+      persist: () => { throw new Error("disk unavailable"); },
+      onDiagnostic: (message) => diagnostics.push(message),
+    });
+    assert.equal(archive, undefined);
+    assert.deepEqual(diagnostics, ["Pet Assistant conversation archive is unavailable for this session."]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 }
 
 // Retention keeps the newest messages by count, age, and serialized byte budget.
@@ -51,6 +69,40 @@ function messageContent(message: PetAssistantTextModelRequest["messages"][number
     ageArchive.append([{ turnId: "old", role: "user", text: "old" }], clock.now);
     clock.now += LOCAL_CONVERSATION_ARCHIVE_MAX_AGE_MS + 1;
     assert.deepEqual(ageArchive.list(), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// Incomplete turns never become future archive context, and archive cleanup failures do not fail a valid turn.
+{
+  const root = temporaryDirectory();
+  try {
+    const archive = new LocalPetAssistantConversationArchive({ archivePath: join(root, "incomplete.json"), now: () => 5_500_000 });
+    const failed = new PetAssistantService({ generate: () => { throw new Error("model unavailable"); } }, emptyRuntime, { conversationArchive: archive });
+    const failedResult = await failed.startTurn(PET_ASSISTANT_CONVERSATION_ID, "unanswered question");
+    assert.equal(failedResult.status, "failed");
+    assert.deepEqual(archive.list(), [], "a failed turn does not leave unanswered prompt context behind");
+
+    let providerCalls = 0;
+    const archiveErrors: string[] = [];
+    const unavailableArchive = {
+      list: () => { throw new Error("archive cleanup failed"); },
+      append: () => { throw new Error("not reached"); },
+      deleteMessage: () => false,
+      clear: () => {},
+    };
+    const resilient = new PetAssistantService({ generate: () => {
+      providerCalls += 1;
+      return { type: "text", text: "still responds" };
+    } }, emptyRuntime, {
+      conversationArchive: unavailableArchive,
+      onConversationArchiveError: (error) => archiveErrors.push(error instanceof Error ? error.message : "unknown"),
+    });
+    const result = await resilient.startTurn(PET_ASSISTANT_CONVERSATION_ID, "continue without archive");
+    assert.equal(result.status, "completed");
+    assert.equal(providerCalls, 1, "archive cleanup failure never suppresses a valid provider turn");
+    assert.deepEqual(archiveErrors, ["archive cleanup failed", "not reached"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

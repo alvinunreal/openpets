@@ -42,6 +42,18 @@ export interface PetAssistantConversationArchive {
   clear(): void;
 }
 
+/** Open local history without making archive availability a prerequisite for the assistant host. */
+export function openLocalPetAssistantConversationArchive(options: PetAssistantConversationArchiveOptions): PetAssistantConversationArchive | undefined {
+  try {
+    return new LocalPetAssistantConversationArchive(options);
+  } catch (error) {
+    options.onDiagnostic?.("Pet Assistant conversation archive is unavailable for this session.", {
+      reason: error instanceof Error ? error.message : "unknown",
+    });
+    return undefined;
+  }
+}
+
 type ArchiveFile = {
   readonly version: 1;
   readonly messages: readonly PetAssistantArchivedMessage[];

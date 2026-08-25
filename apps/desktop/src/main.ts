@@ -19,7 +19,7 @@ import { initializePluginPlatformSettings } from "./plugin-platform-settings.js"
 import { ElectronPluginJsHost } from "./plugin-js-host.js";
 import { initializePluginService } from "./plugin-service.js";
 import { startPetAssistantHost } from "./pet-assistant-host.js";
-import { LocalPetAssistantConversationArchive } from "./pet-assistant-archive.js";
+import { openLocalPetAssistantConversationArchive } from "./pet-assistant-archive.js";
 import { startVoiceAssistantHost } from "./voice-assistant-host.js";
 import { createAppTray, refreshTrayMenu } from "./tray.js";
 import { checkForGitHubReleaseUpdate } from "./update-checker.js";
@@ -146,7 +146,7 @@ if (!gotSingleInstanceLock) {
       await service.start();
       const assistant = startPetAssistantHost(service, pluginCapabilities.secretsStore, {
         providerOperations: pluginCapabilities.providerService,
-        conversationArchive: new LocalPetAssistantConversationArchive({
+        conversationArchive: openLocalPetAssistantConversationArchive({
           userDataPath: app.getPath("userData"),
           onDiagnostic: (message, fields) => warn("app", message, fields),
         }),

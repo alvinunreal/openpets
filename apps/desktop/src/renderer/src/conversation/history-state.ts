@@ -15,6 +15,20 @@ export function clearLocalConversationHistory(): readonly LocalConversationHisto
   return [];
 }
 
+/** Keeps delayed history reads from overwriting a newer owner deletion. */
+export function createHistoryRequestOrdering(): {
+  begin(): number;
+  invalidate(): void;
+  isCurrent(version: number): boolean;
+} {
+  let current = 0;
+  return {
+    begin: () => ++current,
+    invalidate: () => { current += 1; },
+    isCurrent: (version) => version === current,
+  };
+}
+
 function isLocalConversationHistoryMessage(value: unknown): value is LocalConversationHistoryMessage {
   if (!isRecord(value)) return false;
   return typeof value.id === "string"

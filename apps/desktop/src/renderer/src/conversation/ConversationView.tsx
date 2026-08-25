@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { applyConversationEvent, applyConversationSnapshot, emptyConversationSnapshot, isConversationSnapshot } from "./conversation-state.js";
-import { clearLocalConversationHistory, isLocalConversationHistory, removeLocalConversationHistoryMessage } from "./history-state.js";
+import { clearLocalConversationHistory, createHistoryRequestOrdering, isLocalConversationHistory, removeLocalConversationHistoryMessage } from "./history-state.js";
 import { createVoiceSnapshotOrdering, voiceBadgeClass, voiceStatusLabel } from "./conversation-types.js";
 import type {
   ConversationActionStatus,
@@ -50,6 +50,7 @@ export function ConversationView({ api }: { api: ConversationApi }) {
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [voiceActionError, setVoiceActionError] = useState("");
   const voiceSnapshotOrdering = useRef(createVoiceSnapshotOrdering()).current;
+  const historyRequestOrdering = useRef(createHistoryRequestOrdering()).current;
 
   async function loadSnapshot(): Promise<void> {
     setLoading(true);
@@ -66,21 +67,24 @@ export function ConversationView({ api }: { api: ConversationApi }) {
   }
 
   async function loadHistory(): Promise<void> {
+    const requestVersion = historyRequestOrdering.begin();
     if (!api.getConversationHistory) {
-      setHistoryLoading(false);
+      if (historyRequestOrdering.isCurrent(requestVersion)) setHistoryLoading(false);
       return;
     }
     setHistoryLoading(true);
     try {
       const next = await api.getConversationHistory();
       if (!isLocalConversationHistory(next)) throw new Error("Local conversation history was malformed.");
+      if (!historyRequestOrdering.isCurrent(requestVersion)) return;
       setHistory(next);
       setSelectedHistoryId((current) => current && next.some((message) => message.id === current) ? current : null);
       setHistoryError("");
     } catch (nextError) {
+      if (!historyRequestOrdering.isCurrent(requestVersion)) return;
       setHistoryError(nextError instanceof Error ? nextError.message : "Local history is unavailable.");
     } finally {
-      setHistoryLoading(false);
+      if (historyRequestOrdering.isCurrent(requestVersion)) setHistoryLoading(false);
     }
   }
 
@@ -165,12 +169,15 @@ export function ConversationView({ api }: { api: ConversationApi }) {
 
   async function deleteHistoryMessage(id: string): Promise<void> {
     if (!api.deleteConversationHistoryMessage || historyBusy) return;
+    historyRequestOrdering.invalidate();
     setHistoryBusy(true);
     try {
       const result = await api.deleteConversationHistoryMessage(id);
       if (result.deleted) {
+        historyRequestOrdering.invalidate();
         setHistory((current) => removeLocalConversationHistoryMessage(current, id));
         setSelectedHistoryId((current) => current === id ? null : current);
+        setHistoryLoading(false);
       }
       setHistoryError("");
     } catch (nextError) {
@@ -183,12 +190,15 @@ export function ConversationView({ api }: { api: ConversationApi }) {
   async function clearHistory(): Promise<void> {
     if (!api.clearConversationHistory || historyBusy || history.length === 0) return;
     if (!window.confirm("Delete all local conversation history? This cannot be undone.")) return;
+    historyRequestOrdering.invalidate();
     setHistoryBusy(true);
     try {
       await api.clearConversationHistory();
+      historyRequestOrdering.invalidate();
       setHistory(clearLocalConversationHistory());
       setSelectedHistoryId(null);
       setHistoryError("");
+      setHistoryLoading(false);
     } catch (nextError) {
       setHistoryError(nextError instanceof Error ? nextError.message : "Local history could not be cleared.");
     } finally {

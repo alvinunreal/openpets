@@ -136,6 +136,8 @@ user/assistant text from the canonical shared voice/chat conversation, retaining
 at most 200 messages for 30 days and 512 KiB total, with a 64 KiB per-entry cap
 and newest entries preserved. Corrupt or malformed archives are quarantined
 when possible, replaced with an empty archive, and never partially trusted.
+If archive storage is unavailable, history is disabled for that session without
+blocking the Pet Assistant.
 The archive is distinct from active in-memory context. Its prompt contribution
 is the most recent 24 entries, bounded to 128 KiB; tool definitions/results,
 provider payloads, and personality data are excluded. A narrow preload/main
