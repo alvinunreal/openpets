@@ -149,6 +149,14 @@ export class PetAssistantConversationProjection {
         status: event.result.status,
         ...(event.result.status === "failed" ? { error: "Pet Assistant turn failed." } : {}),
       };
+      if (event.result.status === "cancelled") {
+        const reason = displaySafeToolResultReason("indeterminate");
+        items = items.map((item) => item.kind === "action"
+          && item.turnId === event.result.turnId
+          && (item.status === "pending" || item.status === "running")
+          ? { ...item, status: "indeterminate", ...(reason ? { reason } : {}) }
+          : item);
+      }
       activeTurnId = undefined;
       activeToolName = undefined;
       activity = event.result.status === "cancelled" ? "cancelled" : event.result.status === "failed" ? "failed" : "idle";

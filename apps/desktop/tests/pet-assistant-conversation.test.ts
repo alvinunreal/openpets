@@ -150,6 +150,36 @@ async function flush(): Promise<void> {
   assert.equal(applyConversationSnapshot(applied, { ...current, revision: 0, lastSequence: 0 }), applied);
 }
 
+// Cancelling a turn settles only that turn's outstanding capability actions as indeterminate.
+{
+  const projection = new PetAssistantConversationProjection();
+  assert.equal(projection.applyAssistantEvent({ type: "lifecycle", sequence: 1, lifecycle: "opening", conversationId: PET_ASSISTANT_CONVERSATION_ID, turnId: "turn-1" }), true);
+  assert.equal(projection.applyAssistantEvent({
+    type: "transcript",
+    sequence: 2,
+    conversationId: PET_ASSISTANT_CONVERSATION_ID,
+    turnId: "turn-1",
+    message: { role: "assistant", toolCalls: [{ id: "call-1", name: "focus_start", arguments: {} }] },
+  }), true);
+  assert.equal(projection.applyAssistantEvent({ type: "activity", sequence: 3, conversationId: PET_ASSISTANT_CONVERSATION_ID, turnId: "turn-1", activity: "acting", toolName: "focus_start" }), true);
+  assert.equal(projection.applyAssistantEvent({
+    type: "transcript",
+    sequence: 4,
+    conversationId: PET_ASSISTANT_CONVERSATION_ID,
+    turnId: "turn-2",
+    message: { role: "assistant", toolCalls: [{ id: "call-2", name: "reminder_create", arguments: {} }] },
+  }), true);
+  assert.equal(projection.applyAssistantEvent({ type: "terminal", sequence: 5, result: { conversationId: PET_ASSISTANT_CONVERSATION_ID, turnId: "turn-1", status: "cancelled" } }), true);
+  const actions = projection.getSnapshot().items.filter((item) => item.kind === "action");
+  assert.equal(projection.getSnapshot().terminal?.status, "cancelled");
+  assert.deepEqual(actions, [
+    { kind: "action", id: "call-1", turnId: "turn-1", toolName: "focus_start", status: "indeterminate", reason: "Capability result was unavailable." },
+    { kind: "action", id: "call-2", turnId: "turn-2", toolName: "reminder_create", status: "pending" },
+  ]);
+  assert.equal(actions.some((item) => item.kind === "action" && item.turnId === "turn-1" && (item.status === "pending" || item.status === "running")), false);
+  projection.dispose();
+}
+
 assert.throws(() => validateConversationMessageInput(""), /must not be empty/);
 assert.throws(() => validateConversationMessageInput("x".repeat(MAX_CONVERSATION_MESSAGE_BYTES + 1)), /too large/);
 console.log("pet-assistant-conversation tests passed.");
