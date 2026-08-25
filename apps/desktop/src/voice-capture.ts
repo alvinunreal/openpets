@@ -1,5 +1,5 @@
 import type { VoicePrivacyIndicator } from "./voice-privacy-indicator.js";
-import type { VoiceMicrophoneArbiter, VoiceMicrophoneLease } from "./voice-microphone-arbiter.js";
+import type { VoiceMicrophoneArbiter, VoiceMicrophoneReservation, VoiceMicrophoneTrackLease } from "./voice-microphone-arbiter.js";
 
 export const VOICE_ACQUISITION_TIMEOUT_MS = 15_000;
 export const VOICE_MIN_RECORDING_DURATION_MS = 1_000;
@@ -54,7 +54,7 @@ type ActiveCapture = {
   recordingTimer: NodeJS.Timeout | null;
   finishing: Promise<VoiceCaptureResult> | null;
   cleaned: boolean;
-  microphoneLease: VoiceMicrophoneLease | null;
+  microphoneLease: VoiceMicrophoneTrackLease | null;
 };
 
 export type VoiceCaptureServiceOptions = {
@@ -76,7 +76,7 @@ export class VoiceCaptureService {
     this.#microphoneArbiter = options.microphoneArbiter;
   }
 
-  async start(timeoutMs: number): Promise<{
+  async start(timeoutMs: number, microphoneReservation?: VoiceMicrophoneReservation): Promise<{
     readonly result: Promise<VoiceCaptureResult>;
     stop(): Promise<VoiceCaptureResult>;
     cancel(reason?: string): Promise<void>;
@@ -105,7 +105,10 @@ export class VoiceCaptureService {
     };
 
     try {
-      active.microphoneLease = this.#microphoneArbiter?.acquire("listen") ?? null;
+      if (microphoneReservation && !this.#microphoneArbiter) throw new Error("A microphone reservation requires its arbiter.");
+      active.microphoneLease = microphoneReservation
+        ? microphoneReservation.acquireTrack()
+        : toTrackLease(this.#microphoneArbiter?.acquire("listen"));
       active.attempt = this.#factory(durationMs, () => {
         if (active.cancelled || this.#active !== active) return false;
         active.indicatorLive = true;
@@ -163,8 +166,8 @@ export class VoiceCaptureService {
     }
   }
 
-  async captureOneShot(timeoutMs: number): Promise<VoiceCaptureResult> {
-    const handle = await this.start(timeoutMs);
+  async captureOneShot(timeoutMs: number, microphoneReservation?: VoiceMicrophoneReservation): Promise<VoiceCaptureResult> {
+    const handle = await this.start(timeoutMs, microphoneReservation);
     return handle.result;
   }
 
@@ -178,7 +181,6 @@ export class VoiceCaptureService {
 
   async shutdown(): Promise<void> {
     await this.cancelActive("OpenPets is shutting down.");
-    this.#indicator.shutdown();
   }
 
   #requestCancel(active: ActiveCapture, error: Error): void {
@@ -267,4 +269,8 @@ function deferred<T>(): Deferred<T> {
 
 function normalizeError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
+}
+
+function toTrackLease(lease: { readonly generation: number; release(): void } | undefined): VoiceMicrophoneTrackLease | null {
+  return lease ? { owner: "listen", generation: lease.generation, release: lease.release } : null;
 }

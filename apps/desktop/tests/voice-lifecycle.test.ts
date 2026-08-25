@@ -334,7 +334,7 @@ assert.equal(VOICE_MAX_RECORDING_DURATION_MS, 30_000);
   await flush();
   await current.listening.shutdown();
   await assert.rejects(pending, /OpenPets is shutting down\./);
-  assert.equal(current.surface.destroyCount, 1);
+  assert.equal(current.surface.destroyCount, 0, "shared privacy indicator teardown belongs to the host");
   assert.equal(current.getAttempt().disposeCount, 1);
 }
 

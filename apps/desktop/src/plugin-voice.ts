@@ -2,14 +2,14 @@ import { getDefaultPetWindowForPlugins } from "./default-pet-controller.js";
 import { playPetWindowTtsAudio, speakPetWindowTts, stopPetWindowTts, stopPetWindowTtsAudio } from "./pet-window.js";
 import type { PluginAiGateway } from "./plugin-ai-gateway.js";
 import { VoiceConversationService, type VoiceConversationSnapshot, type VoiceRealtimeSessionConfig } from "./voice-conversation.js";
-import { VoiceCaptureService } from "./voice-capture.js";
-import { createElectronVoiceCaptureFactory } from "./voice-capture-electron.js";
 import { createElectronVoiceRealtimeTransportFactory } from "./voice-realtime-electron.js";
+import { createElectronVoiceCaptureFactory } from "./voice-capture-electron.js";
 import { createElectronVoicePrivacyIndicator } from "./voice-privacy-indicator-electron.js";
-import { VoiceMicrophoneArbiter } from "./voice-microphone-arbiter.js";
-import { VoicePrivacyIndicator } from "./voice-privacy-indicator.js";
+import type { VoiceCaptureService } from "./voice-capture.js";
 import { VoiceListeningService } from "./voice-listening-service.js";
 import { VoiceOperationState, type VoiceOperationSnapshot } from "./voice-operation-state.js";
+import { VoiceResourceOwner } from "./voice-resource-owner.js";
+import type { VoiceMicrophoneArbiter } from "./voice-microphone-arbiter.js";
 
 /**
  * Plugin voice (§13.5). TTS uses configured MiniMax speech synthesis when
@@ -48,11 +48,9 @@ export function pluginVoiceStop(): void {
 
 let activeListeningService: VoiceListeningService | null = null;
 let activePluginId: string | undefined;
-let captureService: VoiceCaptureService | null = null;
 let conversationService: VoiceConversationService | null = null;
 let conversationStartReservation: symbol | null = null;
-let privacyIndicator: VoicePrivacyIndicator | null = null;
-const microphoneArbiter = new VoiceMicrophoneArbiter();
+const voiceResources = new VoiceResourceOwner({ captureFactory: createElectronVoiceCaptureFactory(), privacyIndicatorFactory: createElectronVoicePrivacyIndicator });
 const voiceOperationState = new VoiceOperationState();
 let pluginVoiceShutdownPromise: Promise<void> | null = null;
 
@@ -64,6 +62,15 @@ export function subscribePluginVoiceOperation(listener: () => void): () => void 
   return voiceOperationState.subscribe(listener);
 }
 
+/** Shared host-owned resources used by every voice lane. */
+export function getSharedVoiceMicrophoneArbiter(): VoiceMicrophoneArbiter {
+  return voiceResources.microphoneArbiter;
+}
+
+export function getSharedVoiceCaptureService(): VoiceCaptureService {
+  return voiceResources.capture();
+}
+
 export async function pluginVoiceListen(gateway: PluginAiGateway, opts: { timeoutMs: number; pluginId?: string }): Promise<{ text: string }> {
   if (activeListeningService) throw new Error("A voice capture is already in progress.");
   const reservation = voiceOperationState.reserve();
@@ -71,7 +78,7 @@ export async function pluginVoiceListen(gateway: PluginAiGateway, opts: { timeou
   try {
     const transcribe = await gateway.beginTranscriptionOperation();
     const service = new VoiceListeningService(
-      getCaptureService(),
+      voiceResources.capture(),
       (capture, signal) => transcribe(capture.bytes, capture.mimeType, signal),
       { onPhaseChange: (phase) => voiceOperationState.setPhase(phase) },
     );
@@ -135,31 +142,18 @@ export function shutdownPluginVoice(): Promise<void> {
     voiceOperationState.cancelReservation();
     if (conversationService) await conversationService.shutdown().catch(() => undefined);
     if (activeListeningService) await activeListeningService.shutdown().catch(() => undefined);
-    else await captureService?.shutdown().catch(() => undefined);
+    await voiceResources.shutdown();
     conversationService = null;
-    captureService = null;
-    privacyIndicator = null;
     activeListeningService = null;
     activePluginId = undefined;
   })();
   return pluginVoiceShutdownPromise;
 }
 
-function getCaptureService(): VoiceCaptureService {
-  if (!captureService) {
-    captureService = new VoiceCaptureService(createElectronVoiceCaptureFactory(), getPrivacyIndicator(), { microphoneArbiter });
-  }
-  return captureService;
-}
-
 function createConversationService(negotiator: (sdp: string, session: VoiceRealtimeSessionConfig, signal?: AbortSignal) => Promise<string>): VoiceConversationService {
   return new VoiceConversationService({
-    microphoneArbiter,
-    privacyIndicator: getPrivacyIndicator(),
+    microphoneArbiter: voiceResources.microphoneArbiter,
+    privacyIndicator: voiceResources.privacyIndicator,
     transportFactory: createElectronVoiceRealtimeTransportFactory({ negotiate: negotiator }),
   });
-}
-
-function getPrivacyIndicator(): VoicePrivacyIndicator {
-  return privacyIndicator ??= createElectronVoicePrivacyIndicator();
 }

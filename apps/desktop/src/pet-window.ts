@@ -102,6 +102,19 @@ const petWindowFocusPolicy = new WeakMap<BrowserWindow, boolean>();
 const petMouseInteropRecovery = new WeakMap<BrowserWindow, (reason: string) => void>();
 const petWindowDragging = new WeakMap<BrowserWindow, boolean>();
 
+export type PetWindowSpeechCompletion = {
+  readonly window: BrowserWindow;
+  readonly requestId: string;
+  readonly kind: "audio" | "system";
+  readonly outcome: "ended" | "error" | "stopped";
+};
+const petWindowSpeechCompletionListeners = new Set<(completion: PetWindowSpeechCompletion) => void>();
+
+export function subscribePetWindowSpeechCompletion(listener: (completion: PetWindowSpeechCompletion) => void): () => void {
+  petWindowSpeechCompletionListeners.add(listener);
+  return () => { petWindowSpeechCompletionListeners.delete(listener); };
+}
+
 /**
  * Returns true when Electron is effectively running on the native Wayland
  * backend (ozone-platform=wayland). Under x11/XWayland this returns false
@@ -556,6 +569,15 @@ function installMousePassthroughAndDrag(window: BrowserWindow, hooks: PetWindowI
     onPetEvent?.(name, data);
   };
 
+  const handleSpeechCompletion = (event: IpcMainEvent, payload: unknown): void => {
+    if (!isFromWindow(event) || !isRecord(payload) || typeof payload.requestId !== "string" || payload.requestId.length === 0) return;
+    if ((payload.kind !== "audio" && payload.kind !== "system") || (payload.outcome !== "ended" && payload.outcome !== "error" && payload.outcome !== "stopped")) return;
+    const completion: PetWindowSpeechCompletion = { window, requestId: payload.requestId, kind: payload.kind, outcome: payload.outcome };
+    for (const listener of [...petWindowSpeechCompletionListeners]) {
+      try { listener(completion); } catch { /* observers cannot affect pet-window cleanup */ }
+    }
+  };
+
   const resetForNavigation = (): void => {
     dragging = null;
     petWindowDragging.set(window, false);
@@ -597,6 +619,8 @@ function installMousePassthroughAndDrag(window: BrowserWindow, hooks: PetWindowI
     ipcMain.off("openpets:bubble-action", handleBubbleAction);
     ipcMain.off("openpets:bubble-submit", handleBubbleSubmit);
     ipcMain.off("openpets:pet-event", handlePetEvent);
+    ipcMain.off("openpets:tts-speech-finished", handleSpeechCompletion);
+    ipcMain.off("openpets:tts-audio-finished", handleSpeechCompletion);
     clearRearmTimers();
     clearForwardingWatch();
     petMouseInteropRecovery.delete(window);
@@ -621,6 +645,8 @@ function installMousePassthroughAndDrag(window: BrowserWindow, hooks: PetWindowI
   ipcMain.on("openpets:bubble-action", handleBubbleAction);
   ipcMain.on("openpets:bubble-submit", handleBubbleSubmit);
   ipcMain.on("openpets:pet-event", handlePetEvent);
+  ipcMain.on("openpets:tts-speech-finished", handleSpeechCompletion);
+  ipcMain.on("openpets:tts-audio-finished", handleSpeechCompletion);
   webContents.on("did-start-navigation", resetForNavigation);
   webContents.on("did-start-loading", resetForNavigation);
   webContents.on("did-finish-load", rearmAfterLoad);
@@ -863,25 +889,25 @@ export function stopPetWindowAudio(window: BrowserWindow): void {
 }
 
 /** Speak text via the renderer speechSynthesis voice (plugin voice.speak). */
-export function speakPetWindowTts(window: BrowserWindow, text: string, opts: { readonly voice?: string; readonly rate?: number }): void {
+export function speakPetWindowTts(window: BrowserWindow, text: string, opts: { readonly voice?: string; readonly rate?: number; readonly requestId?: string }): void {
   if (window.isDestroyed()) return;
-  window.webContents.send("openpets:tts-speak", { text, voice: opts.voice, rate: opts.rate });
+  window.webContents.send("openpets:tts-speak", { text, voice: opts.voice, rate: opts.rate, requestId: opts.requestId });
 }
 
-export function stopPetWindowTts(window: BrowserWindow): void {
+export function stopPetWindowTts(window: BrowserWindow, requestId?: string): void {
   if (window.isDestroyed()) return;
-  window.webContents.send("openpets:tts-stop");
+  window.webContents.send("openpets:tts-stop", { requestId });
 }
 
 /** Play synthesized speech without sharing the plugin sound playback channel. */
-export function playPetWindowTtsAudio(window: BrowserWindow, dataUrl: string): void {
+export function playPetWindowTtsAudio(window: BrowserWindow, dataUrl: string, requestId?: string): void {
   if (window.isDestroyed()) return;
-  window.webContents.send("openpets:tts-audio", { dataUrl });
+  window.webContents.send("openpets:tts-audio", { dataUrl, requestId });
 }
 
-export function stopPetWindowTtsAudio(window: BrowserWindow): void {
+export function stopPetWindowTtsAudio(window: BrowserWindow, requestId?: string): void {
   if (window.isDestroyed()) return;
-  window.webContents.send("openpets:tts-audio-stop");
+  window.webContents.send("openpets:tts-audio-stop", { requestId });
 }
 
 function tryUpdateLoadedPetContent(window: BrowserWindow, render: PetContentRender, name: string, sequence: number): boolean {

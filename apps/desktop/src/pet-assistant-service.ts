@@ -238,6 +238,10 @@ export class PetAssistantService {
           this.#emitTranscript(conversationId, turnId, toolMessage);
         }
         messages = [...messages, ...results];
+        // A completed capability batch returns control to the model. Keep the
+        // host visibly in the thinking state while it decides the terminal
+        // response or the next batch.
+        this.#emitActivity(conversationId, turnId, "thinking");
       }
     } catch (error) {
       if (active.terminal.value) return active.terminal.value;
