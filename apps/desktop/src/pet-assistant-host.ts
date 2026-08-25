@@ -5,6 +5,7 @@ import type { PluginService } from "./plugin-service.js";
 import type { PluginSecretsStore } from "./plugin-secrets.js";
 import { PetAssistantService } from "./pet-assistant-service.js";
 import { TextModelClient } from "./text-model-client.js";
+import type { HostProviderOperations } from "./provider-service.js";
 import type {
   AssistantJsonObject,
   PetAssistantComposition,
@@ -16,7 +17,7 @@ let assistantService: PetAssistantService | null = null;
 let stopping: Promise<void> | null = null;
 
 type HostCapabilityHandle = PetAssistantGenerationHandle & { readonly pluginHandle: PluginAssistantCapabilityHandle };
-export type PetAssistantHostOptions = { readonly compositionProvider?: () => PetAssistantComposition };
+export type PetAssistantHostOptions = { readonly compositionProvider?: () => PetAssistantComposition; readonly providerOperations?: HostProviderOperations };
 
 /** Construct the host assistant only after the plugin runtime has started. */
 export function startPetAssistantHost(pluginService: PluginService, secrets: PluginSecretsStore, options: PetAssistantHostOptions = {}): PetAssistantService {
@@ -35,7 +36,7 @@ export function startPetAssistantHost(pluginService: PluginService, secrets: Plu
     },
     execute: (handle, input, signal) => executeCapability(pluginService, handle, input, signal),
   };
-  const service = new PetAssistantService(new TextModelClient(secrets), runtime, {
+  const service = new PetAssistantService(new TextModelClient(options.providerOperations ?? secrets), runtime, {
     // App state is host-owned and synchronous; the service snapshots this
     // profile before each turn without coupling itself to Electron state.
     compositionProvider: options.compositionProvider ?? (() => ({ personality: getAppStateSnapshot().preferences.personality })),

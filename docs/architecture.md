@@ -117,6 +117,28 @@ turns whose outcomes all complete retain the model response. Chat/voice UI and
 transcript/history persistence remain separate v4 work; provider-profile
 management is implemented through the host-owned Control Center bridge.
 
+### Generic host voice session (#147)
+
+The desktop owns a host controller/factory for one bounded generic session at a
+time. Activation creates a fresh `VoiceAssistantSession`; ending it releases its
+microphone reservation, and a later activation creates a new session rather than
+reusing the terminal object. The session composes final-only bounded STT input,
+the canonical Pet Assistant capability loop, and authoritative response TTS.
+The text, STT, and TTS profiles are snapshotted independently; the STT snapshot is
+captured before microphone acquisition and remains fixed through transcription.
+There is no Talk control, shortcut, chat surface, retained transcript/history, or
+Realtime protocol integration in #147; those remain deferred to #150, #148, #149,
+and #139 respectively.
+
+Pet-window TTS is request-scoped. Audio and system speech retain a request id and
+kind in the renderer, settle replacement/stop/error/close/renderer-loss/navigation
+paths exactly once, and the main process rejects a lost or non-completing playback
+request at a bounded, duration-aware deadline. System speech is split into bounded
+utterance chunks while preserving the authoritative assistant text and emits one
+completion after the final chunk. Voice activity is rendered through a dedicated
+composable slot, leaving unrelated plugin display and status slots intact when
+voice activity clears.
+
 Provider profile management for issue #145 is a host-owned Control Center flow:
 the renderer consumes redacted snapshots and explicit actions over preload while
 the main process owns validation, persistence, and credentials. These are the
@@ -174,6 +196,9 @@ These hold everywhere; the rest of the docs assume them.
 - **Voice is bounded and visible.** Listening is one-shot, one-at-a-time,
   explicitly cancellable, visibly indicated while a media track is live, and
   bounded by separate microphone-acquisition and transcription timeouts.
+- **Voice resource ownership is centralized.** Assistant, plugin one-shot, and
+  private Realtime lanes release their own leases/tracks; only the shared voice
+  resource owner destroys the privacy indicator after every lane has stopped.
 - **Pet Assistant lifecycle is bounded.** The host loop is stopped and active
   turns are cancelled before plugin teardown; capability handles remain pinned
   to the plugin generation that registered them.

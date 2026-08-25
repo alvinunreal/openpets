@@ -13,11 +13,13 @@ import { publishPluginPetEvent } from "./plugin-events-source.js";
 import { reclampAgentPetWindows } from "./agent-pet-controller.js";
 import { reclampPluginPetWindows } from "./plugin-pet-registry.js";
 import { reclampLanVisitingPetWindows } from "./lan-pet-controller.js";
+import { composeVoiceActivityBadge, composeVoiceActivityDisplay } from "./voice-activity-slot.js";
 
 let defaultPetWindow: BrowserWindow | null = null;
 let paused = false;
 let transientDisplay: PetTransientDisplay | null = null;
 let statusBadge: PetStatusBadgeReaction | null = null;
+let voiceActivityReaction: OpenPetsReaction | null = null;
 let transientDisplayTimeout: NodeJS.Timeout | null = null;
 let transientAnimationTimeout: NodeJS.Timeout | null = null;
 let statusBadgeTimeout: NodeJS.Timeout | null = null;
@@ -111,13 +113,14 @@ export function isDefaultPetVisible(): boolean {
 
 export function setDefaultPetPaused(nextPaused: boolean): void {
   paused = nextPaused;
+  if (paused) voiceActivityReaction = null;
   info("pet.default", "pause changed", { paused });
 
   if (!defaultPetWindow || defaultPetWindow.isDestroyed()) {
     return;
   }
 
-  void loadDefaultPetContent(defaultPetWindow, paused, transientDisplay, statusBadge, getCurrentDismissToken(), getDefaultPetPluginBubbles());
+  void loadDefaultPetContent(defaultPetWindow, paused, getRenderedDisplay(), getRenderedBadge(), getCurrentDismissToken(), getDefaultPetPluginBubbles());
 }
 
 export function getDefaultPetPaused(): boolean {
@@ -134,8 +137,8 @@ export function refreshDefaultPetContent(): void {
     return;
   }
 
-  debug("pet.default", "refresh content", { windowId: defaultPetWindow.id, paused, hasDisplay: Boolean(transientDisplay), badge: statusBadge, petId: getAppStateSnapshot().preferences.defaultPetId });
-  void loadDefaultPetContent(defaultPetWindow, paused, transientDisplay, statusBadge, getCurrentDismissToken(), getDefaultPetPluginBubbles());
+  debug("pet.default", "refresh content", { windowId: defaultPetWindow.id, paused, hasDisplay: Boolean(getRenderedDisplay()), badge: getRenderedBadge(), petId: getAppStateSnapshot().preferences.defaultPetId });
+  void loadDefaultPetContent(defaultPetWindow, paused, getRenderedDisplay(), getRenderedBadge(), getCurrentDismissToken(), getDefaultPetPluginBubbles());
 }
 
 export function recoverDefaultPetMouseInterop(reason: string): void {
@@ -186,6 +189,14 @@ export function applyExternalPetStatusReaction(reaction: OpenPetsReaction | null
   refreshDefaultPetContent();
 }
 
+/** Set only the voice-owned activity slot; plugin display and status state remain independent. */
+export function setDefaultPetVoiceActivity(reaction: OpenPetsReaction | null): void {
+  voiceActivityReaction = paused || reaction === "idle" ? null : reaction;
+  debug("pet.default", "voice activity slot changed", { reaction: voiceActivityReaction });
+  if (voiceActivityReaction) showDefaultPetForExternalEvent();
+  refreshDefaultPetContent();
+}
+
 export function applyExternalPetMoveBy(options: PetMoveOptions): Promise<{ readonly moved: boolean; readonly reason?: string }> {
   return moveDefaultPetBy(Number(options.x), Number(options.y), options.durationMs);
 }
@@ -220,6 +231,7 @@ export function applyExternalPetMoveToHome(): Promise<{ readonly moved: boolean;
 
 export function destroyDefaultPet(): void {
   clearDefaultPetDisplayTimers();
+  voiceActivityReaction = null;
 
   if (!defaultPetWindow || defaultPetWindow.isDestroyed()) {
     debug("pet.default", "destroy skipped", { reason: "no-window" });
@@ -278,7 +290,7 @@ function handleBubbleDismissed(dismissToken: string): void {
   }
   clearDefaultPetDisplayTimers();
   if (defaultPetWindow && !defaultPetWindow.isDestroyed()) {
-    void loadDefaultPetContent(defaultPetWindow, paused, null, null, undefined, getDefaultPetPluginBubbles());
+    void loadDefaultPetContent(defaultPetWindow, paused, getRenderedDisplay(), getRenderedBadge(), getCurrentDismissToken(), getDefaultPetPluginBubbles());
   }
 }
 
@@ -296,8 +308,8 @@ function getOrCreateDefaultPetWindow(): BrowserWindow {
   defaultPetWindow = createDefaultPetWindow({
     position,
     paused,
-    display: transientDisplay,
-    badge: statusBadge,
+    display: getRenderedDisplay(),
+    badge: getRenderedBadge(),
     pluginBubbles: getDefaultPetPluginBubbles(),
     onPositionChanged: handlePositionChanged,
     onHideRequested: hideDefaultPet,
@@ -406,8 +418,8 @@ function getMovementBlockedReason(window: BrowserWindow, allowMoving = false): s
   if (!window.isVisible()) return "hidden";
   if (paused) return "paused";
   if (isPetWindowDragging(window)) return "dragging";
-  if (transientDisplay) return "transient-display";
-  if (statusBadge) return "status-active";
+  if (getRenderedDisplay()) return "transient-display";
+  if (getRenderedBadge()) return "status-active";
   return undefined;
 }
 
@@ -451,6 +463,14 @@ function clearDefaultPetDisplayTimers(): void {
   statusBadgeTimeout = null;
   transientDisplay = null;
   statusBadge = null;
+}
+
+function getRenderedDisplay(): PetTransientDisplay | null {
+  return composeVoiceActivityDisplay(transientDisplay, voiceActivityReaction) as PetTransientDisplay | null;
+}
+
+function getRenderedBadge(): PetStatusBadgeReaction | null {
+  return composeVoiceActivityBadge(statusBadge, voiceActivityReaction) as PetStatusBadgeReaction | null;
 }
 
 function getCurrentDismissToken(): string | undefined {

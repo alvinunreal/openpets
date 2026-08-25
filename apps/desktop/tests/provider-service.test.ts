@@ -47,6 +47,15 @@ try {
   const sttSnapshot = await service.snapshot("stt");
   const textSnapshot = await service.snapshot("text");
   await assert.rejects(() => service.binary(ttsSnapshot, "/audio/speech", {}), /HTTP 500/);
+  const synthesisAbort = new AbortController();
+  const pendingSynthesis = new HostProviderService(secrets, {
+    fetchImpl: async (_input, init) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new Error("fetch aborted")), { once: true });
+    }),
+  });
+  const synthesis = pendingSynthesis.synthesize(ttsSnapshot, "cancel me", {}, synthesisAbort.signal);
+  synthesisAbort.abort();
+  await assert.rejects(() => synthesis, /cancelled/);
   await assert.rejects(() => service.transcribe(sttSnapshot, new Uint8Array([1]), "audio/webm"), /HTTP 500/);
   await assert.rejects(() => service.stream(textSnapshot, "/chat/completions", {}, () => undefined), /HTTP 500/);
   assert.equal(cancelled, 3, "HTTP error bodies must be cancelled before the operation returns");

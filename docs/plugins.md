@@ -212,6 +212,24 @@ cleared with an explicit empty array. Because snapshots expose header names but
 not values, header replacement is an intentional whole-list operation rather
 than a per-header edit.
 
+The host voice lanes consume these profiles independently: text reasoning,
+final-only STT, and TTS each take their own operation snapshot. The generic voice
+session pins STT before capture starts and passes the same snapshot through
+transcription; changing provider settings affects a later activation, not an
+in-flight capture. TTS playback is host-owned and request-scoped, including
+bounded system-utterance chunking, duration-aware deadlines, renderer-loss and
+navigation handling, and completion/error/stop handling. Voice activity uses a
+separate host-owned pet slot and does not clear plugin-owned display or status
+state. Plugins do not own the microphone, privacy surface, renderer playback
+lifecycle, or generic assistant session.
+
+`voice-resource-owner.ts` is the sole owner of the shared microphone arbiter,
+capture service, and privacy indicator. Plugin one-shot listening, the private
+Realtime lane, and the generic assistant lane release only their own tracks and
+leases. The shared owner destroys the privacy surface once, after every lane has
+stopped during app teardown. This does not add a public voice conversation API or
+make Realtime part of the plugin contract; #139 remains deferred.
+
 Generic `openai-compatible-text` is the codec for OpenAI, Ollama, LM Studio,
 vLLM, MiniMax chat, and cloud gateways. Anthropic remains native because its
 messages/tool wire format differs. STT is an explicit

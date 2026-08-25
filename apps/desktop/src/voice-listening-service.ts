@@ -1,4 +1,5 @@
 import type { VoiceCaptureResult, VoiceCaptureService } from "./voice-capture.js";
+import type { VoiceMicrophoneReservation } from "./voice-microphone-arbiter.js";
 
 export const VOICE_TRANSCRIPTION_TIMEOUT_MS = 30_000;
 export const VOICE_EMPTY_TRANSCRIPT_ERROR = "Voice transcription returned no text.";
@@ -45,7 +46,7 @@ export class VoiceListeningService {
     this.#onPhaseChange = options.onPhaseChange;
   }
 
-  listenOnce(recordingDurationMs: number): Promise<{ text: string }> {
+  listenOnce(recordingDurationMs: number, microphoneReservation?: VoiceMicrophoneReservation): Promise<{ text: string }> {
     if (this.#active) throw new Error("A voice capture is already in progress.");
     const done = deferred<void>();
     let rejectCancel!: (error: unknown) => void;
@@ -62,7 +63,7 @@ export class VoiceListeningService {
     };
     this.#active = active;
     this.#onPhaseChange?.("acquiring");
-    const run = this.#run(active, recordingDurationMs).finally(async () => {
+    const run = this.#run(active, recordingDurationMs, microphoneReservation).finally(async () => {
       await this.#capture.cancelActive(active.cancelError?.message ?? "Voice listening finished.").catch(() => undefined);
       if (this.#active === active) this.#active = null;
       active.done.resolve(undefined);
@@ -85,12 +86,11 @@ export class VoiceListeningService {
 
   async shutdown(): Promise<void> {
     await this.cancel("OpenPets is shutting down.");
-    await this.#capture.shutdown();
   }
 
-  async #run(active: ActiveListen, recordingDurationMs: number): Promise<{ text: string }> {
+  async #run(active: ActiveListen, recordingDurationMs: number, microphoneReservation?: VoiceMicrophoneReservation): Promise<{ text: string }> {
     try {
-      const startPromise = this.#capture.start(recordingDurationMs);
+      const startPromise = this.#capture.start(recordingDurationMs, microphoneReservation);
       void startPromise.catch(() => undefined);
       const handle = await Promise.race([startPromise, active.cancelPromise]);
       active.capturePhase = "recording";

@@ -209,7 +209,6 @@ export class VoiceConversationService {
     this.#shutdownRequested = true;
     this.#shutdownPromise = (async () => {
       await this.close("OpenPets is shutting down.");
-      this.#privacyIndicator.shutdown();
     })();
     return this.#shutdownPromise;
   }
