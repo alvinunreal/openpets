@@ -1387,7 +1387,7 @@ function ProvidersSettingsPanel({
           ? (formDraft.adapter === "system-tts" ? { baseUrl: null, secretRef: null, auth: null, headers: [] } : {
             ...(formDraft.baseUrl?.trim() ? { baseUrl: formDraft.baseUrl.trim() } : { baseUrl: null }),
             ...(formDraft.secretRef?.trim() ? { secretRef: formDraft.secretRef.trim() } : { secretRef: null }),
-            ...(authEdited || !formDraft.secretRef?.trim() ? { auth: formDraft.auth ?? null } : {}),
+            ...(authEdited || !formDraft.secretRef?.trim() ? { auth: formDraft.secretRef?.trim() ? formDraft.auth ?? null : null } : {}),
             ...(headersEdited ? { headers: formDraft.headers ?? [] } : {}),
           })
           : (formDraft.adapter === "system-tts" ? {} : {
