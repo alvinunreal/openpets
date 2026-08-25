@@ -536,6 +536,65 @@ body.theme-dark .plugin-config-backdrop {
   .plugin-actions-section .btn-secondary { @apply bg-blue-50/70; }
   .plugin-actions-section .btn-primary { @apply min-w-[96px]; }
   .plugin-actions-section .btn-danger { @apply min-w-[112px]; }
+  .conversation-layout { @apply flex min-h-0 flex-1 overflow-hidden; }
+  .conversation-shell { @apply flex min-h-0 w-full flex-col gap-5 overflow-hidden; }
+  .conversation-header { @apply flex items-start justify-between gap-4 border-b border-blue-100/60 pb-4; }
+  .conversation-header h2 { @apply m-0 font-monoDisplay text-3xl font-black tracking-tight text-navy; }
+  .conversation-subtitle { @apply m-0 mt-1 max-w-2xl text-sm leading-relaxed text-slatecopy; }
+  .conversation-status { @apply inline-flex shrink-0 items-center gap-2 rounded-full border border-blue-200/70 bg-blue-50/70 px-3 py-1.5 text-xs font-bold text-brand; }
+  .conversation-status-dot { @apply h-2 w-2 rounded-full bg-brand shadow-[0_0_0_4px_rgba(59,150,255,.12)]; }
+  .conversation-status-acting .conversation-status-dot,
+  .conversation-status-thinking .conversation-status-dot,
+  .conversation-status-responding .conversation-status-dot { @apply animate-pulse; }
+  .conversation-status-cancelled { @apply border-amber-200 bg-amber-50 text-amber-700; }
+  .conversation-status-cancelled .conversation-status-dot { @apply bg-amber-500; }
+  .conversation-status-failed { @apply border-red-200 bg-red-50 text-red-700; }
+  .conversation-status-failed .conversation-status-dot { @apply bg-red-500; }
+  .conversation-transcript { @apply flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto rounded-[24px] border border-blue-100/60 bg-blue-50/25 p-4; overscroll-behavior: contain; }
+  .conversation-empty { @apply flex min-h-56 flex-col items-center justify-center gap-2 text-center text-sm text-slatecopy; }
+  .conversation-empty strong { @apply font-monoDisplay text-lg font-black text-navy; }
+  .conversation-empty span { @apply max-w-md leading-relaxed; }
+  .conversation-message { @apply max-w-[78%] rounded-[22px] border px-4 py-3 shadow-sm; }
+  .conversation-message-user { @apply self-end border-blue-200/80 bg-blue-500 text-white; }
+  .conversation-message-assistant { @apply self-start border-blue-100/70 bg-white/85 text-navy; }
+  .conversation-message-voice { @apply border-dashed; }
+  .conversation-message-meta { @apply mb-1 text-[10px] font-black uppercase tracking-[.14em] opacity-70; }
+  .conversation-message p { @apply m-0 whitespace-pre-wrap text-sm leading-relaxed; }
+  .conversation-action { @apply flex max-w-[78%] items-center gap-3 self-start rounded-2xl border border-blue-100/70 bg-white/65 px-3 py-2.5 text-xs text-slatecopy; }
+  .conversation-action-mark { @apply grid h-7 w-7 shrink-0 place-items-center rounded-xl bg-blue-50 font-mono text-sm font-black text-brand; }
+  .conversation-action > div:last-child { @apply flex min-w-0 flex-col gap-0.5; }
+  .conversation-action strong { @apply truncate text-xs font-black text-navy; }
+  .conversation-action span { @apply leading-relaxed; }
+  .conversation-action-running .conversation-action-mark,
+  .conversation-action-pending .conversation-action-mark { @apply animate-pulse; }
+  .conversation-action-completed .conversation-action-mark { @apply bg-emerald-50 text-emerald-700; }
+  .conversation-action-unavailable .conversation-action-mark,
+  .conversation-action-rejected .conversation-action-mark,
+  .conversation-action-indeterminate .conversation-action-mark { @apply bg-red-50 text-red-700; }
+  .conversation-terminal { @apply rounded-2xl border px-4 py-3 text-xs font-semibold; }
+  .conversation-terminal-failed { @apply border-red-200 bg-red-50 text-red-700; }
+  .conversation-terminal-cancelled { @apply border-amber-200 bg-amber-50 text-amber-700; }
+  .conversation-composer { @apply flex flex-col gap-3 rounded-[24px] border border-blue-100/70 bg-white/55 p-3 shadow-inner; }
+  .conversation-composer textarea { @apply w-full resize-none rounded-2xl border border-blue-200/80 bg-white/80 px-4 py-3 text-sm font-medium text-navy outline-none placeholder:text-slatecopy/60 focus:border-brand focus:ring-4 focus:ring-brand/15 disabled:cursor-not-allowed disabled:opacity-60; }
+  .conversation-composer-footer { @apply flex items-center justify-between gap-3; }
+  .conversation-composer-footer > span { @apply max-w-2xl text-[11px] leading-relaxed text-slatecopy; }
+  .conversation-composer-footer .btn { @apply min-w-24; }
+  .conversation-error { @apply flex items-center justify-between gap-3; }
+  .conversation-retry { @apply shrink-0 rounded-lg border border-current bg-transparent px-2 py-1 text-xs font-bold; }
+  body.theme-dark .conversation-header h2,
+  body.theme-dark .conversation-empty strong,
+  body.theme-dark .conversation-message-assistant,
+  body.theme-dark .conversation-action strong { color: #f8fbff; }
+  body.theme-dark .conversation-header { border-color: rgba(116, 159, 221, 0.22); }
+  body.theme-dark .conversation-transcript,
+  body.theme-dark .conversation-composer,
+  body.theme-dark .conversation-message-assistant,
+  body.theme-dark .conversation-action { border-color: rgba(116, 159, 221, 0.24); background: rgba(15, 23, 42, 0.54); }
+  body.theme-dark .conversation-subtitle,
+  body.theme-dark .conversation-empty,
+  body.theme-dark .conversation-action,
+  body.theme-dark .conversation-composer-footer > span { color: #a9b6ca; }
+  body.theme-dark .conversation-composer textarea { border-color: rgba(116, 159, 221, 0.36); background: rgba(15, 23, 42, 0.82); color: #f8fbff; }
   @media (max-width: 900px) {
     .plugins-layout, .plugins-hub, .plugin-grid { @apply overflow-visible; }
     .plugin-developer-body { @apply flex-col items-stretch; }
@@ -545,6 +604,9 @@ body.theme-dark .plugin-config-backdrop {
     .settings-nav-item { @apply shrink-0; }
     .settings-content { @apply overflow-visible pr-0; }
     .settings-row { @apply items-start; }
+    .conversation-layout { @apply overflow-visible; }
+    .conversation-header { @apply flex-col; }
+    .conversation-status { @apply self-start; }
     .settings-row > .settings-select { @apply max-w-[48%]; }
     .personality-actions { @apply items-stretch; }
   }
@@ -553,6 +615,10 @@ body.theme-dark .plugin-config-backdrop {
     .settings-row > .settings-select,
     .settings-row > .settings-text-input { @apply w-full max-w-none; }
     .personality-actions { @apply flex-col; }
+    .conversation-message,
+    .conversation-action { @apply max-w-[94%]; }
+    .conversation-composer-footer { @apply items-stretch flex-col; }
+    .conversation-composer-footer .btn { @apply w-full; }
   }
 
   .integration-grid { @apply grid grid-cols-2 gap-3.5 max-[850px]:grid-cols-1; }

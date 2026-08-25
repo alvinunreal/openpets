@@ -113,9 +113,11 @@ turn start, so a Settings edit applies to the next turn without changing an
 already-running turn. If any structured capability outcome is rejected,
 unavailable, or indeterminate, the terminal user-visible response is a
 deterministic host-generated status summary instead of untrusted model prose;
-turns whose outcomes all complete retain the model response. Chat/voice UI and
-transcript/history persistence remain separate v4 work; provider-profile
-management is implemented through the host-owned Control Center bridge.
+turns whose outcomes all complete retain the model response. The Control Center
+Conversation route consumes a host-owned, in-memory current-session projection
+of those canonical events. It is presentation state only: persisted/recent
+history remains separate v4 work; provider-profile management is implemented
+through the host-owned Control Center bridge.
 
 Provider profile management for issue #145 is a host-owned Control Center flow:
 the renderer consumes redacted snapshots and explicit actions over preload while

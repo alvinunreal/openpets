@@ -49,6 +49,7 @@ export const ptBR: Partial<Messages> = {
 
   // --- Navigation tabs (renderer) ---
   "nav.dashboard": "Painel",
+  "nav.conversation": "Conversa",
   "nav.pets": "Pets",
   "nav.settings": "Configurações",
   "nav.plugins": "Plugins",
@@ -57,6 +58,8 @@ export const ptBR: Partial<Messages> = {
   // --- Route metadata (renderer hero header) ---
   "route.dashboard.title": "Painel",
   "route.dashboard.description": "Visão geral dos seus companheiros ativos, status e métricas do sistema.",
+  "route.conversation.title": "Conversa",
+  "route.conversation.description": "Converse com seu pet na sessão atual compartilhada.",
   "route.pets.title": "Pets",
   "route.pets.description": "Instale, importe, visualize e escolha o seu companheiro de desktop padrão.",
   "route.settings.title": "Configurações",

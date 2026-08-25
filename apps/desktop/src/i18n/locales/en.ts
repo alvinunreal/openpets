@@ -58,6 +58,7 @@ export const en = {
 
   // --- Navigation tabs (renderer) ---
   "nav.dashboard": "Dashboard",
+  "nav.conversation": "Conversation",
   "nav.pets": "Pets",
   "nav.settings": "Settings",
   "nav.plugins": "Plugins",
@@ -66,6 +67,8 @@ export const en = {
   // --- Route metadata (renderer hero header) ---
   "route.dashboard.title": "Dashboard",
   "route.dashboard.description": "Overview of your active companions, status, and system metrics.",
+  "route.conversation.title": "Conversation",
+  "route.conversation.description": "Chat with your pet in the shared current session.",
   "route.pets.title": "Pets",
   "route.pets.description": "Install, import, preview, and choose your default desktop companion.",
   "route.settings.title": "Settings",

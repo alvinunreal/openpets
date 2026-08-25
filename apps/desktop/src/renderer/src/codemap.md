@@ -6,7 +6,8 @@ React/Tailwind source for the Control Center management UI. This renderer presen
 
 ## Design
 
-- **Route Shell**: In-renderer route state supports `dashboard`, `pets`, `integrations`, `plugins`, and `settings`; tray actions retarget the singleton window through route-change events.
+- **Route Shell**: In-renderer route state supports `dashboard`, `conversation`, `pets`, `integrations`, `plugins`, and `settings`; tray actions retarget the singleton window through route-change events.
+- **Conversation**: `conversation/ConversationView.tsx` renders typed messages, assistant capability activity, terminal states, and future normalized voice transcript entries from the host projection. `conversation-state.ts` validates snapshots/events and ignores stale or malformed updates.
 - **Dashboard**: Reads a narrowed dashboard snapshot for default pet preview, install/catalog counts, plugin health, update status, and activity totals.
 - **Pets**: Combines installed pets, catalog v3 pages/search, Codex imports, filters, detail panes, set-default/install/import/remove actions, and animated sprite previews.
 - **Integrations**: Card-first setup UI for Claude Code, OpenCode, Cursor, and Pi guidance, including command mode/path controls and preview/action flows.
@@ -16,6 +17,6 @@ React/Tailwind source for the Control Center management UI. This renderer presen
 
 ## Key Files
 
-- `main.tsx`: Single-file React app containing type definitions, route shell, page components, icons, snapshot loading, and action handlers.
+- `main.tsx`: Existing route shell and management pages; Conversation is kept in focused files under `conversation/`.
 - `styles.css`: Tailwind base/components/utilities plus glass-card layout, navigation, galleries, modals, status pills, previews, and notifications.
 - `vite-env.d.ts`: Vite/TypeScript renderer environment declarations.

@@ -49,6 +49,7 @@ export const ja: Partial<Messages> = {
 
   // --- Navigation tabs (renderer) ---
   "nav.dashboard": "ダッシュボード",
+  "nav.conversation": "会話",
   "nav.pets": "ペット",
   "nav.settings": "設定",
   "nav.plugins": "プラグイン",
@@ -57,6 +58,8 @@ export const ja: Partial<Messages> = {
   // --- Route metadata (renderer hero header) ---
   "route.dashboard.title": "ダッシュボード",
   "route.dashboard.description": "アクティブな相棒、ステータス、システム指標の概要。",
+  "route.conversation.title": "会話",
+  "route.conversation.description": "共有された現在のセッションでペットと会話します。",
   "route.pets.title": "ペット",
   "route.pets.description": "デスクトップの相棒をインストール、インポート、プレビューして選びましょう。",
   "route.settings.title": "設定",

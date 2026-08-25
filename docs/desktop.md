@@ -114,8 +114,8 @@ pet keeps rendering during fullscreen video and games.
 
 ### Control Center (renderer)
 
-The React/Tailwind UI under `src/renderer/`. Pages: **Dashboard, Pets,
-Integrations, Plugins, Settings**. It is a pure consumer of main-process
+The React/Tailwind UI under `src/renderer/`. Pages: **Dashboard, Conversation,
+Pets, Integrations, Plugins, Settings**. It is a pure consumer of main-process
 snapshots and actions exposed over the preload bridge - it holds no privileged
 capability of its own. The renderer is the only "frontend" in scope for these
 docs (the `web/` marketing site is out of scope). See
@@ -126,9 +126,13 @@ Provider-profile bridge operations are exposed by
 presets, role status, and derived realtime status; create/update/delete a
 profile; select a profile independently for each role; update platform gates;
 and set/check/delete a profile credential. Responses contain only credential
-presence and header names. The Control Center implements this provider-profile
-surface; chat, voice, transcript/history, and sensitive-action confirmation
-surfaces remain follow-up product work.
+presence and header names. The Control Center Conversation surface consumes a
+sanitized, host-owned current-session projection; it does not persist transcript
+history or own assistant state. The projection retains only the most recent
+200 display items. Normalized voice transcript events remain an integration
+seam for #147: their adapter must provide a process-lifetime monotonic sequence
+within the voice source; voice ordering is deliberately independent from the
+canonical assistant event sequence.
 Provider updates use sparse patches: omitted fields preserve current values,
 `null` clears `baseUrl`, `secretRef`, or `auth`, omitted `headers` preserves the
 redacted header list, and `headers: []` intentionally clears it.

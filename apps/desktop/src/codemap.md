@@ -110,7 +110,7 @@ tray.ts → openControlCenterWindow(route) → windows.ts
 ├── hardened BrowserWindow loads Vite renderer or packaged dist/renderer/index.html
 ├── control-center-preload.cjs exposes page-specific APIs
 ├── Dashboard snapshot: default pet, catalog, plugin health, update status, activity
-└── renderer/src/main.tsx routes Dashboard/Pets/Integrations/Plugins/Settings
+└── renderer/src/main.tsx routes Dashboard/Conversation/Pets/Integrations/Plugins/Settings
 ```
 
 **Plugin Flow**:
@@ -195,6 +195,7 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `app-state.ts`: Persistent JSON state with V1 schema, atomic writes, reaction animation overrides, validated waiting animation duration, and host Pet Assistant personality preferences
 - `app-state-core.ts`: Pet scale options, waiting-duration options/normalization, onboarding normalization
 - `pet-assistant-host.ts` / `pet-assistant-service.ts`: Host-owned provider-neutral assistant lifecycle, per-turn prompt composition, and generation-pinned capability routing
+- `pet-assistant-conversation.ts`: Host-owned current-session presentation projection, stable typed-chat controller, cancellation seam, and future normalized voice-transcript seam
 - `pet-assistant-personality.ts`: Pure personality defaults, bounds, patch validation, and safe deterministic serialization
 - `logger.ts`: Structured logging with scopes (app, ipc, lease, pet.default, pet.agent, pet.window, state, tray, ui), log rotation, redaction
 

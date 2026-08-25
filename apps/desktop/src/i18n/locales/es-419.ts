@@ -49,6 +49,7 @@ export const es419: Partial<Messages> = {
 
   // --- Navigation tabs (renderer) ---
   "nav.dashboard": "Panel",
+  "nav.conversation": "Conversación",
   "nav.pets": "Mascotas",
   "nav.settings": "Configuración",
   "nav.plugins": "Complementos",
@@ -57,6 +58,8 @@ export const es419: Partial<Messages> = {
   // --- Route metadata (renderer hero header) ---
   "route.dashboard.title": "Panel",
   "route.dashboard.description": "Resumen de tus compañeros activos, su estado y las métricas del sistema.",
+  "route.conversation.title": "Conversación",
+  "route.conversation.description": "Chatea con tu mascota en la sesión actual compartida.",
   "route.pets.title": "Mascotas",
   "route.pets.description": "Instala, importa, previsualiza y elige tu compañero de escritorio predeterminado.",
   "route.settings.title": "Configuración",

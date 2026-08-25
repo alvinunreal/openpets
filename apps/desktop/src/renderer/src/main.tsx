@@ -4,6 +4,8 @@ import { I18nProvider, useI18n, type I18nSnapshot } from "./i18n";
 import "./styles.css";
 import openPetsLogoUrl from "../../../assets/openpets.webp";
 import defaultThumbUrl from "../../../assets/default-pet-thumbnail.png";
+import { ConversationView } from "./conversation/ConversationView.js";
+import type { ConversationEvent, ConversationSnapshot } from "./conversation/conversation-types.js";
 
 import claudeLogoUrl from "../../../assets/integrations/claude.svg";
 import opencodeLogoUrl from "../../../assets/integrations/opencode.svg";
@@ -186,6 +188,10 @@ type ControlCenterApi = {
   getSettingsState(): Promise<SettingsState>;
   getLanStatus(): Promise<LanStatusSnapshot>;
   getI18n(): Promise<I18nSnapshot>;
+  getConversationSnapshot(): Promise<ConversationSnapshot>;
+  sendConversationMessage(text: string): Promise<unknown>;
+  cancelConversationTurn(): Promise<{ cancelled: boolean }>;
+  onConversationEvent(callback: (event: ConversationEvent) => void): () => void;
   updatePreferences(patch: PreferencePatch): Promise<SettingsState>;
   getReactionAnimationSettings(): Promise<ReactionAnimationSettings>;
   getLaunchAtLogin(): Promise<LaunchAtLoginState>;
@@ -502,7 +508,7 @@ const ShieldIcon = () => (
 );
 
 // Navigation Shell Types and Icons
-type Route = "dashboard" | "pets" | "settings" | "plugins" | "integrations";
+type Route = "dashboard" | "conversation" | "pets" | "settings" | "plugins" | "integrations";
 
 const DashboardIcon = () => (
   <svg className="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -571,6 +577,7 @@ const IntegrationsIcon = () => (
 
 const navTabs = [
   { id: "dashboard" as const, labelKey: "nav.dashboard", icon: <DashboardIcon /> },
+  { id: "conversation" as const, labelKey: "nav.conversation", icon: <MessageIcon /> },
   { id: "pets" as const, labelKey: "nav.pets", icon: <PetsIcon /> },
   { id: "settings" as const, labelKey: "nav.settings", icon: <SettingsIcon /> },
   { id: "plugins" as const, labelKey: "nav.plugins", icon: <PluginsIcon /> },
@@ -581,6 +588,10 @@ const routeMetadata: Record<Route, { titleKey: string; descKey: string }> = {
   dashboard: {
     titleKey: "route.dashboard.title",
     descKey: "route.dashboard.description",
+  },
+  conversation: {
+    titleKey: "route.conversation.title",
+    descKey: "route.conversation.description",
   },
   pets: {
     titleKey: "route.pets.title",
@@ -891,7 +902,7 @@ const statusPillToneClass = {
 } as const;
 
 function isRoute(value: string | null | undefined): value is Route {
-  return value === "dashboard" || value === "pets" || value === "settings" || value === "plugins" || value === "integrations";
+  return value === "dashboard" || value === "conversation" || value === "pets" || value === "settings" || value === "plugins" || value === "integrations";
 }
 
 function initialControlCenterRoute(): Route {
@@ -4945,6 +4956,8 @@ function ControlCenter({ onAppearanceThemeChange }: { onAppearanceThemeChange: (
 
       {currentRoute === "dashboard" ? (
         <DashboardView onNavigate={setCurrentRoute} />
+      ) : currentRoute === "conversation" ? (
+        <ConversationView api={api} />
       ) : currentRoute === "settings" ? (
         <SettingsView onAppearanceThemeChange={onAppearanceThemeChange} onTokenHandoff={(result, endpoint) => setRemoteTokenHandoff({ result, endpoint })} />
       ) : currentRoute === "plugins" ? (
