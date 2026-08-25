@@ -79,6 +79,8 @@ export type PetAssistantTextModelResponse =
   | { readonly type: "tool-calls"; readonly text?: string; readonly toolCalls: readonly PetAssistantToolCall[] };
 
 export interface PetAssistantTextModel {
+  /** Optional operation snapshot; the host uses one model operation for a whole turn. */
+  beginOperation?(): PetAssistantTextModel | Promise<PetAssistantTextModel>;
   generate(
     request: PetAssistantTextModelRequest,
     signal: AbortSignal,

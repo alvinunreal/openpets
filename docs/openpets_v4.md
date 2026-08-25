@@ -18,8 +18,10 @@ Issue #138 supplies the host-owned provider adapter, canonical in-memory
 conversation/tool loop, generation-pinned capability routing, and bounded
 turn/lifecycle behavior. Issue #146 adds the persisted, owner-editable
 personality profile and deterministic prompt composition on that same host
-foundation. There is not yet a chat surface, voice surface, transcript/history
-persistence, or provider-profile/settings UI.
+foundation. There is not yet a chat surface, transcript/history persistence, or
+sensitive-action confirmation UI. Provider profiles/settings are implemented as
+a host-owned Control Center surface; later chat and voice product surfaces
+consume those integrations.
 
 ## The product experience
 
@@ -92,11 +94,12 @@ accepts, and the result it returns.
 - Realtime voice transport is infrastructure, not the product by itself. The
   product is a pet that can converse and act.
 
-The current #138/#146 implementation has no voice, chat, transcript/history
-persistence, or editable provider-profile surface. The #146 Settings surface
-stores only communication preferences on the host. Later v4 issues add
-conversation surfaces on top of the host contract rather than moving provider or
-capability authority into plugins.
+The current #138/#146/#145 implementation has no chat surface,
+transcript/history persistence, or editable sensitive-action confirmation
+surface. The Control Center already provides editable provider profiles and
+communication preferences on the host. Later v4 issues add conversation
+surfaces on top of the host contract rather than moving provider or capability
+authority into plugins.
 
 ## v4 outcomes
 
@@ -163,8 +166,9 @@ coordination point for v4 work.
 
 ## Decisions made for v4
 
-- Text/reasoning, speech-to-text, and text-to-speech providers are selected
-  independently, allowing local and remote combinations.
+- Exactly three provider roles are selected independently: one text/reasoning
+  profile, one speech-to-text profile, and one text-to-speech profile, allowing
+  local and remote combinations.
 - Pet personality is owner-editable, but only affects communication style; it
   cannot bypass host rules, permissions, or authoritative capability outcomes.
 - Focus and Reminder actions execute without a confirmation step in v4.

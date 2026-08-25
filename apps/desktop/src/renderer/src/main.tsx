@@ -42,14 +42,106 @@ type PluginPermission =
   | "pet:interact" | "pet:pin" | "pet:animate" | "pet:speak:dynamic" | "pet:drop" | "pets:read" | "pets:manage"
   | "audio" | "events" | "ui:toast" | "ui:panel" | "ui:delivery" | "notify" | "bus" | "ai" | "secrets" | "voice:speak" | "voice:listen"
   | "auth" | "files" | "system:openExternal" | "system:metrics" | "clipboard" | "network:write" | "network:local";
-type PluginPlatformSettings = {
-  allowPluginAudio: boolean;
-  allowDynamicSpeech: boolean;
-  allowPluginVoice: boolean;
-  allowMicrophone: boolean;
-  quietHours: { enabled: boolean; start: string; end: string };
-  ai: { provider: "none" | "anthropic" | "openai" | "ollama" | "minimax"; model: string; speechModel?: string; baseUrl?: string };
+type ProviderRole = "text" | "stt" | "tts";
+type ProviderAdapter =
+  | "openai-compatible-text"
+  | "openai-realtime"
+  | "anthropic-text"
+  | "openai-compatible-transcription"
+  | "system-tts"
+  | "minimax-tts"
+  | "elevenlabs-tts"
+  | "openai-compatible-speech";
+
+type ProviderHeader = { readonly name: string; readonly value: string };
+type ProviderAuth = { readonly headerName: string; readonly strategy: "bearer" | "raw" };
+
+type ProviderProfileSummary = {
+  readonly id: string;
+  readonly label: string;
+  readonly adapter: ProviderAdapter;
+  readonly model: string;
+  readonly baseUrl?: string;
+  readonly secretRef?: string;
+  readonly auth?: ProviderAuth;
+  readonly headerNames: readonly string[];
+  readonly hasCredential: boolean;
 };
+
+type ProviderSelections = {
+  readonly text: string | null;
+  readonly stt: string | null;
+  readonly tts: string | null;
+};
+
+type ProviderStatusState = "ready" | "disabled" | "invalid" | "missing-secret" | "unsupported";
+
+type ProviderStatus = {
+  readonly role: ProviderRole | "realtime";
+  readonly state: ProviderStatusState;
+  readonly code: string;
+  readonly message: string;
+  readonly profileId?: string;
+};
+
+type ProviderPreset = {
+  readonly id: string;
+  readonly label: string;
+  readonly adapter: ProviderAdapter;
+  readonly model: string;
+  readonly baseUrl?: string;
+  readonly credentialMode: "required" | "none";
+};
+
+type ProviderGates = {
+  readonly allowPluginAudio: boolean;
+  readonly allowDynamicSpeech: boolean;
+  readonly allowPluginVoice: boolean;
+  readonly allowMicrophone: boolean;
+  readonly quietHours: { readonly enabled: boolean; readonly start: string; readonly end: string };
+};
+
+type ProviderControlCenterSnapshot = {
+  readonly gates: ProviderGates;
+  readonly profiles: readonly ProviderProfileSummary[];
+  readonly selections: ProviderSelections;
+  readonly statuses: Readonly<Record<ProviderRole | "realtime", ProviderStatus>>;
+  readonly presets: readonly ProviderPreset[];
+};
+
+type ProviderProfileInput = {
+  id: string;
+  label: string;
+  adapter: ProviderAdapter;
+  model: string;
+  baseUrl?: string;
+  secretRef?: string;
+  auth?: ProviderAuth;
+  headers?: ProviderHeader[];
+};
+
+type ProviderProfilePatch = {
+  id?: string;
+  label?: string;
+  adapter?: ProviderAdapter;
+  model?: string;
+  baseUrl?: string | null;
+  secretRef?: string | null;
+  auth?: ProviderAuth | null;
+  headers?: ProviderHeader[];
+};
+
+type FormDraftState = {
+  id: string;
+  label: string;
+  adapter: ProviderAdapter;
+  model: string;
+  baseUrl?: string | null;
+  secretRef?: string | null;
+  auth?: ProviderAuth | null;
+  headers?: ProviderHeader[];
+};
+type ProviderGatesPatch = Partial<Omit<ProviderGates, "quietHours">> & { quietHours?: Partial<ProviderGates["quietHours"]> };
 type PluginInspectorState = { schedules: Array<{ id: string; type: string; nextRunMs: number }>; commands: PluginCommand[]; menuItems: Array<{ id: string; title: string }>; status?: PluginStatus; activeBubbles: number; activePanels: number; eventSubscriptions: number; lastError?: string; quotaCounters: Record<string, number> };
 type PluginIconName = "plugin" | "bell" | "timer" | "github" | "heart" | "sparkles" | "coffee" | "focus" | "droplet";
 type PluginConfigField = { type: "text" | "textarea" | "number" | "boolean" | "select" | "time" | "date" | "multiSelect" | "list" | "secret" | "sound"; label?: string; description?: string; default?: string | number | boolean | string[] | Array<Record<string, unknown>>; options?: Array<{ label: string; value: string; previewSprite?: string }>; presentation?: "sprite-grid" | string; min?: number; max?: number; step?: number; maxLength?: number; maxItems?: number; itemSchema?: Record<string, PluginConfigField> };
@@ -116,10 +208,15 @@ type ControlCenterApi = {
   updateCatalogPlugin(id: string): Promise<PluginServiceResult>;
   uninstallPlugin(id: string): Promise<PluginServiceResult>;
   getPluginInspector(id: string): Promise<PluginInspectorState>;
-  getPluginPlatformSettings(): Promise<PluginPlatformSettings>;
-  updatePluginPlatformSettings(patch: Partial<PluginPlatformSettings>): Promise<PluginPlatformSettings>;
-  setPluginAiApiKey(key: string | null): Promise<{ ok: boolean; hasKey: boolean }>;
-  getPluginAiApiKeyStatus(): Promise<{ hasKey: boolean }>;
+  getProviderProfiles(): Promise<ProviderControlCenterSnapshot>;
+  createProviderProfile(profile: ProviderProfileInput): Promise<ProviderControlCenterSnapshot>;
+  updateProviderProfile(id: string, patch: ProviderProfilePatch): Promise<ProviderControlCenterSnapshot>;
+  deleteProviderProfile(id: string): Promise<ProviderControlCenterSnapshot>;
+  selectProviderProfile(role: ProviderRole, id: string | null): Promise<ProviderControlCenterSnapshot>;
+  updateProviderGates(patch: ProviderGatesPatch): Promise<ProviderControlCenterSnapshot>;
+  setProviderProfileCredential(id: string, value: string): Promise<ProviderControlCenterSnapshot>;
+  getProviderProfileCredentialStatus(id: string): Promise<{ hasCredential: boolean }>;
+  deleteProviderProfileCredential(id: string): Promise<ProviderControlCenterSnapshot>;
   getCatalog(): Promise<CatalogState>;
   getCatalogPage(page: number): Promise<CatalogState>;
   getCatalogSearch(): Promise<{ pets: SearchPetEntry[]; error?: string }>;
@@ -443,6 +540,21 @@ const PluginsIcon = () => (
   <svg className="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path fill="currentColor" d="M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2" />
     <rect fill="currentColor" width="8" height="8" x="14" y="2" rx="1" />
+  </svg>
+);
+
+const ProvidersIcon = ({ className = "nav-icon" }: { className?: string }) => (
+  <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="2" y="2" width="20" height="8" rx="2" ry="2" />
+    <rect x="2" y="14" width="20" height="8" rx="2" ry="2" />
+    <line x1="6" y1="6" x2="6.01" y2="6" />
+    <line x1="6" y1="18" x2="6.01" y2="18" />
+  </svg>
+);
+
+const SparklesIcon = ({ className = "w-4 h-4" }: { className?: string }) => (
+  <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3z" />
   </svg>
 );
 
@@ -808,6 +920,7 @@ function Button({
   iconPosition = "left",
   fullWidth,
   ariaLabel,
+  title,
   type = "button",
 }: {
   children: React.ReactNode;
@@ -819,6 +932,7 @@ function Button({
   iconPosition?: "left" | "right";
   fullWidth?: boolean;
   ariaLabel?: string;
+  title?: string;
   type?: "button" | "submit" | "reset";
 }) {
   return (
@@ -828,6 +942,7 @@ function Button({
       onClick={onClick}
       disabled={disabled}
       aria-label={ariaLabel}
+      title={title}
     >
       {icon && iconPosition === "left" && <span className="btn-icon-wrapper mr-1.5 inline-flex items-center justify-center">{icon}</span>}
       <span className="btn-text">{children}</span>
@@ -1084,6 +1199,866 @@ function ReactionPreviewSprite({ settings, state }: { settings: ReactionAnimatio
   );
 }
 
+function profileSupportsRole(profile: { adapter: ProviderAdapter }, role: ProviderRole): boolean {
+  if (role === "text") return profile.adapter === "openai-compatible-text" || profile.adapter === "openai-realtime" || profile.adapter === "anthropic-text";
+  if (role === "stt") return profile.adapter === "openai-compatible-transcription";
+  return profile.adapter === "system-tts" || profile.adapter === "minimax-tts" || profile.adapter === "elevenlabs-tts" || profile.adapter === "openai-compatible-speech";
+}
+
+function renderStatusPill(status?: ProviderStatus) {
+  if (!status) return <span className="pill pill-slate">Unknown</span>;
+  switch (status.state) {
+    case "ready":
+      return <span className="pill pill-green">Ready</span>;
+    case "disabled":
+      return <span className="pill pill-slate">Disabled</span>;
+    case "missing-secret":
+      return <span className="pill pill-yellow">Credential Missing</span>;
+    case "unsupported":
+      return <span className="pill pill-orange">Unsupported</span>;
+    case "invalid":
+      return <span className="pill pill-red">Invalid Profile</span>;
+    default:
+      return <span className="pill pill-slate">{status.state}</span>;
+  }
+}
+
+function getAdapterLabel(adapter: ProviderAdapter): string {
+  switch (adapter) {
+    case "openai-compatible-text":
+      return "OpenAI Compatible Text";
+    case "openai-realtime":
+      return "OpenAI Realtime";
+    case "anthropic-text":
+      return "Anthropic API";
+    case "openai-compatible-transcription":
+      return "OpenAI Compatible STT";
+    case "system-tts":
+      return "System Voice (Local)";
+    case "minimax-tts":
+      return "MiniMax Speech (T2A)";
+    case "elevenlabs-tts":
+      return "ElevenLabs TTS";
+    case "openai-compatible-speech":
+      return "OpenAI Compatible Speech";
+    default:
+      return adapter;
+  }
+}
+
+function getAdapterExplainer(adapter: ProviderAdapter): string {
+  switch (adapter) {
+    case "openai-compatible-text":
+      return "Generic OpenAI-compatible text endpoint. Compatible with OpenAI, Ollama, LM Studio, vLLM, LocalAI, and API gateways.";
+    case "openai-realtime":
+      return "Native OpenAI Realtime endpoint with ordinary text support.";
+    case "anthropic-text":
+      return "Native Anthropic messages API for Claude models.";
+    case "openai-compatible-transcription":
+      return "Whisper-compatible speech-to-text audio transcription endpoint.";
+    case "system-tts":
+      return "Built-in operating system speech synthesis. Requires no network connection or credential.";
+    case "minimax-tts":
+      return "MiniMax T2A high-quality speech synthesis API.";
+    case "elevenlabs-tts":
+      return "ElevenLabs voice synthesis API.";
+    case "openai-compatible-speech":
+      return "OpenAI /audio/speech voice synthesis endpoint.";
+    default:
+      return "";
+  }
+}
+
+function getDefaultAuthHeader(adapter: ProviderAdapter): string {
+  if (adapter === "anthropic-text") return "x-api-key";
+  if (adapter === "elevenlabs-tts") return "xi-api-key";
+  return "authorization";
+}
+
+function getDefaultAuthStrategy(adapter: ProviderAdapter): ProviderAuth["strategy"] {
+  return adapter === "anthropic-text" || adapter === "elevenlabs-tts" ? "raw" : "bearer";
+}
+
+function ProvidersSettingsPanel({
+  snapshot,
+  onSnapshotChange,
+  busy,
+  run,
+  setMessage,
+  setError,
+}: {
+  snapshot: ProviderControlCenterSnapshot | null;
+  onSnapshotChange: (snapshot: ProviderControlCenterSnapshot) => void;
+  busy: string;
+  run: (label: string, fn: () => Promise<void>) => Promise<void>;
+  setMessage: (msg: string) => void;
+  setError: (err: string) => void;
+}) {
+  const [showForm, setShowForm] = useState(false);
+  const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
+  const [formDraft, setFormDraft] = useState<FormDraftState>({
+    id: "",
+    label: "",
+    adapter: "openai-compatible-text",
+    model: "gpt-4o-mini",
+    baseUrl: "https://api.openai.com/v1",
+    secretRef: undefined,
+    headers: [],
+  });
+  const [headersEdited, setHeadersEdited] = useState(false);
+  const [existingHeaderNames, setExistingHeaderNames] = useState<readonly string[]>([]);
+  const [authEdited, setAuthEdited] = useState(false);
+  const [credentialDrafts, setCredentialDrafts] = useState<Record<string, string>>({});
+
+  function openCreateForm(preset?: ProviderPreset) {
+    if (preset) {
+      const id = `${preset.id}-${Math.random().toString(36).substring(2, 6)}`;
+      setFormDraft({
+        id,
+        label: preset.label,
+        adapter: preset.adapter,
+        model: preset.model,
+        baseUrl: preset.baseUrl,
+        secretRef: preset.credentialMode === "required" ? `${id}-credential` : undefined,
+        headers: [],
+      });
+    } else {
+      const id = `custom-${Math.random().toString(36).substring(2, 6)}`;
+      setFormDraft({
+        id,
+        label: "Custom Model Profile",
+        adapter: "openai-compatible-text",
+        model: "gpt-4o-mini",
+        baseUrl: "https://api.openai.com/v1",
+        secretRef: undefined,
+        headers: [],
+      });
+    }
+    setHeadersEdited(false);
+    setExistingHeaderNames([]);
+    setAuthEdited(false);
+    setEditingProfileId(null);
+    setShowForm(true);
+  }
+
+  function openEditForm(profile: ProviderProfileSummary) {
+    setEditingProfileId(profile.id);
+    setFormDraft({
+      id: profile.id,
+      label: profile.label,
+      adapter: profile.adapter,
+      model: profile.model,
+      baseUrl: profile.baseUrl,
+      secretRef: profile.secretRef,
+      auth: profile.auth,
+      headers: [],
+    });
+    setHeadersEdited(false);
+    setExistingHeaderNames(profile.headerNames);
+    setAuthEdited(false);
+    setShowForm(true);
+  }
+
+  function handleSelectRole(role: ProviderRole, id: string | null) {
+    void run("Selecting provider profile...", async () => {
+      const next = await api.selectProviderProfile(role, id);
+      onSnapshotChange(next);
+      setMessage("Provider profile selection updated.");
+    });
+  }
+
+  function handleSaveProfile() {
+    if (!formDraft.id || !formDraft.label) {
+      setError("Profile ID and Label are required.");
+      return;
+    }
+    const isEditing = Boolean(editingProfileId);
+    void run(isEditing ? "Updating profile..." : "Creating profile...", async () => {
+      const payload = {
+        id: formDraft.id.trim(),
+        label: formDraft.label.trim(),
+        adapter: formDraft.adapter,
+        model: formDraft.model.trim(),
+        ...(formDraft.adapter === "system-tts" ? {} : {
+          baseUrl: formDraft.baseUrl?.trim() || undefined,
+          secretRef: formDraft.secretRef?.trim() || undefined,
+        }),
+        ...(isEditing
+          ? (formDraft.adapter === "system-tts" ? { baseUrl: null, secretRef: null, auth: null, headers: [] } : {
+            ...(formDraft.baseUrl?.trim() ? { baseUrl: formDraft.baseUrl.trim() } : { baseUrl: null }),
+            ...(formDraft.secretRef?.trim() ? { secretRef: formDraft.secretRef.trim() } : { secretRef: null }),
+            ...(authEdited || !formDraft.secretRef?.trim() ? { auth: formDraft.auth ?? null } : {}),
+            ...(headersEdited ? { headers: formDraft.headers ?? [] } : {}),
+          })
+          : (formDraft.adapter === "system-tts" ? {} : {
+            ...(formDraft.auth && formDraft.secretRef?.trim() ? { auth: formDraft.auth } : {}),
+            headers: formDraft.headers ?? [],
+          })),
+      } satisfies ProviderProfileInput | ProviderProfilePatch;
+      const next = isEditing
+        ? await api.updateProviderProfile(formDraft.id, payload)
+        : await api.createProviderProfile(payload as ProviderProfileInput);
+      onSnapshotChange(next);
+      setMessage(isEditing ? "Profile updated." : "Profile created.");
+      setShowForm(false);
+      setEditingProfileId(null);
+    });
+  }
+
+  function handleDeleteProfile(id: string) {
+    void run("Deleting profile...", async () => {
+      const next = await api.deleteProviderProfile(id);
+      onSnapshotChange(next);
+      setMessage("Profile deleted.");
+    });
+  }
+
+  function handleSaveCredential(id: string) {
+    const value = (credentialDrafts[id] ?? "").trim();
+    if (!value) return;
+    void run("Saving credential...", async () => {
+      const next = await api.setProviderProfileCredential(id, value);
+      onSnapshotChange(next);
+      setCredentialDrafts((prev) => ({ ...prev, [id]: "" }));
+      setMessage("Credential stored successfully.");
+    });
+  }
+
+  function handleDeleteCredential(id: string) {
+    void run("Deleting credential...", async () => {
+      const next = await api.deleteProviderProfileCredential(id);
+      onSnapshotChange(next);
+      setMessage("Credential deleted.");
+    });
+  }
+
+  function handleGateToggle(key: keyof ProviderGates, val: unknown) {
+    void run("Updating gate...", async () => {
+      const patch = key === "quietHours" ? { quietHours: val as ProviderGates["quietHours"] } : { [key]: val };
+      const next = await api.updateProviderGates(patch);
+      onSnapshotChange(next);
+      setMessage("Host capability gate updated.");
+    });
+  }
+
+  const profiles = snapshot?.profiles ?? [];
+  const selections = snapshot?.selections ?? { text: null, stt: null, tts: null };
+  const statuses = snapshot?.statuses ?? {
+    text: { role: "text", state: "disabled", code: "", message: "No text provider selected." },
+    stt: { role: "stt", state: "disabled", code: "", message: "No STT provider selected." },
+    tts: { role: "tts", state: "disabled", code: "", message: "No TTS provider selected." },
+    realtime: { role: "realtime", state: "disabled", code: "", message: "Realtime disabled." },
+  };
+  const presets = snapshot?.presets ?? [];
+  const gates = snapshot?.gates ?? { allowPluginAudio: true, allowDynamicSpeech: false, allowPluginVoice: true, allowMicrophone: false, quietHours: { enabled: false, start: "22:00", end: "08:00" } };
+
+  return (
+    <div className="settings-section">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="eyebrow">PROVIDERS & CAPABILITIES</p>
+          <h2 className="settings-section-title">Model & Voice Providers</h2>
+        </div>
+        <Button variant="secondary" size="compact" disabled={!!busy} onClick={() => openCreateForm()}>
+          + Create Profile
+        </Button>
+      </div>
+      <p className="text-sm text-slatecopy -mt-2 mb-2">
+        Configure independently selected profiles for text generation & reasoning, speech recognition, and text-to-speech. Realtime voice capability is derived automatically from your active text profile.
+      </p>
+
+      {/* Role Selections Section */}
+      <div className="providers-grid">
+        {/* Text Model Selection */}
+        <div className="provider-role-card">
+          <div className="provider-role-header">
+            <div>
+              <strong className="block text-sm font-bold text-navy">Text & reasoning Profile</strong>
+              <small className="text-xs text-slatecopy block">Primary model for chat, tools, multi-step reasoning, and reactions. Supports OpenAI, Anthropic, Ollama, LM Studio, vLLM, and gateways.</small>
+            </div>
+            {renderStatusPill(statuses.text)}
+          </div>
+          <select
+            className="settings-select w-full"
+            value={selections.text ?? ""}
+            disabled={!!busy}
+            onChange={(e) => handleSelectRole("text", e.target.value || null)}
+          >
+            <option value="">Disabled / None</option>
+            {profiles.filter((p) => profileSupportsRole(p, "text")).map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label} ({p.model || p.id})
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-slatecopy m-0 opacity-80">{statuses.text.message}</p>
+          {statuses.text.state === "missing-secret" && (
+            <p className="text-xs font-semibold text-amber-600 m-0">Set API credential on selected profile below.</p>
+          )}
+        </div>
+
+        {/* STT Selection */}
+        <div className="provider-role-card">
+          <div className="provider-role-header">
+            <div>
+              <strong className="block text-sm font-bold text-navy">Speech-to-Text Profile (STT)</strong>
+              <small className="text-xs text-slatecopy block">Audio transcription model for voice input. Supports Whisper-compatible endpoints.</small>
+            </div>
+            {renderStatusPill(statuses.stt)}
+          </div>
+          <select
+            className="settings-select w-full"
+            value={selections.stt ?? ""}
+            disabled={!!busy}
+            onChange={(e) => handleSelectRole("stt", e.target.value || null)}
+          >
+            <option value="">Disabled / None</option>
+            {profiles.filter((p) => profileSupportsRole(p, "stt")).map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label} ({p.model || p.id})
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-slatecopy m-0 opacity-80">{statuses.stt.message}</p>
+          {statuses.stt.state === "missing-secret" && (
+            <p className="text-xs font-semibold text-amber-600 m-0">Set API credential on selected STT profile below.</p>
+          )}
+        </div>
+
+        {/* TTS Selection */}
+        <div className="provider-role-card">
+          <div className="provider-role-header">
+            <div>
+              <strong className="block text-sm font-bold text-navy">Text-to-Speech Profile (TTS)</strong>
+              <small className="text-xs text-slatecopy block">Voice output engine for spoken replies. Supports System Voice, ElevenLabs, MiniMax, or OpenAI Speech.</small>
+            </div>
+            {renderStatusPill(statuses.tts)}
+          </div>
+          <select
+            className="settings-select w-full"
+            value={selections.tts ?? ""}
+            disabled={!!busy}
+            onChange={(e) => handleSelectRole("tts", e.target.value || null)}
+          >
+            <option value="">Disabled / None</option>
+            {profiles.filter((p) => profileSupportsRole(p, "tts")).map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label} ({p.model || p.id})
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-slatecopy m-0 opacity-80">{statuses.tts.message}</p>
+          {statuses.tts.state === "missing-secret" && (
+            <p className="text-xs font-semibold text-amber-600 m-0">Set API credential on selected TTS profile below.</p>
+          )}
+        </div>
+      </div>
+
+      {/* Derived Realtime WebRTC Status Callout */}
+      <div className="provider-realtime-callout">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <SparklesIcon className="w-4 h-4 text-brand" />
+            <strong className="text-sm font-bold text-navy">Realtime Voice Capability (Derived)</strong>
+          </div>
+          {renderStatusPill(statuses.realtime)}
+        </div>
+        <p className="text-xs text-slatecopy m-0 leading-relaxed">
+          {statuses.realtime.message} Realtime availability is derived automatically from your active Text profile when it uses the native OpenAI Realtime adapter. It is not an independently selectable provider.
+        </p>
+      </div>
+
+      {/* Presets Bar */}
+      <div className="settings-group p-5">
+        <strong className="block text-sm font-bold text-navy mb-1">Quick Add Presets</strong>
+        <p className="text-xs text-slatecopy mb-3">Click a preset to quickly configure a profile with standard default settings:</p>
+        <div className="provider-presets-bar">
+          {presets.map((preset) => (
+            <button
+              key={preset.id}
+              className="provider-preset-chip"
+              disabled={!!busy}
+              onClick={() => openCreateForm(preset)}
+            >
+              <span>+ {preset.label}</span>
+              <span className="opacity-60 text-[10px] font-mono">({preset.adapter})</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Configured Profiles List */}
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <h3 className="font-monoDisplay text-lg font-black text-navy m-0">Configured Profiles ({profiles.length})</h3>
+        </div>
+
+        {profiles.length === 0 ? (
+          <div className="settings-group p-6 text-center text-sm text-slatecopy">
+            No provider profiles configured. Click a preset above or "+ Create Profile" to add your first profile.
+          </div>
+        ) : (
+          profiles.map((profile) => {
+            const isSelectedText = selections.text === profile.id;
+            const isSelectedStt = selections.stt === profile.id;
+            const isSelectedTts = selections.tts === profile.id;
+            const isSelectedAny = isSelectedText || isSelectedStt || isSelectedTts;
+
+            return (
+              <div key={profile.id} className="provider-profile-card">
+                <div className="provider-profile-header">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <strong className="text-base font-bold text-navy">{profile.label}</strong>
+                      <code className="text-xs font-mono px-2 py-0.5 rounded bg-blue-100/60 text-brand">{profile.id}</code>
+                      {profile.adapter === "openai-realtime" && <span className="pill pill-purple">Realtime WebRTC</span>}
+                    </div>
+                    <span className="text-xs font-semibold text-slatecopy block mt-0.5">
+                      Adapter: <span className="font-mono text-navy">{getAdapterLabel(profile.adapter)}</span> | Model: <span className="font-mono text-navy">{profile.model || "(System)"}</span>
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button variant="secondary" size="compact" disabled={!!busy} onClick={() => openEditForm(profile)}>
+                      Edit Profile
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="compact"
+                      disabled={!!busy || isSelectedAny}
+                      title={isSelectedAny ? "Unselect profile from active roles before deleting" : "Delete profile"}
+                      onClick={() => handleDeleteProfile(profile.id)}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="provider-meta-row">
+                  {profile.baseUrl && (
+                    <span>Endpoint: <code className="font-mono text-navy">{profile.baseUrl}</code></span>
+                  )}
+                  {profile.secretRef && (
+                    <span>Secret Ref: <code className="font-mono text-navy">{profile.secretRef}</code></span>
+                  )}
+                  {profile.headerNames.length > 0 && (
+                    <span>Headers: <span className="font-mono text-navy">{profile.headerNames.join(", ")}</span></span>
+                  )}
+                </div>
+
+                {/* Active Role Badges */}
+                <div className="flex flex-wrap gap-1.5 items-center">
+                  <span className="text-xs text-slatecopy font-semibold mr-1">Active Roles:</span>
+                  {isSelectedText && <span className="pill pill-green">Text & reasoning</span>}
+                  {isSelectedStt && <span className="pill pill-orange">STT</span>}
+                  {isSelectedTts && <span className="pill pill-purple">TTS</span>}
+                  {!isSelectedAny && <span className="pill pill-slate">Unselected</span>}
+                </div>
+
+                {/* Credential Management Box */}
+                {profile.secretRef && (
+                  <div className="provider-credential-box">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-navy">API Credential</span>
+                      {profile.hasCredential ? (
+                        <span className="pill pill-green">Credential Stored</span>
+                      ) : (
+                        <span className="pill pill-yellow">No Credential Stored</span>
+                      )}
+                    </div>
+                    <div className="flex gap-2 items-center mt-1">
+                      <input
+                        type="password"
+                        className="settings-select flex-1"
+                        placeholder={profile.hasCredential ? "Enter new API key to update..." : "Enter secret API key / token..."}
+                        value={credentialDrafts[profile.id] ?? ""}
+                        disabled={!!busy}
+                        onChange={(e) => setCredentialDrafts({ ...credentialDrafts, [profile.id]: e.target.value })}
+                      />
+                      <Button
+                        variant="secondary"
+                        size="compact"
+                        disabled={!!busy || !(credentialDrafts[profile.id]?.trim())}
+                        onClick={() => handleSaveCredential(profile.id)}
+                      >
+                        {profile.hasCredential ? "Update Key" : "Save Key"}
+                      </Button>
+                      {profile.hasCredential && (
+                        <Button
+                          variant="secondary"
+                          size="compact"
+                          disabled={!!busy}
+                          onClick={() => handleDeleteCredential(profile.id)}
+                        >
+                          Remove credential for all profiles using this reference
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* Form Modal / Panel for Creating or Editing Profile */}
+      {showForm && (
+        <div className="settings-group p-6 flex flex-col gap-4 border-2 border-brand/40 bg-white shadow-lg rounded-[28px] mt-4">
+          <h3 className="font-monoDisplay text-xl font-black text-navy m-0">
+            {editingProfileId ? `Edit Profile (${editingProfileId})` : "Create Provider Profile"}
+          </h3>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-navy mb-1">Profile ID</label>
+              <input
+                type="text"
+                className="settings-select w-full"
+                placeholder="e.g. ollama-local, openai-gpt4"
+                value={formDraft.id}
+                maxLength={64}
+                disabled={!!editingProfileId || !!busy}
+                onChange={(e) => setFormDraft({ ...formDraft, id: e.target.value })}
+              />
+              <small className="text-[11px] text-slatecopy block mt-1">Alphanumeric slug (e.g. openai-main, local-vllm).</small>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-navy mb-1">Display Label</label>
+              <input
+                type="text"
+                className="settings-select w-full"
+                placeholder="e.g. OpenAI GPT-4, Local Ollama"
+                value={formDraft.label}
+                maxLength={160}
+                disabled={!!busy}
+                onChange={(e) => setFormDraft({ ...formDraft, label: e.target.value })}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-navy mb-1">Adapter</label>
+            <select
+              className="settings-select w-full"
+              value={formDraft.adapter}
+              disabled={!!busy}
+              onChange={(e) => {
+                const adapter = e.target.value as ProviderAdapter;
+                setFormDraft({
+                  ...formDraft,
+                  adapter,
+                  model: adapter === "system-tts" ? "" : formDraft.model,
+                  baseUrl: adapter === "system-tts" ? undefined : formDraft.baseUrl,
+                  secretRef: adapter === "system-tts" ? undefined : formDraft.secretRef,
+                  auth: adapter === "system-tts" ? undefined : formDraft.auth,
+                  headers: adapter === "system-tts" ? [] : formDraft.headers,
+                });
+              }}
+            >
+              <option value="openai-compatible-text">OpenAI-Compatible Text (OpenAI, Ollama, LM Studio, vLLM, gateways)</option>
+              <option value="openai-realtime">OpenAI Realtime (Native WebRTC)</option>
+              <option value="anthropic-text">Anthropic API (Claude models)</option>
+              <option value="openai-compatible-transcription">OpenAI-Compatible STT (Whisper transcription)</option>
+              <option value="system-tts">System Voice (Built-in OS text-to-speech)</option>
+              <option value="minimax-tts">MiniMax TTS (T2A speech synthesis)</option>
+              <option value="elevenlabs-tts">ElevenLabs TTS (Voice synthesis)</option>
+              <option value="openai-compatible-speech">OpenAI Speech (Audio speech synthesis)</option>
+            </select>
+            <small className="text-[11px] text-slatecopy block mt-1">{getAdapterExplainer(formDraft.adapter)}</small>
+          </div>
+
+          {formDraft.adapter !== "system-tts" && (
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-navy mb-1">Model Identifier</label>
+                <input
+                  type="text"
+                  className="settings-select w-full"
+                  placeholder="e.g. gpt-4o-mini, llama3.2, whisper-1"
+                  value={formDraft.model}
+                  maxLength={256}
+                  disabled={!!busy}
+                  onChange={(e) => setFormDraft({ ...formDraft, model: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-navy mb-1">Base Endpoint URL</label>
+                <input
+                  type="text"
+                  className="settings-select w-full"
+                  placeholder="e.g. https://api.openai.com/v1"
+                  value={formDraft.baseUrl ?? ""}
+                  maxLength={512}
+                  disabled={!!busy}
+                  onChange={(e) => setFormDraft({ ...formDraft, baseUrl: e.target.value })}
+                />
+                <small className="text-[11px] text-slatecopy block mt-1">HTTPS required unless local (http://127.0.0.1 or localhost).</small>
+              </div>
+            </div>
+          )}
+
+          {formDraft.adapter !== "system-tts" && (
+            <div>
+              <label className="block text-xs font-bold text-navy mb-1">Secret Reference (Credential Key)</label>
+              <input
+                type="text"
+                className="settings-select w-full"
+                placeholder="e.g. openai-key, elevenlabs-key"
+                value={formDraft.secretRef ?? ""}
+                maxLength={160}
+                disabled={!!busy}
+                onChange={(e) => setFormDraft({ ...formDraft, secretRef: e.target.value })}
+              />
+              <small className="text-[11px] text-slatecopy block mt-1">Opaque reference for the credential stored by the host. Leave empty to use no credential.</small>
+            </div>
+          )}
+
+          {formDraft.secretRef?.trim() && (
+            <div className="provider-credential-box">
+              <label className="block text-xs font-bold text-navy mb-1">Credential Placement</label>
+              <select
+                className="settings-select w-full"
+                value={formDraft.auth ? "custom" : "default"}
+                disabled={!!busy}
+                onChange={(e) => {
+                  if (e.target.value === "default") {
+                    setFormDraft({ ...formDraft, auth: null });
+                  } else {
+                    setFormDraft({
+                      ...formDraft,
+                      auth: formDraft.auth ?? { headerName: getDefaultAuthHeader(formDraft.adapter), strategy: getDefaultAuthStrategy(formDraft.adapter) },
+                    });
+                  }
+                  setAuthEdited(true);
+                }}
+              >
+                <option value="default">Adapter default ({getDefaultAuthHeader(formDraft.adapter)})</option>
+                <option value="custom">Custom header placement</option>
+              </select>
+              {formDraft.auth && (
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  <input
+                    type="text"
+                    className="settings-select text-xs"
+                    placeholder="Auth header name"
+                    value={formDraft.auth.headerName}
+                    maxLength={128}
+                    disabled={!!busy}
+                    onChange={(e) => {
+                      setFormDraft({ ...formDraft, auth: { ...formDraft.auth!, headerName: e.target.value } });
+                      setAuthEdited(true);
+                    }}
+                  />
+                  <select
+                    className="settings-select text-xs"
+                    value={formDraft.auth.strategy}
+                    disabled={!!busy}
+                    onChange={(e) => {
+                      setFormDraft({ ...formDraft, auth: { ...formDraft.auth!, strategy: e.target.value as ProviderAuth["strategy"] } });
+                      setAuthEdited(true);
+                    }}
+                  >
+                    <option value="bearer">Bearer</option>
+                    <option value="raw">Raw value</option>
+                  </select>
+                </div>
+              )}
+              <small className="text-[11px] text-slatecopy block mt-1">Adapter default uses the provider's standard credential header. Choose custom placement only when the provider requires it.</small>
+            </div>
+          )}
+
+          {/* Custom Headers List */}
+          {formDraft.adapter !== "system-tts" && (
+            <div className="provider-header-table">
+              {editingProfileId && !headersEdited ? (
+                <>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-navy">Stored Static Headers (Read-only)</span>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="secondary"
+                        size="compact"
+                        disabled={!!busy}
+                        onClick={() => {
+                          setFormDraft({ ...formDraft, headers: [] });
+                          setHeadersEdited(true);
+                        }}
+                      >
+                        Replace all headers
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="compact"
+                        disabled={!!busy}
+                        onClick={() => {
+                          setFormDraft({ ...formDraft, headers: [] });
+                          setHeadersEdited(true);
+                        }}
+                      >
+                        Clear headers
+                      </Button>
+                    </div>
+                  </div>
+                  <small className="text-[11px] text-slatecopy block mb-2">
+                    Non-secret static header names are shown from the redacted snapshot. Values are stored in local profile settings and never loaded here.
+                  </small>
+                  {existingHeaderNames.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {existingHeaderNames.map((name) => <code key={name} className="text-xs font-mono px-2 py-1 rounded bg-blue-100/60 text-navy">{name}</code>)}
+                    </div>
+                  ) : (
+                    <small className="text-[11px] text-slatecopy block">No static headers stored.</small>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-navy">Custom Request Headers (Optional, Max 16)</span>
+                    <Button
+                      variant="secondary"
+                      size="compact"
+                      disabled={!!busy || (formDraft.headers?.length ?? 0) >= 16}
+                      onClick={() => {
+                        setFormDraft({ ...formDraft, headers: [...(formDraft.headers ?? []), { name: "", value: "" }] });
+                        setHeadersEdited(true);
+                      }}
+                    >
+                      + Add Header
+                    </Button>
+                  </div>
+                  <small className="text-[11px] text-slatecopy block mb-2">
+                    Non-secret static header values are stored in local provider profile settings. The submitted list replaces all stored headers; credential values are handled separately.
+                  </small>
+                  {(formDraft.headers ?? []).map((header, idx) => (
+                    <div key={idx} className="flex gap-2 items-center">
+                      <input
+                        type="text"
+                        className="settings-select flex-1 text-xs"
+                        placeholder="Header Name (e.g. Openai-Organization)"
+                        value={header.name}
+                        maxLength={128}
+                        disabled={!!busy}
+                        onChange={(e) => {
+                          const nextHeaders = [...(formDraft.headers ?? [])];
+                          nextHeaders[idx] = { ...nextHeaders[idx], name: e.target.value };
+                          setFormDraft({ ...formDraft, headers: nextHeaders });
+                          setHeadersEdited(true);
+                        }}
+                      />
+                      <input
+                        type="text"
+                        className="settings-select flex-1 text-xs"
+                        placeholder="Header Value"
+                        value={header.value}
+                        maxLength={2048}
+                        disabled={!!busy}
+                        onChange={(e) => {
+                          const nextHeaders = [...(formDraft.headers ?? [])];
+                          nextHeaders[idx] = { ...nextHeaders[idx], value: e.target.value };
+                          setFormDraft({ ...formDraft, headers: nextHeaders });
+                          setHeadersEdited(true);
+                        }}
+                      />
+                      <Button
+                        variant="secondary"
+                        size="compact"
+                        disabled={!!busy}
+                        onClick={() => {
+                          const nextHeaders = (formDraft.headers ?? []).filter((_, i) => i !== idx);
+                          setFormDraft({ ...formDraft, headers: nextHeaders });
+                          setHeadersEdited(true);
+                        }}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-3 mt-2">
+            <Button variant="secondary" size="compact" disabled={!!busy} onClick={() => setShowForm(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" size="compact" disabled={!!busy} onClick={handleSaveProfile}>
+              {editingProfileId ? "Save Changes" : "Create Profile"}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Host Capability Gates Panel */}
+      <div className="settings-group mt-4">
+        <div className="p-5 border-b border-blue-50">
+          <strong className="block text-base font-bold text-navy">Host Capability Gates</strong>
+          <small className="text-xs text-slatecopy block">System-level permissions for plugin audio playback, dynamic speech generation, voice output, and microphone access.</small>
+        </div>
+        <ToggleRow
+          title="Allow Plugin Audio"
+          description="Permit plugins to play sound effects and ambient audio."
+          checked={gates.allowPluginAudio}
+          disabled={!!busy}
+          onChange={(val) => handleGateToggle("allowPluginAudio", val)}
+        />
+        <ToggleRow
+          title="Allow Plugin Voice Output"
+          description="Permit plugins to trigger host voice synthesis."
+          checked={gates.allowPluginVoice}
+          disabled={!!busy}
+          onChange={(val) => handleGateToggle("allowPluginVoice", val)}
+        />
+        <ToggleRow
+          title="Allow Dynamic Speech Generation"
+          description="Permit plugins to request dynamic text-to-speech synthesis from configured providers."
+          checked={gates.allowDynamicSpeech}
+          disabled={!!busy}
+          onChange={(val) => handleGateToggle("allowDynamicSpeech", val)}
+        />
+        <ToggleRow
+          title="Allow Microphone Access"
+          description="Permit host audio capture for speech-to-text transcription."
+          checked={gates.allowMicrophone}
+          disabled={!!busy}
+          onChange={(val) => handleGateToggle("allowMicrophone", val)}
+        />
+        <ToggleRow
+          title="Quiet Hours"
+          description="Automatically mute audio output during designated quiet hours."
+          checked={gates.quietHours.enabled}
+          disabled={!!busy}
+          onChange={(val) => handleGateToggle("quietHours", { ...gates.quietHours, enabled: val })}
+        />
+        <div className="settings-row">
+          <div className="settings-row-info">
+            <strong>Quiet Hours Window</strong>
+            <small>Specify daily start and end times for quiet hours.</small>
+          </div>
+          <div className="flex gap-2 items-center">
+            <input
+              type="time"
+              className="settings-select"
+              value={gates.quietHours.start}
+              disabled={!gates.quietHours.enabled || !!busy}
+              onChange={(e) => handleGateToggle("quietHours", { ...gates.quietHours, start: e.target.value })}
+            />
+            <span className="opacity-60 text-xs">to</span>
+            <input
+              type="time"
+              className="settings-select"
+              value={gates.quietHours.end}
+              disabled={!gates.quietHours.enabled || !!busy}
+              onChange={(e) => handleGateToggle("quietHours", { ...gates.quietHours, end: e.target.value })}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanceThemeChange: (theme: AppearanceTheme) => void; onTokenHandoff: (result: RemotePairingResult, endpoint: string | null) => void }) {
   const { t, localePreference, availableLocales, reload: reloadI18n } = useI18n();
   const [settings, setSettings] = useState<SettingsState | null>(null);
@@ -1091,11 +2066,9 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
   const [launchAtLogin, setLaunchAtLogin] = useState<LaunchAtLoginState | null>(null);
   const [lanStatus, setLanStatus] = useState<LanStatusSnapshot | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
-  const [activeTab, setActiveTab] = useState<"general" | "personality" | "reactions" | "plugins" | "lan" | "remote">("general");
+  const [activeTab, setActiveTab] = useState<"general" | "personality" | "reactions" | "providers" | "plugins" | "lan" | "remote">("general");
   const [pluginsSnapshot, setPluginsSnapshot] = useState<PluginServiceSnapshot | null>(null);
-  const [platformSettings, setPlatformSettings] = useState<PluginPlatformSettings | null>(null);
-  const [aiKeyStatus, setAiKeyStatus] = useState<{ hasKey: boolean }>({ hasKey: false });
-  const [aiKeyDraft, setAiKeyDraft] = useState("");
+  const [providerSnapshot, setProviderSnapshot] = useState<ProviderControlCenterSnapshot | null>(null);
   const [personalityDraft, setPersonalityDraft] = useState<PetAssistantPersonality | null>(null);
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
@@ -1104,13 +2077,12 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
 
   async function loadSettings() {
     setError("");
-    const [nextSettings, nextReactions, nextLaunch, nextUpdate, nextPlatform, nextAiKey, nextLanStatus, nextPluginsSnapshot] = await Promise.all([
+    const [nextSettings, nextReactions, nextLaunch, nextUpdate, nextProvider, nextLanStatus, nextPluginsSnapshot] = await Promise.all([
       api.getSettingsState(),
       api.getReactionAnimationSettings(),
       api.getLaunchAtLogin(),
       api.getUpdateStatus(),
-      api.getPluginPlatformSettings().catch(() => null),
-      api.getPluginAiApiKeyStatus().catch(() => ({ hasKey: false })),
+      api.getProviderProfiles().catch(() => null),
       api.getLanStatus().catch(() => null),
       api.getPluginsSnapshot().catch(() => null),
     ]);
@@ -1120,8 +2092,7 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
     setReactionSettings(nextReactions);
     setLaunchAtLogin(nextLaunch);
     setUpdateStatus(nextUpdate);
-    setPlatformSettings(nextPlatform);
-    setAiKeyStatus(nextAiKey);
+    setProviderSnapshot(nextProvider);
     setLanStatus(nextLanStatus);
     setPluginsSnapshot(nextPluginsSnapshot);
     if (nextUpdate.state === "checking") {
@@ -1188,9 +2159,10 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
 
   const overrides = settings?.preferences.reactionAnimationOverrides ?? {};
 
-  function patchPlatformSettings(patch: Partial<PluginPlatformSettings>, success: string) {
-    void run(t("settings.busy.saving"), async () => {
-      setPlatformSettings(await api.updatePluginPlatformSettings(patch));
+  function patchProviderGates(patch: ProviderGatesPatch, success: string) {
+    void run(t("settings.busy.saving") || "Saving...", async () => {
+      const next = await api.updateProviderGates(patch);
+      setProviderSnapshot(next);
       setMessage(success);
     });
   }
@@ -1234,6 +2206,10 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
         <button className={`settings-nav-item ${activeTab === "reactions" ? "active" : ""}`} onClick={() => setActiveTab("reactions")}>
           <PetsIcon />
           <span>{t("settings.nav.reactions")}</span>
+        </button>
+        <button className={`settings-nav-item ${activeTab === "providers" ? "active" : ""}`} onClick={() => setActiveTab("providers")}>
+          <ProvidersIcon className="settings-nav-icon" />
+          <span>Providers</span>
         </button>
         <button className={`settings-nav-item ${activeTab === "plugins" ? "active" : ""}`} onClick={() => setActiveTab("plugins")}>
           <PluginsIcon />
@@ -1540,6 +2516,17 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
         )}
 
 
+        {activeTab === "providers" && (
+          <ProvidersSettingsPanel
+            snapshot={providerSnapshot}
+            onSnapshotChange={setProviderSnapshot}
+            busy={busy}
+            run={run}
+            setMessage={setMessage}
+            setError={setError}
+          />
+        )}
+
         {activeTab === "lan" && (
           <LanSettingsPanel status={lanStatus} onRefresh={() => void run(t("settings.busy.checking"), async () => { setLanStatus(await api.getLanStatus()); })} busy={!!busy} />
         )}
@@ -1558,30 +2545,30 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
               <ToggleRow
                 title={t("settings.plugins.audio.title")}
                 description={t("settings.plugins.audio.description")}
-                checked={platformSettings?.allowPluginAudio ?? true}
-                disabled={!platformSettings || !!busy}
-                onChange={(checked) => patchPlatformSettings({ allowPluginAudio: checked }, t("settings.toast.audioSaved"))}
+                checked={providerSnapshot?.gates.allowPluginAudio ?? true}
+                disabled={!providerSnapshot || !!busy}
+                onChange={(checked) => patchProviderGates({ allowPluginAudio: checked }, t("settings.toast.audioSaved"))}
               />
               <ToggleRow
                 title={t("settings.plugins.voice.title")}
                 description={t("settings.plugins.voice.description")}
-                checked={platformSettings?.allowPluginVoice ?? true}
-                disabled={!platformSettings || !!busy}
-                onChange={(checked) => patchPlatformSettings({ allowPluginVoice: checked }, t("settings.toast.voiceSaved"))}
+                checked={providerSnapshot?.gates.allowPluginVoice ?? true}
+                disabled={!providerSnapshot || !!busy}
+                onChange={(checked) => patchProviderGates({ allowPluginVoice: checked }, t("settings.toast.voiceSaved"))}
               />
               <ToggleRow
                 title={t("settings.plugins.dynamicSpeech.title")}
                 description={t("settings.plugins.dynamicSpeech.description")}
-                checked={platformSettings?.allowDynamicSpeech ?? false}
-                disabled={!platformSettings || !!busy}
-                onChange={(checked) => patchPlatformSettings({ allowDynamicSpeech: checked }, t("settings.toast.dynamicSpeechSaved"))}
+                checked={providerSnapshot?.gates.allowDynamicSpeech ?? false}
+                disabled={!providerSnapshot || !!busy}
+                onChange={(checked) => patchProviderGates({ allowDynamicSpeech: checked }, t("settings.toast.dynamicSpeechSaved"))}
               />
               <ToggleRow
                 title={t("settings.plugins.microphone.title")}
                 description={t("settings.plugins.microphone.description")}
-                checked={platformSettings?.allowMicrophone ?? false}
-                disabled={!platformSettings || !!busy}
-                onChange={(checked) => patchPlatformSettings({ allowMicrophone: checked }, t("settings.toast.microphoneSaved"))}
+                checked={providerSnapshot?.gates.allowMicrophone ?? false}
+                disabled={!providerSnapshot || !!busy}
+                onChange={(checked) => patchProviderGates({ allowMicrophone: checked }, t("settings.toast.microphoneSaved"))}
               />
             </div>
 
@@ -1589,9 +2576,9 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
               <ToggleRow
                 title={t("settings.plugins.quietHours.title")}
                 description={t("settings.plugins.quietHours.description")}
-                checked={platformSettings?.quietHours.enabled ?? false}
-                disabled={!platformSettings || !!busy}
-                onChange={(checked) => patchPlatformSettings({ quietHours: { ...(platformSettings?.quietHours ?? { start: "22:00", end: "08:00" }), enabled: checked } }, t("settings.toast.quietHoursSaved"))}
+                checked={providerSnapshot?.gates.quietHours.enabled ?? false}
+                disabled={!providerSnapshot || !!busy}
+                onChange={(checked) => patchProviderGates({ quietHours: { ...(providerSnapshot?.gates.quietHours ?? { start: "22:00", end: "08:00" }), enabled: checked } }, t("settings.toast.quietHoursSaved"))}
               />
               <div className="settings-row">
                 <div className="settings-row-info">
@@ -1599,67 +2586,9 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
                   <small>{t("settings.plugins.quietWindow.description")}</small>
                 </div>
                 <div className="flex gap-2 items-center">
-                  <input type="time" className="settings-select" value={platformSettings?.quietHours.start ?? "22:00"} disabled={!platformSettings || !!busy} onChange={(event) => patchPlatformSettings({ quietHours: { ...(platformSettings?.quietHours ?? { enabled: false, end: "08:00" }), start: event.target.value } as PluginPlatformSettings["quietHours"] }, t("settings.toast.quietHoursSaved"))} />
+                  <input type="time" className="settings-select" value={providerSnapshot?.gates.quietHours.start ?? "22:00"} disabled={!providerSnapshot || !!busy} onChange={(event) => patchProviderGates({ quietHours: { ...(providerSnapshot?.gates.quietHours ?? { enabled: false, end: "08:00" }), start: event.target.value } }, t("settings.toast.quietHoursSaved"))} />
                   <span className="opacity-60">{t("common.to")}</span>
-                  <input type="time" className="settings-select" value={platformSettings?.quietHours.end ?? "08:00"} disabled={!platformSettings || !!busy} onChange={(event) => patchPlatformSettings({ quietHours: { ...(platformSettings?.quietHours ?? { enabled: false, start: "22:00" }), end: event.target.value } as PluginPlatformSettings["quietHours"] }, t("settings.toast.quietHoursSaved"))} />
-                </div>
-              </div>
-            </div>
-
-            <div className="settings-group">
-              <div className="settings-row">
-                <div className="settings-row-info">
-                  <strong>{t("settings.plugins.aiProvider.title")}</strong>
-                  <small>{t("settings.plugins.aiProvider.description")}</small>
-                </div>
-                <select className="settings-select" value={platformSettings?.ai.provider ?? "none"} disabled={!platformSettings || !!busy} onChange={(event) => patchPlatformSettings({ ai: { provider: event.target.value as PluginPlatformSettings["ai"]["provider"], model: "", baseUrl: undefined } }, t("settings.toast.aiProviderSaved"))}>
-                  <option value="none">{t("settings.plugins.aiProvider.disabled")}</option>
-                  <option value="anthropic">{t("settings.plugins.aiProvider.anthropic")}</option>
-                  <option value="openai">{t("settings.plugins.aiProvider.openai")}</option>
-                  <option value="ollama">{t("settings.plugins.aiProvider.ollama")}</option>
-                  <option value="minimax">{t("settings.plugins.aiProvider.minimax")}</option>
-                </select>
-              </div>
-              <div className="settings-row">
-                <div className="settings-row-info">
-                  <strong>{t("settings.plugins.model.title")}</strong>
-                  <small>{t("settings.plugins.model.description")}</small>
-                </div>
-                <input key={platformSettings?.ai.provider ?? "none"} type="text" className="settings-select" list={platformSettings?.ai.provider === "minimax" ? "minimax-model-options" : undefined} placeholder={t("settings.plugins.model.placeholder")} defaultValue={platformSettings?.ai.model ?? ""} disabled={!platformSettings || !!busy} onBlur={(event) => { if (event.target.value !== (platformSettings?.ai.model ?? "")) patchPlatformSettings({ ai: { ...(platformSettings?.ai ?? { provider: "none" }), model: event.target.value } as PluginPlatformSettings["ai"] }, t("settings.toast.aiModelSaved")); }} />
-                {platformSettings?.ai.provider === "minimax" && <datalist id="minimax-model-options">
-                  <option value="MiniMax-M3" />
-                  <option value="MiniMax-M2.7" />
-                </datalist>}
-              </div>
-              {platformSettings?.ai.provider === "minimax" && <div className="settings-row">
-                <div className="settings-row-info">
-                  <strong>{t("settings.plugins.minimaxEndpoint.title")}</strong>
-                  <small>{t("settings.plugins.minimaxEndpoint.description")}</small>
-                </div>
-                <select className="settings-select" value={platformSettings.ai.baseUrl ?? "https://api.minimax.io/v1"} disabled={!!busy} onChange={(event) => patchPlatformSettings({ ai: { ...platformSettings.ai, baseUrl: event.target.value } }, t("settings.toast.aiProviderSaved"))}>
-                  <option value="https://api.minimax.io/v1">{t("settings.plugins.minimaxEndpoint.global")}</option>
-                  <option value="https://api.minimaxi.com/v1">{t("settings.plugins.minimaxEndpoint.china")}</option>
-                  {platformSettings.ai.baseUrl && !["https://api.minimax.io/v1", "https://api.minimaxi.com/v1"].includes(platformSettings.ai.baseUrl) && <option value={platformSettings.ai.baseUrl}>{t("settings.plugins.minimaxEndpoint.custom")}</option>}
-                </select>
-              </div>}
-              {platformSettings?.ai.provider === "minimax" && <div className="settings-row">
-                <div className="settings-row-info">
-                  <strong>{t("settings.plugins.speechModel.title")}</strong>
-                  <small>{t("settings.plugins.speechModel.description")}</small>
-                </div>
-                <select className="settings-select" value={platformSettings.ai.speechModel ?? "speech-2.8-hd"} disabled={!!busy} onChange={(event) => patchPlatformSettings({ ai: { ...platformSettings.ai, speechModel: event.target.value } }, t("settings.toast.speechModelSaved"))}>
-                  {["speech-2.8-hd", "speech-2.8-turbo", "speech-2.6-hd", "speech-2.6-turbo", "speech-02-hd", "speech-02-turbo", "speech-01-hd", "speech-01-turbo"].map((model) => <option key={model} value={model}>{model}</option>)}
-                </select>
-              </div>}
-              <div className="settings-row">
-                <div className="settings-row-info">
-                  <strong>{t("settings.plugins.apiKey.title")}</strong>
-                  <small>{aiKeyStatus.hasKey ? t("settings.plugins.apiKey.stored") : t("settings.plugins.apiKey.none")}</small>
-                </div>
-                <div className="flex gap-2 items-center">
-                  <input type="password" className="settings-select" placeholder={aiKeyStatus.hasKey ? t("settings.plugins.apiKey.placeholderStored") : t("settings.plugins.apiKey.placeholderEmpty")} value={aiKeyDraft} disabled={!!busy} onChange={(event) => setAiKeyDraft(event.target.value)} />
-                  <Button variant="secondary" size="compact" disabled={!!busy || !aiKeyDraft} onClick={() => void run(t("settings.busy.saving"), async () => { setAiKeyStatus(await api.setPluginAiApiKey(aiKeyDraft)); setAiKeyDraft(""); setMessage(t("settings.toast.aiKeySaved")); })}>{t("settings.plugins.apiKey.save")}</Button>
-                  {aiKeyStatus.hasKey && <Button variant="secondary" size="compact" disabled={!!busy} onClick={() => void run(t("settings.busy.saving"), async () => { setAiKeyStatus(await api.setPluginAiApiKey(null)); setMessage(t("settings.toast.aiKeyRemoved")); })}>{t("settings.plugins.apiKey.remove")}</Button>}
+                  <input type="time" className="settings-select" value={providerSnapshot?.gates.quietHours.end ?? "08:00"} disabled={!providerSnapshot || !!busy} onChange={(event) => patchProviderGates({ quietHours: { ...(providerSnapshot?.gates.quietHours ?? { enabled: false, start: "22:00" }), end: event.target.value } }, t("settings.toast.quietHoursSaved"))} />
                 </div>
               </div>
             </div>

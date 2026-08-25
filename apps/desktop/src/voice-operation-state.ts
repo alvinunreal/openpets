@@ -7,10 +7,27 @@ export type VoiceOperationSnapshot = {
 
 export class VoiceOperationState {
   #operation: { phase: VoiceOperationPhase; cancel: () => Promise<void> } | null = null;
+  #reservation: symbol | null = null;
   readonly #listeners = new Set<() => void>();
 
-  begin(cancel: () => Promise<void>): void {
+  reserve(): symbol {
+    if (this.#operation || this.#reservation) throw new Error("A voice operation is already in progress.");
+    this.#reservation = Symbol("voice-operation");
+    return this.#reservation;
+  }
+
+  releaseReservation(reservation: symbol): void {
+    if (this.#reservation === reservation) this.#reservation = null;
+  }
+
+  cancelReservation(): void {
+    this.#reservation = null;
+  }
+
+  begin(cancel: () => Promise<void>, reservation?: symbol): void {
+    if (reservation !== undefined && this.#reservation !== reservation) throw new Error("Voice operation reservation is invalid.");
     if (this.#operation) throw new Error("A voice operation is already in progress.");
+    this.#reservation = null;
     this.#operation = { phase: "acquiring", cancel };
     this.#notify();
   }

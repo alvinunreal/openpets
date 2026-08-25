@@ -26,10 +26,31 @@ import { readSafePluginManifest } from "./plugin-manifest-reader.js";
 import { registerPluginAssetProtocol } from "./plugin-asset-protocol.js";
 import { checkForGitHubReleaseUpdate, getUpdateStatus, openUpdateReleasePage } from "./update-checker.js";
 import { getRemoteControlService } from "./remote-control-service.js";
+import { getPluginHostCapabilitiesForUi, type ElectronPluginHostCapabilities } from "./plugin-host-capabilities.js";
+import { hostSecretsOwner, providerSecretKey } from "./provider-service.js";
 import { validateRemoteScopeList, type RemoteControlScope } from "./remote-control-protocol.js";
+import {
+  buildProviderControlCenterSnapshot,
+  createProviderProfile,
+  deleteProviderProfile,
+  getPluginPlatformSettings,
+  isProviderSecretRefReferenced,
+  isProviderRole,
+  selectProviderProfile,
+  updateProviderProfile,
+  updatePluginPlatformSettings,
+  validateProviderGatesPatch,
+  validateProviderProfilePatch,
+  validateProviderProfile,
+  type ProviderProfileInput,
+} from "./plugin-platform-settings.js";
 
 type InternalUiWindowKind = "control-center";
 export type ControlCenterRoute = "dashboard" | "pets" | "settings" | "plugins" | "integrations";
+
+export async function deleteProviderCredentialForProfile(secretsStore: { delete(owner: string, key: string): Promise<void> }, profile: { readonly secretRef?: string }): Promise<void> {
+  if (profile.secretRef) await secretsStore.delete(hostSecretsOwner, providerSecretKey(profile.secretRef));
+}
 
 const controlCenterRoutes = new Set<ControlCenterRoute>(["dashboard", "pets", "settings", "plugins", "integrations"]);
 let controlCenterWindow: BrowserWindow | null = null;
@@ -297,38 +318,66 @@ export function installInternalUiHandlers(): void {
     return getPluginService().runtime.getInspectorState(id);
   });
 
-  ipcMain.handle("openpets:plugin-platform-settings-get", async (event) => {
+  ipcMain.handle("openpets:provider-profiles-get", async (event) => {
     assertAllowedSender(event, ["control-center"]);
-    const { getPluginPlatformSettings } = await import("./plugin-platform-settings.js");
-    return getPluginPlatformSettings();
+    return getProviderControlCenterSnapshot();
   });
-
-  ipcMain.handle("openpets:plugin-platform-settings-update", async (event, patch: unknown) => {
+  ipcMain.handle("openpets:provider-profile-create", async (event, input: unknown) => {
     assertAllowedSender(event, ["control-center"]);
-    if (!isPlainObject(patch)) throw new Error("Invalid plugin platform settings patch.");
-    const { updatePluginPlatformSettings } = await import("./plugin-platform-settings.js");
-    return updatePluginPlatformSettings(patch as never);
+    const profile = validateProviderProfile(input) as ProviderProfileInput;
+    createProviderProfile(profile);
+    return getProviderControlCenterSnapshot();
   });
-
-  ipcMain.handle("openpets:plugin-platform-ai-key-set", async (event, key: unknown) => {
+  ipcMain.handle("openpets:provider-profile-update", async (event, id: unknown, patch: unknown) => {
     assertAllowedSender(event, ["control-center"]);
-    const { getPluginHostCapabilitiesForUi } = await import("./plugin-host-capabilities.js");
-    const { hostSecretsOwner, hostAiApiKeySecret } = await import("./plugin-ai-gateway.js");
-    const capabilities = getPluginHostCapabilitiesForUi();
-    if (!capabilities) throw new Error("Plugin host capabilities are unavailable.");
-    if (key === null || key === "") { await capabilities.secretsStore.delete(hostSecretsOwner, hostAiApiKeySecret); return { ok: true, hasKey: false }; }
-    if (typeof key !== "string" || key.length > 4096) throw new Error("Invalid AI API key.");
-    await capabilities.secretsStore.set(hostSecretsOwner, hostAiApiKeySecret, key);
-    return { ok: true, hasKey: true };
+    if (typeof id !== "string" || !isPlainObject(patch)) throw new Error("Invalid provider profile update.");
+    const previous = getPluginPlatformSettings().profiles[id];
+    updateProviderProfile(id, validateProviderProfilePatch(patch));
+    const next = getPluginPlatformSettings().profiles[id];
+    if (previous?.secretRef && previous.secretRef !== next?.secretRef && !isProviderSecretRefReferenced(getPluginPlatformSettings(), previous.secretRef)) await getProviderCapabilities().secretsStore.delete("__openpets-host", `provider:${previous.secretRef}`);
+    return getProviderControlCenterSnapshot();
   });
-
-  ipcMain.handle("openpets:plugin-platform-ai-key-status", async (event) => {
+  ipcMain.handle("openpets:provider-profile-delete", async (event, id: unknown) => {
     assertAllowedSender(event, ["control-center"]);
-    const { getPluginHostCapabilitiesForUi } = await import("./plugin-host-capabilities.js");
-    const { hostSecretsOwner, hostAiApiKeySecret } = await import("./plugin-ai-gateway.js");
-    const capabilities = getPluginHostCapabilitiesForUi();
-    if (!capabilities) return { hasKey: false };
-    return { hasKey: await capabilities.secretsStore.has(hostSecretsOwner, hostAiApiKeySecret) };
+    if (typeof id !== "string") throw new Error("Invalid provider profile id.");
+    const existing = getPluginPlatformSettings().profiles[id];
+    const settings = deleteProviderProfile(id);
+    const capabilities = getProviderCapabilities();
+    const ref = existing?.secretRef;
+    if (ref && !isProviderSecretRefReferenced(settings, ref)) await capabilities.secretsStore.delete("__openpets-host", `provider:${ref}`);
+    return getProviderControlCenterSnapshot();
+  });
+  ipcMain.handle("openpets:provider-gates-update", async (event, patch: unknown) => {
+    assertAllowedSender(event, ["control-center"]);
+    updatePluginPlatformSettings(validateProviderGatesPatch(patch));
+    return getProviderControlCenterSnapshot();
+  });
+  ipcMain.handle("openpets:provider-profile-select", async (event, role: unknown, id: unknown) => {
+    assertAllowedSender(event, ["control-center"]);
+    if (!isProviderRole(role) || (id !== null && typeof id !== "string")) throw new Error("Invalid provider profile selection.");
+    selectProviderProfile(role, id as string | null);
+    return getProviderControlCenterSnapshot();
+  });
+  ipcMain.handle("openpets:provider-profile-credential-set", async (event, id: unknown, value: unknown) => {
+    assertAllowedSender(event, ["control-center"]);
+    if (typeof id !== "string" || typeof value !== "string" || Buffer.byteLength(value, "utf8") > 16 * 1024 || value.length === 0) throw new Error("Invalid provider credential.");
+    const profile = getPluginPlatformSettings().profiles[id];
+    if (!profile?.secretRef) throw new Error("Provider profile has no credential reference.");
+    await getProviderCapabilities().secretsStore.set("__openpets-host", `provider:${profile.secretRef}`, value);
+    return getProviderControlCenterSnapshot();
+  });
+  ipcMain.handle("openpets:provider-profile-credential-status", async (event, id: unknown) => {
+    assertAllowedSender(event, ["control-center"]);
+    if (typeof id !== "string") throw new Error("Invalid provider profile id.");
+    const profile = getPluginPlatformSettings().profiles[id];
+    return { hasCredential: Boolean(profile?.secretRef && await getProviderCapabilities().secretsStore.has("__openpets-host", `provider:${profile.secretRef}`)) };
+  });
+  ipcMain.handle("openpets:provider-profile-credential-delete", async (event, id: unknown) => {
+    assertAllowedSender(event, ["control-center"]);
+    if (typeof id !== "string") throw new Error("Invalid provider profile id.");
+    const profile = getPluginPlatformSettings().profiles[id];
+    if (profile) await deleteProviderCredentialForProfile(getProviderCapabilities().secretsStore, profile);
+    return getProviderControlCenterSnapshot();
   });
 
   ipcMain.handle("openpets:get-catalog", async (event) => {
@@ -815,6 +864,20 @@ function getSafeControlCenterDevUrl(): string | null {
     return null;
   }
   return null;
+}
+
+function getProviderCapabilities(): ElectronPluginHostCapabilities {
+  const capabilities = getPluginHostCapabilitiesForUi();
+  if (capabilities) return capabilities;
+  throw new Error("Plugin host capabilities are unavailable.");
+}
+
+async function getProviderControlCenterSnapshot(): Promise<import("./plugin-platform-settings.js").ProviderControlCenterSnapshot> {
+  const capabilities = getProviderCapabilities();
+  const settings = getPluginPlatformSettings();
+  const credentialRefs = new Set<string>();
+  for (const profile of Object.values(settings.profiles)) if (profile.secretRef && await capabilities.secretsStore.has("__openpets-host", `provider:${profile.secretRef}`)) credentialRefs.add(profile.secretRef);
+  return buildProviderControlCenterSnapshot(settings, (profile) => Boolean(profile.secretRef && credentialRefs.has(profile.secretRef)));
 }
 
 function assertAllowedSender(event: IpcMainInvokeEvent, allowedKinds: readonly InternalUiWindowKind[]): void {

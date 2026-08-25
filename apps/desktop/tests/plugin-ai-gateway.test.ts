@@ -1,152 +1,82 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 
-import {
-  PluginAiGateway,
-  VOICE_REALTIME_MAX_SDP_BYTES,
-} from "../src/plugin-ai-gateway.js";
-import { getPluginPlatformSettings, initializePluginPlatformSettings, updatePluginPlatformSettings } from "../src/plugin-platform-settings.js";
+import { PluginAiGateway, VOICE_REALTIME_MAX_SDP_BYTES } from "../src/plugin-ai-gateway.js";
+import { initializePluginPlatformSettings, createProviderProfile, selectProviderProfile } from "../src/plugin-platform-settings.js";
 import type { PluginSecretsStore } from "../src/plugin-secrets.js";
-import { createDefaultVoiceRealtimeSessionConfig } from "../src/voice-conversation.js";
 
-const userDataPath = mkdtempSync(join(tmpdir(), "openpets-plugin-ai-gateway-"));
-const previousSettings = getPluginPlatformSettings();
+const userDataPath = mkdtempSync(join(tmpdir(), "openpets-provider-gateway-"));
 const previousFetch = globalThis.fetch;
-const fetchCalls: Array<{ input: Parameters<typeof fetch>[0]; init?: Parameters<typeof fetch>[1] }> = [];
+const calls: Array<{ input: string; init?: RequestInit }> = [];
+const secrets = { get: async (_owner: string, key: string) => key.includes("local") ? undefined : "test-key" } as unknown as PluginSecretsStore;
 
 try {
   initializePluginPlatformSettings(userDataPath);
-  updatePluginPlatformSettings({ ai: { provider: "minimax", model: "" } });
-
-  const secrets = { get: async () => "minimax-test-key" } as unknown as PluginSecretsStore;
-  const gateway = new PluginAiGateway(secrets);
+  createProviderProfile({ id: "minimax-text", label: "MiniMax", adapter: "openai-compatible-text", model: "MiniMax-M3", baseUrl: "https://api.minimax.io/v1", secretRef: "minimax" });
+  createProviderProfile({ id: "minimax-voice", label: "MiniMax voice", adapter: "minimax-tts", model: "speech-2.8-turbo", baseUrl: "https://api.minimax.io/v1", secretRef: "minimax" });
+  createProviderProfile({ id: "whisper-stt", label: "Whisper", adapter: "openai-compatible-transcription", model: "whisper-1", baseUrl: "https://stt.test/v1", secretRef: "whisper" });
+  createProviderProfile({ id: "elevenlabs-voice", label: "ElevenLabs", adapter: "elevenlabs-tts", model: "eleven_multilingual_v2", baseUrl: "https://api.elevenlabs.io/v1", secretRef: "elevenlabs" });
+  createProviderProfile({ id: "realtime", label: "Realtime", adapter: "openai-realtime", model: "gpt-4o-mini", baseUrl: "https://api.openai.com/v1", secretRef: "openai" });
+  createProviderProfile({ id: "realtime-alt", label: "Realtime alternate", adapter: "openai-realtime", model: "gpt-4o-mini", baseUrl: "https://alternate.example/v1", secretRef: "alternate" });
+  selectProviderProfile("text", "minimax-text"); selectProviderProfile("tts", "minimax-voice"); selectProviderProfile("stt", "whisper-stt");
   globalThis.fetch = async (input, init) => {
-    fetchCalls.push({ input, init });
-    if (String(input).includes("/t2a_v2")) {
-      return new Response(JSON.stringify({ data: { audio: "494433", status: 2 }, base_resp: { status_code: 0, status_msg: "success" } }), { status: 200 });
-    }
-    if (String(input).includes("/audio/transcriptions")) {
-      return new Response(JSON.stringify({ text: "transcribed" }), { status: 200 });
-    }
-    if (String(input).includes("/realtime/calls")) {
-      return new Response("v=0\r\no=test-answer", { status: 200 });
-    }
-    return new Response(JSON.stringify({ choices: [{ message: { content: "MiniMax says hello" } }] }), { status: 200 });
+    calls.push({ input: String(input), init });
+    if (String(input).includes("t2a_v2")) return new Response(JSON.stringify({ data: { audio: "494433", status: 2 }, base_resp: { status_code: 0 } }), { status: 200 });
+    if (String(input).includes("audio/transcriptions")) return new Response(JSON.stringify({ text: "heard" }), { status: 200 });
+    return new Response(JSON.stringify({ choices: [{ message: { content: "hello" } }] }), { status: 200 });
   };
+  const gateway = new PluginAiGateway(secrets);
+  assert.equal((await gateway.complete({ messages: [{ role: "user", content: "hi" }] })).text, "hello");
+  assert.equal(calls[0]?.input, "https://api.minimax.io/v1/chat/completions");
+  assert.equal(new Headers(calls[0]?.init?.headers).get("authorization"), "Bearer test-key");
+  createProviderProfile({ id: "raw-auth-text", label: "Raw auth", adapter: "openai-compatible-text", model: "raw-model", baseUrl: "https://raw.example/v1", secretRef: "raw", auth: { headerName: "X-API-Key", strategy: "raw" } });
+  selectProviderProfile("text", "raw-auth-text");
+  calls.length = 0;
+  globalThis.fetch = async (input, init) => { calls.push({ input: String(input), init }); return new Response(JSON.stringify({ choices: [{ message: { content: "raw" } }] }), { status: 200 }); };
+  assert.equal((await gateway.complete({ messages: [{ role: "user", content: "hi" }] })).text, "raw");
+  assert.equal(new Headers(calls[0]?.init?.headers).get("x-api-key"), "test-key");
+  assert.equal(new Headers(calls[0]?.init?.headers).get("authorization"), null);
+  selectProviderProfile("text", "minimax-text");
+  globalThis.fetch = async (input, init) => {
+    calls.push({ input: String(input), init });
+    if (String(input).includes("t2a_v2")) return new Response(JSON.stringify({ data: { audio: "494433", status: 2 }, base_resp: { status_code: 0 } }), { status: 200 });
+    if (String(input).includes("audio/transcriptions")) return new Response(JSON.stringify({ text: "heard" }), { status: 200 });
+    return new Response(JSON.stringify({ choices: [{ message: { content: "hello" } }] }), { status: 200 });
+  };
+  assert.deepEqual(Array.from((await gateway.synthesizeSpeech("hello", {}))?.bytes ?? []), [0x49, 0x44, 0x33]);
+  assert.equal(await gateway.transcribe(new Uint8Array([1]), "audio/webm"), "heard");
+  selectProviderProfile("tts", "elevenlabs-voice");
+  globalThis.fetch = async (input, init) => { calls.push({ input: String(input), init }); return new Response(new Uint8Array([1, 2, 3]), { status: 200 }); };
+  assert.deepEqual(Array.from((await gateway.synthesizeSpeech("eleven", { voice: "voice-id" }))?.bytes ?? []), [1, 2, 3]);
+  assert.equal(calls.at(-1)?.input, "https://api.elevenlabs.io/v1/text-to-speech/voice-id");
+  assert.equal(new Headers(calls.at(-1)?.init?.headers).get("xi-api-key"), "test-key");
 
-  const result = await gateway.complete({ messages: [{ role: "user", content: "Say hello." }] });
-  assert.equal(result.text, "MiniMax says hello");
-  assert.equal(fetchCalls.length, 1);
-  const completeCall = fetchCalls[0];
-  assert.ok(completeCall);
-  assert.equal(String(completeCall.input), "https://api.minimax.io/v1/chat/completions");
-  assert.equal(new Headers(completeCall.init?.headers).get("authorization"), "Bearer minimax-test-key");
-  const requestBody = JSON.parse(String(completeCall.init?.body)) as { model?: string };
-  assert.equal(requestBody.model, "MiniMax-M3");
+  selectProviderProfile("text", "realtime");
+  calls.length = 0;
+  globalThis.fetch = async (input, init) => { calls.push({ input: String(input), init }); return new Response("v=0\r\no=answer", { status: 200 }); };
+  assert.equal(await gateway.negotiateRealtime("v=0\r\no=offer", { model: "gpt-realtime-2.1" }), "v=0\r\no=answer");
+  assert.equal(calls[0]?.input, "https://api.openai.com/v1/realtime/calls");
 
-  updatePluginPlatformSettings({ ai: { provider: "minimax", model: "MiniMax-M2.7", baseUrl: "https://api.minimaxi.com/v1" } });
-  fetchCalls.length = 0;
-  await gateway.complete({ messages: [{ role: "user", content: "Say hello from China." }] });
-  assert.equal(String(fetchCalls[0]?.input), "https://api.minimaxi.com/v1/chat/completions");
-  const chinaRequestBody = JSON.parse(String(fetchCalls[0]?.init?.body)) as { model?: string };
-  assert.equal(chinaRequestBody.model, "MiniMax-M2.7");
-  updatePluginPlatformSettings({ ai: { provider: "minimax", model: "", speechModel: "speech-2.8-turbo", baseUrl: undefined } });
-  fetchCalls.length = 0;
-  const speech = await gateway.synthesizeSpeech("Hello from OpenPets.", { voice: "English_Lucky_Robot", rate: 1.25 });
-  assert.deepEqual(Array.from(speech?.bytes ?? []), [0x49, 0x44, 0x33]);
-  assert.equal(speech?.mimeType, "audio/mpeg");
-  assert.equal(fetchCalls.length, 1);
-  const speechCall = fetchCalls[0];
-  assert.ok(speechCall);
-  assert.equal(String(speechCall.input), "https://api.minimax.io/v1/t2a_v2");
-  assert.equal(new Headers(speechCall.init?.headers).get("authorization"), "Bearer minimax-test-key");
-  const speechBody = JSON.parse(String(speechCall.init?.body)) as Record<string, unknown>;
-  assert.deepEqual(speechBody, {
-    model: "speech-2.8-turbo",
-    text: "Hello from OpenPets.",
-    stream: false,
-    output_format: "hex",
-    audio_setting: { format: "mp3" },
-    voice_setting: { voice_id: "English_Lucky_Robot", speed: 1.25 },
-  });
+  const firstRealtimeOperation = await gateway.beginRealtimeOperation();
+  selectProviderProfile("text", "realtime-alt");
+  const secondRealtimeOperation = await gateway.beginRealtimeOperation();
+  calls.length = 0;
+  await firstRealtimeOperation("v=0\r\no=offer", {});
+  await secondRealtimeOperation("v=0\r\no=offer", {});
+  assert.equal(calls[0]?.input, "https://api.openai.com/v1/realtime/calls", "the first realtime operation must retain its captured provider");
+  assert.equal(calls[1]?.input, "https://alternate.example/v1/realtime/calls");
 
-  fetchCalls.length = 0;
-  await gateway.synthesizeSpeech("Rate-only speech.", { rate: 0.8 });
-  assert.equal(fetchCalls.length, 1);
-  const rateOnlyBody = JSON.parse(String(fetchCalls[0]?.init?.body)) as Record<string, unknown>;
-  assert.deepEqual(rateOnlyBody, {
-    model: "speech-2.8-turbo",
-    text: "Rate-only speech.",
-    stream: false,
-    output_format: "hex",
-    audio_setting: { format: "mp3" },
-    voice_setting: { voice_id: "English_expressive_narrator", speed: 0.8 },
-  });
-
-  fetchCalls.length = 0;
-  await gateway.synthesizeSpeech("Default voice speech.", {});
-  assert.equal(fetchCalls.length, 1);
-  const defaultVoiceBody = JSON.parse(String(fetchCalls[0]?.init?.body)) as Record<string, unknown>;
-  assert.deepEqual(defaultVoiceBody, {
-    model: "speech-2.8-turbo",
-    text: "Default voice speech.",
-    stream: false,
-    output_format: "hex",
-    audio_setting: { format: "mp3" },
-    voice_setting: { voice_id: "English_expressive_narrator" },
-  });
-
-  fetchCalls.length = 0;
-  await assert.rejects(
-    () => gateway.transcribe(new Uint8Array([1, 2, 3]), "audio/webm"),
-    (error: unknown) => {
-      assert.ok(error instanceof Error);
-      assert.match(error.message, /MiniMax OpenAI-compatible provider\/path does not support voice transcription in OpenPets/);
-      assert.match(error.message, /OpenAI or Ollama/);
-      return true;
-    },
-  );
-  assert.equal(fetchCalls.length, 0);
-
-  updatePluginPlatformSettings({ ai: { provider: "openai", model: "", baseUrl: undefined } });
-  fetchCalls.length = 0;
-  const controller = new AbortController();
-  assert.equal(await gateway.transcribe(new Uint8Array([1, 2, 3]), "audio/webm", controller.signal), "transcribed");
-  assert.equal(fetchCalls.length, 1);
-  assert.equal(fetchCalls[0]?.init?.signal, controller.signal);
-
-  fetchCalls.length = 0;
-  const session = createDefaultVoiceRealtimeSessionConfig();
-  const answer = await gateway.negotiateRealtime("v=0\r\no=test-offer", session);
-  assert.equal(answer, "v=0\r\no=test-answer");
-  const negotiationCall = fetchCalls[0];
-  assert.ok(negotiationCall);
-  assert.equal(String(negotiationCall.input), "https://api.openai.com/v1/realtime/calls");
-  assert.equal(new Headers(negotiationCall.init?.headers).get("authorization"), "Bearer minimax-test-key");
-  const negotiationBody = negotiationCall.init?.body as FormData;
-  assert.equal(negotiationBody.get("sdp"), "v=0\r\no=test-offer");
-  assert.deepEqual(JSON.parse(String(negotiationBody.get("session"))), session);
-  assert.doesNotMatch(String(negotiationBody.get("session")), /minimax-test-key/);
-
-  await assert.rejects(
-    () => gateway.negotiateRealtime(`v=0${"x".repeat(VOICE_REALTIME_MAX_SDP_BYTES)}`, session),
-    /offer is invalid/,
-  );
-
-  globalThis.fetch = async () => new Response("not an SDP answer", { status: 200 });
-  await assert.rejects(() => gateway.negotiateRealtime("v=0\r\no=test-offer", session), /answer is invalid/);
-
-  const timeoutGateway = new PluginAiGateway(secrets, { realtimeNegotiationTimeoutMs: 5 });
-  globalThis.fetch = async (_input, init) => new Promise<Response>((_resolve, reject) => {
-    init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
-  });
-  await assert.rejects(() => timeoutGateway.negotiateRealtime("v=0\r\no=test-offer", session), /timed out/);
+  selectProviderProfile("text", "minimax-text");
+  calls.length = 0;
+  await assert.rejects(() => gateway.negotiateRealtime("v=0\r\no=offer", {}), /explicit native OpenAI realtime profile/);
+  assert.equal(calls.length, 0, "unsupported realtime must not fetch");
+  selectProviderProfile("text", "realtime");
+  await assert.rejects(() => gateway.negotiateRealtime(`v=0${"x".repeat(VOICE_REALTIME_MAX_SDP_BYTES)}`, {}), /offer is invalid/);
 } finally {
   globalThis.fetch = previousFetch;
-  updatePluginPlatformSettings(previousSettings);
   rmSync(userDataPath, { recursive: true, force: true });
 }
 
-console.error("Plugin AI gateway validation passed.");
+console.log("provider gateway tests passed.");

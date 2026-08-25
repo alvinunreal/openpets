@@ -1,7 +1,7 @@
 import { getDefaultPetWindowForPlugins } from "./default-pet-controller.js";
 import { playPetWindowTtsAudio, speakPetWindowTts, stopPetWindowTts, stopPetWindowTtsAudio } from "./pet-window.js";
 import type { PluginAiGateway } from "./plugin-ai-gateway.js";
-import { VoiceConversationService, type VoiceConversationSnapshot } from "./voice-conversation.js";
+import { VoiceConversationService, type VoiceConversationSnapshot, type VoiceRealtimeSessionConfig } from "./voice-conversation.js";
 import { VoiceCaptureService } from "./voice-capture.js";
 import { createElectronVoiceCaptureFactory } from "./voice-capture-electron.js";
 import { createElectronVoiceRealtimeTransportFactory } from "./voice-realtime-electron.js";
@@ -50,6 +50,7 @@ let activeListeningService: VoiceListeningService | null = null;
 let activePluginId: string | undefined;
 let captureService: VoiceCaptureService | null = null;
 let conversationService: VoiceConversationService | null = null;
+let conversationStartReservation: symbol | null = null;
 let privacyIndicator: VoicePrivacyIndicator | null = null;
 const microphoneArbiter = new VoiceMicrophoneArbiter();
 const voiceOperationState = new VoiceOperationState();
@@ -65,22 +66,27 @@ export function subscribePluginVoiceOperation(listener: () => void): () => void 
 
 export async function pluginVoiceListen(gateway: PluginAiGateway, opts: { timeoutMs: number; pluginId?: string }): Promise<{ text: string }> {
   if (activeListeningService) throw new Error("A voice capture is already in progress.");
-  const service = new VoiceListeningService(
-    getCaptureService(),
-    (capture, signal) => gateway.transcribe(capture.bytes, capture.mimeType, signal),
-    { onPhaseChange: (phase) => voiceOperationState.setPhase(phase) },
-  );
-  activeListeningService = service;
+  const reservation = voiceOperationState.reserve();
   activePluginId = opts.pluginId;
-  voiceOperationState.begin(() => service.cancel());
   try {
+    const transcribe = await gateway.beginTranscriptionOperation();
+    const service = new VoiceListeningService(
+      getCaptureService(),
+      (capture, signal) => transcribe(capture.bytes, capture.mimeType, signal),
+      { onPhaseChange: (phase) => voiceOperationState.setPhase(phase) },
+    );
+    activeListeningService = service;
+    voiceOperationState.begin(() => service.cancel(), reservation);
     return await service.listenOnce(opts.timeoutMs);
   } finally {
-    if (activeListeningService === service) {
+    if (activeListeningService) {
       activeListeningService = null;
       activePluginId = undefined;
+      voiceOperationState.settle();
+    } else {
+      voiceOperationState.releaseReservation(reservation);
+      activePluginId = undefined;
     }
-    voiceOperationState.settle();
   }
 }
 
@@ -92,7 +98,18 @@ export async function cancelPluginVoiceListen(pluginId?: string, reason = "Voice
 
 /** Host-private realtime foundation; intentionally not wired into the plugin SDK. */
 export async function startPluginVoiceConversation(gateway: PluginAiGateway): Promise<VoiceConversationSnapshot> {
-  return getConversationService(gateway).start();
+  if (conversationStartReservation || conversationService?.snapshot().phase !== "idle") throw new Error("A realtime voice conversation is already in progress.");
+  const reservation = Symbol("plugin-voice-conversation");
+  conversationStartReservation = reservation;
+  try {
+    const negotiator = await gateway.beginRealtimeOperation();
+    if (conversationStartReservation !== reservation) throw new Error("Voice conversation startup was cancelled.");
+    const service = createConversationService(negotiator);
+    conversationService = service;
+    return await service.start();
+  } finally {
+    if (conversationStartReservation === reservation) conversationStartReservation = null;
+  }
 }
 
 export function getPluginVoiceConversationSnapshot(): VoiceConversationSnapshot | null {
@@ -114,6 +131,8 @@ export async function unmutePluginVoiceConversation(): Promise<void> {
 export function shutdownPluginVoice(): Promise<void> {
   if (pluginVoiceShutdownPromise) return pluginVoiceShutdownPromise;
   pluginVoiceShutdownPromise = (async () => {
+    conversationStartReservation = null;
+    voiceOperationState.cancelReservation();
     if (conversationService) await conversationService.shutdown().catch(() => undefined);
     if (activeListeningService) await activeListeningService.shutdown().catch(() => undefined);
     else await captureService?.shutdown().catch(() => undefined);
@@ -133,17 +152,12 @@ function getCaptureService(): VoiceCaptureService {
   return captureService;
 }
 
-function getConversationService(gateway: PluginAiGateway): VoiceConversationService {
-  if (!conversationService) {
-    conversationService = new VoiceConversationService({
-      microphoneArbiter,
-      privacyIndicator: getPrivacyIndicator(),
-      transportFactory: createElectronVoiceRealtimeTransportFactory({
-        negotiate: (sdp, session, signal) => gateway.negotiateRealtime(sdp, session, signal),
-      }),
-    });
-  }
-  return conversationService;
+function createConversationService(negotiator: (sdp: string, session: VoiceRealtimeSessionConfig, signal?: AbortSignal) => Promise<string>): VoiceConversationService {
+  return new VoiceConversationService({
+    microphoneArbiter,
+    privacyIndicator: getPrivacyIndicator(),
+    transportFactory: createElectronVoiceRealtimeTransportFactory({ negotiate: negotiator }),
+  });
 }
 
 function getPrivacyIndicator(): VoicePrivacyIndicator {

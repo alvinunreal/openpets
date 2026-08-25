@@ -4,17 +4,17 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { TextModelClient } from "../src/text-model-client.js";
-import { getPluginPlatformSettings, initializePluginPlatformSettings, updatePluginPlatformSettings } from "../src/plugin-platform-settings.js";
+import { initializePluginPlatformSettings, updateProviderProfile } from "../src/plugin-platform-settings.js";
+import { configureProvider } from "./provider-test-helpers.js";
 import type { PluginSecretsStore } from "../src/plugin-secrets.js";
 
 const userDataPath = mkdtempSync(join(tmpdir(), "openpets-text-model-client-"));
-const previousSettings = getPluginPlatformSettings();
 const secrets = { get: async () => "test-key" } as unknown as PluginSecretsStore;
 let calls: Array<{ input: string; init?: RequestInit }> = [];
 
 try {
   initializePluginPlatformSettings(userDataPath);
-  updatePluginPlatformSettings({ ai: { provider: "openai", model: "test-model", baseUrl: "https://provider.test/v1" } });
+  configureProvider({ id: "text-test", label: "Text test", adapter: "openai-compatible-text", model: "test-model", baseUrl: "https://provider.test/v1", secretRef: "text-test" }, "text");
 
   const openAi = new TextModelClient(secrets, { fetchImpl: async (input, init) => {
     calls.push({ input: String(input), init });
@@ -31,6 +31,19 @@ try {
   const openAiInitialBody = JSON.parse(String(calls[0]?.init?.body)) as { messages: Array<{ role: string; content: string }> };
   assert.deepEqual(openAiInitialBody.messages.filter((message) => message.role === "system").map((message) => message.content), ["Fixed host rules.", "Curated context.", "Personality style."]);
 
+  let snapshotCalls = 0;
+  const snapshotUrls: string[] = [];
+  const snapshotClient = new TextModelClient(secrets, { fetchImpl: async (input) => {
+    snapshotUrls.push(String(input));
+    snapshotCalls += 1;
+    if (snapshotCalls === 1) updateProviderProfile("text-test", { baseUrl: "https://changed.test/v1" });
+    return new Response(JSON.stringify({ choices: [{ message: { content: `step-${snapshotCalls}` } }] }), { status: 200 });
+  } });
+  await snapshotClient.generate({ messages: [{ role: "user", content: "one" }], tools: [] }, new AbortController().signal);
+  await snapshotClient.generate({ messages: [{ role: "user", content: "two" }], tools: [] }, new AbortController().signal);
+  assert.equal(snapshotCalls, 2);
+  assert.deepEqual(snapshotUrls, ["https://provider.test/v1/chat/completions", "https://provider.test/v1/chat/completions"]);
+
   calls = [];
   await openAi.generate({ messages: [
     { role: "assistant", content: "Planning the focus session.", toolCalls: [{ id: "call-1", name: "op_tool", arguments: { minutes: 25 } }] },
@@ -41,7 +54,7 @@ try {
   assert.equal((openAiBody.messages[0]?.tool_calls as Array<{ id: string }>)[0]?.id, "call-1");
   assert.equal(openAiBody.messages[1]?.tool_call_id, "call-1");
 
-  updatePluginPlatformSettings({ ai: { provider: "anthropic", model: "claude-test", baseUrl: "https://anthropic.test" } });
+  configureProvider({ id: "anthropic-test", label: "Anthropic test", adapter: "anthropic-text", model: "claude-test", baseUrl: "https://anthropic.test", secretRef: "anthropic-test" }, "text");
   calls = [];
   const anthropic = new TextModelClient(secrets, { fetchImpl: async (input, init) => {
     calls.push({ input: String(input), init });
@@ -78,7 +91,6 @@ try {
   const timedOut = new TextModelClient(secrets, { timeoutMs: 5, fetchImpl: async () => new Promise<Response>(() => undefined) });
   await assert.rejects(() => timedOut.generate({ messages: [{ role: "user", content: "start" }], tools: [] }, new AbortController().signal), /timed out/);
 } finally {
-  updatePluginPlatformSettings(previousSettings);
   rmSync(userDataPath, { recursive: true, force: true });
 }
 

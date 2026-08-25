@@ -1,6 +1,5 @@
 import type { PluginSecretsStore } from "./plugin-secrets.js";
-import { getPluginPlatformSettings, type PluginAiProviderKind } from "./plugin-platform-settings.js";
-import { hostAiApiKeySecret, hostSecretsOwner } from "./plugin-ai-gateway.js";
+import { HostProviderService, type HostProviderOperations, type ProviderOperationSnapshot } from "./provider-service.js";
 import type {
   AssistantJsonObject,
   PetAssistantMessage,
@@ -14,13 +13,6 @@ export const TEXT_MODEL_DEFAULT_TIMEOUT_MS = 30_000;
 export const TEXT_MODEL_MAX_REQUEST_BYTES = 256 * 1024;
 export const TEXT_MODEL_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
-const defaultModels: Record<Exclude<PluginAiProviderKind, "none">, string> = {
-  anthropic: "claude-haiku-4-5-20251001",
-  openai: "gpt-4o-mini",
-  ollama: "llama3.2",
-  minimax: "MiniMax-M3",
-};
-
 export type TextModelClientOptions = {
   readonly fetchImpl?: typeof fetch;
   readonly timeoutMs?: number;
@@ -29,15 +21,16 @@ export type TextModelClientOptions = {
 };
 
 export class TextModelClient implements PetAssistantTextModel {
-  readonly #secrets: PluginSecretsStore;
-  readonly #fetch: typeof fetch;
+  readonly #provider: HostProviderOperations;
   readonly #timeoutMs: number;
   readonly #maxRequestBytes: number;
   readonly #maxResponseBytes: number;
+  #snapshotPromise: Promise<ProviderOperationSnapshot> | null = null;
 
-  constructor(secrets: PluginSecretsStore, options: TextModelClientOptions = {}) {
-    this.#secrets = secrets;
-    this.#fetch = options.fetchImpl ?? fetch;
+  constructor(secretsOrProvider: PluginSecretsStore | HostProviderOperations, options: TextModelClientOptions = {}) {
+    this.#provider = "snapshot" in secretsOrProvider
+      ? secretsOrProvider
+      : new HostProviderService(secretsOrProvider, { ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}), timeoutMs: options.timeoutMs });
     this.#timeoutMs = positiveInteger(options.timeoutMs ?? TEXT_MODEL_DEFAULT_TIMEOUT_MS, "text model timeout");
     this.#maxRequestBytes = positiveInteger(options.maxRequestBytes ?? TEXT_MODEL_MAX_REQUEST_BYTES, "text model request limit");
     this.#maxResponseBytes = positiveInteger(options.maxResponseBytes ?? TEXT_MODEL_MAX_RESPONSE_BYTES, "text model response limit");
@@ -45,54 +38,37 @@ export class TextModelClient implements PetAssistantTextModel {
 
   async generate(request: PetAssistantTextModelRequest, signal: AbortSignal): Promise<PetAssistantTextModelResponse> {
     validateRequest(request);
-    const settings = getPluginPlatformSettings().ai;
-    if (settings.provider === "none") throw new Error("No AI provider is configured in OpenPets settings.");
-    const apiKey = await this.#secrets.get(hostSecretsOwner, hostAiApiKeySecret);
-    if (settings.provider !== "ollama" && !apiKey) throw new Error("The configured AI provider has no API key.");
-    const model = settings.model.trim() || defaultModels[settings.provider];
+    const snapshot = this.#snapshotPromise ??= this.#provider.snapshot("text");
+    const provider = await snapshot;
+    const model = provider.profile.model;
 
-    if (settings.provider === "anthropic") {
+    if (provider.profile.adapter === "anthropic-text") {
       const body = encodeAnthropicRequest(request, model);
-      return decodeAnthropicResponse(await this.#postJson(anthropicUrl(settings.baseUrl), body, { "x-api-key": apiKey ?? "", "anthropic-version": "2023-06-01" }, signal));
+      return decodeAnthropicResponse(await this.#request(provider, "/v1/messages", body, signal));
     }
     const body = encodeOpenAiRequest(request, model);
-    return decodeOpenAiResponse(await this.#postJson(`${openAiBase(settings.baseUrl, settings.provider)}/chat/completions`, body, apiKey ? { authorization: `Bearer ${apiKey}` } : {}, signal));
+    return decodeOpenAiResponse(await this.#request(provider, "/chat/completions", body, signal));
   }
 
-  async #postJson(url: string, body: AssistantJsonObject, extraHeaders: Record<string, string>, signal: AbortSignal): Promise<unknown> {
+  async #request(snapshot: ProviderOperationSnapshot, path: string, body: AssistantJsonObject, signal: AbortSignal): Promise<unknown> {
     let serialized: string;
-    try { serialized = JSON.stringify(body); }
-    catch { throw new Error("Text model request is not JSON-compatible."); }
+    try { serialized = JSON.stringify(body); } catch { throw new Error("Text model request is not JSON-compatible."); }
     if (byteLength(serialized) > this.#maxRequestBytes) throw new Error("Text model request is too large.");
-    if (signal.aborted) throw new Error("Text model request was cancelled.");
-
-    const controller = new AbortController();
-    let timedOut = false;
-    let rejectCancellation: ((error: Error) => void) | undefined;
-    const cancellation = new Promise<never>((_resolve, reject) => { rejectCancellation = reject; });
-    const abortFromCaller = () => { controller.abort(); rejectCancellation?.(new Error("Text model request was cancelled.")); };
-    signal.addEventListener("abort", abortFromCaller, { once: true });
-    const timeout = setTimeout(() => { timedOut = true; controller.abort(); rejectCancellation?.(new Error("Text model request timed out.")); }, this.#timeoutMs);
-    try {
-      const response = await Promise.race([this.#fetch(url, {
-        method: "POST",
-        headers: { "content-type": "application/json", ...extraHeaders },
-        body: serialized,
-        redirect: "error",
-        signal: controller.signal,
-      }), cancellation]);
-      const responseText = await readBoundedText(response, this.#maxResponseBytes);
-      if (!response.ok) throw new Error(`Text model request failed with HTTP ${response.status}.`);
-      try { return JSON.parse(responseText) as unknown; }
-      catch { throw new Error("Text model returned malformed JSON."); }
-    } catch (error) {
-      if (signal.aborted) throw new Error("Text model request was cancelled.");
-      if (timedOut) throw new Error("Text model request timed out.");
+    try { return await this.#provider.json(snapshot, path, body, signal, this.#maxResponseBytes); }
+    catch (error) {
+      const code = error && typeof error === "object" && "code" in error ? (error as { code?: unknown }).code : undefined;
+      if (code === "provider.cancelled") throw new Error("Text model request was cancelled.");
+      if (code === "provider.timeout") throw new Error("Text model request timed out.");
       throw error;
-    } finally {
-      clearTimeout(timeout);
-      signal.removeEventListener("abort", abortFromCaller);
     }
+  }
+
+  /** Pet Assistant calls this once per turn so settings edits cannot change a turn mid-loop. */
+  async beginOperation(): Promise<TextModelClient> {
+    const operation = new TextModelClient(this.#provider, { timeoutMs: this.#timeoutMs, maxRequestBytes: this.#maxRequestBytes, maxResponseBytes: this.#maxResponseBytes });
+    operation.#snapshotPromise = this.#provider.snapshot("text");
+    await operation.#snapshotPromise;
+    return operation;
   }
 }
 
@@ -286,18 +262,6 @@ async function readBoundedText(response: Response, maxBytes: number): Promise<st
   let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
   return new TextDecoder().decode(bytes);
-}
-
-function anthropicUrl(baseUrl: string | undefined): string {
-  const base = (baseUrl ?? "https://api.anthropic.com").replace(/\/$/, "");
-  return `${base.endsWith("/v1") ? base : `${base}/v1`}/messages`;
-}
-
-function openAiBase(baseUrl: string | undefined, provider: Exclude<PluginAiProviderKind, "none" | "anthropic">): string {
-  if (baseUrl) return baseUrl.replace(/\/$/, "");
-  if (provider === "ollama") return "http://127.0.0.1:11434/v1";
-  if (provider === "minimax") return "https://api.minimax.io/v1";
-  return "https://api.openai.com/v1";
 }
 
 function byteLength(value: string): number { return Buffer.byteLength(value, "utf8"); }

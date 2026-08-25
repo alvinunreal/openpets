@@ -170,8 +170,9 @@ and bounded lifecycle. Issue #146 adds a host-owned persisted personality
 profile, but it does not move personality or authority into plugins. Assistant
 requests do not route through `ctx.ai` or gain unrestricted plugin authority.
 The current integration has no chat/voice UI, transcript or conversation
-persistence, provider-profile UI, or sensitive-action confirmation UX; later
-issues add those product surfaces.
+persistence, or sensitive-action confirmation UX; later issues add those
+product surfaces. Provider-profile management is implemented in the Control
+Center and uses the host-owned bridge described below.
 
 Network access is gated per call by the **intersection** of manifest-declared
 permissions and the user's persisted approvals. A stale approval never grants a
@@ -191,29 +192,38 @@ capability the current manifest no longer declares.
 - Legacy `ctx.http.fetch` remains GET-only, public HTTPS only - it never gains
   local or mutating access.
 
-### Host AI providers
+### Host provider profiles (#145, backend/bridge status)
 
-The host AI gateway uses one provider configured in OpenPets settings for plugin
-chat requests. Supported providers are Anthropic, OpenAI, Ollama, and MiniMax.
-Anthropic uses its native chat API; OpenAI, Ollama, and MiniMax use
-OpenAI-compatible chat-completions APIs. All four support token streaming.
+The host no longer reads the legacy single `PluginPlatformSettings.ai` object.
+It persists provider profiles plus exactly three independent selections: one
+`text`, one `stt`, and one `tts` profile, while retaining audio, dynamic speech,
+microphone, voice, and quiet-hour gates. Profiles contain an adapter, model,
+validated base URL, an opaque secret reference, validated auth header
+placement/strategy, and bounded optional static headers. Static header names and
+values are persisted in the local provider-profile settings; secret credential
+values are stored only through `PluginSecretsStore`. Profile/status snapshots
+expose header names and credential presence, never header values or secret
+values.
 
-Voice input through `voice.listen` is a separate capability and uses the host's
-OpenAI-compatible transcription path. OpenAI and Ollama support that path, while
-MiniMax's configured OpenAI-compatible API does not accept audio input/transcription,
-so it cannot be used for `voice.listen`. Anthropic is not transcription-capable
-through this path. MiniMax supports OpenAI-compatible chat completions and
-streaming, plus plugin voice output through its synchronous speech endpoint.
-Choose the speech model in Settings; returned hexadecimal MP3 audio is decoded
-and played by the pet window. When no voice is supplied, the host uses MiniMax's
-`English_expressive_narrator` system voice. If MiniMax is not configured, plugin
-voice output continues to use the system speech voice. Choose OpenAI or Ollama
-when a plugin needs `voice.listen`.
+Provider profile updates are sparse patches: omitted or `undefined` fields keep
+their existing values; `null` explicitly clears `baseUrl`, `secretRef`, or
+`auth`; and `headers` is preserved when omitted, replaced when provided, or
+cleared with an explicit empty array. Because snapshots expose header names but
+not values, header replacement is an intentional whole-list operation rather
+than a per-header edit.
 
-For MiniMax chat, the model field suggests both `MiniMax-M3` (the default) and
-`MiniMax-M2.7` while still accepting another model ID. The endpoint selector
-supports the global `https://api.minimax.io/v1` endpoint and the China
-`https://api.minimaxi.com/v1` endpoint.
+Generic `openai-compatible-text` is the codec for OpenAI, Ollama, LM Studio,
+vLLM, MiniMax chat, and cloud gateways. Anthropic remains native because its
+messages/tool wire format differs. STT is an explicit
+`openai-compatible-transcription` profile; Ollama is never inferred to support
+audio. TTS is explicit system voice, MiniMax hex audio, ElevenLabs audio, or a
+bounded OpenAI-compatible speech profile. An external TTS error is surfaced and
+does not silently fall back to system speech.
+
+Realtime is host-private and derives only from the selected text profile. It
+requires an explicitly native `openai-realtime` profile,
+reuses that profile's base URL, credential, and allowed headers, and fails with
+`provider.realtime.unsupported` without fetching for other profiles.
 
 The public plugin-facing `voice.listen` capability remains one-shot push-to-talk,
 never ambient. The host captures in a hidden, isolated microphone window and displays
@@ -296,7 +306,11 @@ mirror of all this is the SDK in [Plugin SDK v3](/sdk).
 - `plugin-diagnostics.ts` - per-plugin error/quota/settings-block collector for
   the inspector and health UI.
 - `plugin-platform-settings.ts` - global gates for audio, voice, speech,
-  microphone, quiet hours, and AI provider choices.
+  microphone, quiet hours, and validated provider profiles/selections. The
+  provider service resolves opaque credentials from `PluginSecretsStore` only
+  at operation start and exposes redacted role/realtime diagnostics.
+- `provider-service.ts` - narrow host-owned text, transcription, speech, and
+  private realtime operation codecs.
 - `plugin-voice.ts` + `voice-listening-service.ts` - the plugin-facing one-shot
   `voice.listen` facade and host-owned transcription/cancellation lifecycle,
   plus private realtime entry points and shared shutdown wiring; realtime is not
