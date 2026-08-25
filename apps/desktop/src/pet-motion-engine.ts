@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import type { BrowserWindow } from "electron";
 
 import { clampToTerminalBounds, getEffectiveConfinementBounds } from "./confinement-manager.js";
-import { clampToNearestDisplayIfOffscreen, clampToVisibleWorkArea, defaultPetWindowSize, isCrossDisplayRoamingEnabled, type Point } from "./display.js";
+import { clampToNearestDisplayIfOffscreen, clampToVisibleWorkArea, defaultPetWindowSize, isCrossDisplayRoamingEnabled, type Point, type WindowSize } from "./display.js";
 // isPetWindowDragging is lazily loaded via _setIsPetWindowDraggingForTesting seam
 
 // ---------------------------------------------------------------------------
@@ -173,7 +173,7 @@ export async function motionMoveTo(petHandleId: string, accessor: WindowAccessor
   // competing-writer race that causes jitter.
   if (state.follow !== null || state.physics !== null) {
     const [startX, startY] = window.getPosition();
-    const clamped = clampPosition(petHandleId, target);
+    const clamped = clampPosition(petHandleId, target, getWindowSize(window));
     state.moveTarget = { x: clamped.x, y: clamped.y, startX, startY, elapsed: 0, durationMs, easing };
     // Return a promise that resolves when the generation changes (move completes or is superseded).
     return new Promise<void>((resolve) => {
@@ -187,7 +187,7 @@ export async function motionMoveTo(petHandleId: string, accessor: WindowAccessor
 
   // No continuous loop — drive it ourselves (legacy step loop).
   const [startX, startY] = window.getPosition();
-  const clamped = clampPosition(petHandleId, target);
+  const clamped = clampPosition(petHandleId, target, getWindowSize(window));
   const steps = Math.max(4, Math.round(durationMs / 33));
   for (let step = 1; step <= steps; step += 1) {
     const live = accessor();
@@ -275,6 +275,7 @@ function tickPet(petHandleId: string, accessor: WindowAccessor, state: MotionSta
   }
   let rawX = x + state.fracX;
   let rawY = y + state.fracY;
+  const windowSize = getWindowSize(window);
 
   if (state.follow) {
     const cursor = getScreen().getCursorScreenPoint();
@@ -310,11 +311,11 @@ function tickPet(petHandleId: string, accessor: WindowAccessor, state: MotionSta
     // tie-break at monitor seams and caused rapid floor oscillation between
     // mismatched-height displays. Using the geometric center also aligns with
     // clampToVisibleWorkArea, which already uses the center for display selection.
-    const centerX = x + Math.round(defaultPetWindowSize.width / 2);
-    const centerY = y + Math.round(defaultPetWindowSize.height / 2);
+    const centerX = x + Math.round(windowSize.width / 2);
+    const centerY = y + Math.round(windowSize.height / 2);
     const display = getScreen().getDisplayNearestPoint({ x: centerX, y: centerY });
     const confinementBounds = getEffectiveConfinementBounds(petHandleId);
-    const floor = computeGravityFloor(confinementBounds, display.workArea.y, display.workArea.height, defaultPetWindowSize.height);
+    const floor = computeGravityFloor(confinementBounds, display.workArea.y, display.workArea.height, windowSize.height);
     state.physics.vy = Math.min(state.physics.vy + 2.2, 48);
     rawY = y + state.physics.vy;
     if (rawY >= floor) {
@@ -333,7 +334,7 @@ function tickPet(petHandleId: string, accessor: WindowAccessor, state: MotionSta
   state.fracY = nextYFull - nextY;
 
   if (nextX !== x || nextY !== y) {
-    const clamped = clampPosition(petHandleId, { x: nextX, y: nextY });
+    const clamped = clampPosition(petHandleId, { x: nextX, y: nextY }, windowSize);
     if (!Number.isFinite(clamped.x) || !Number.isFinite(clamped.y)) return;  // skip write when clamp produces NaN (e.g. from NaN workArea on monitor disconnect)
     window.setPosition(clamped.x, clamped.y, false);
   }
@@ -348,11 +349,19 @@ function delay(ms: number): Promise<void> {
  * - If the pet has active terminal confinement, clamp to terminal bounds.
  * - Otherwise clamp to visible work area (free-roam).
  */
-function clampPosition(petHandleId: string, pos: Point): Point {
+function clampPosition(petHandleId: string, pos: Point, windowSize: WindowSize = defaultPetWindowSize): Point {
   const terminalBounds = getEffectiveConfinementBounds(petHandleId);
-  if (terminalBounds) return clampToTerminalBounds(pos, defaultPetWindowSize, terminalBounds);
-  if (isCrossDisplayRoamingEnabled()) return clampToNearestDisplayIfOffscreen(pos, defaultPetWindowSize);
-  return clampToVisibleWorkArea(pos, defaultPetWindowSize);
+  if (terminalBounds) return clampToTerminalBounds(pos, windowSize, terminalBounds);
+  if (isCrossDisplayRoamingEnabled()) return clampToNearestDisplayIfOffscreen(pos, windowSize);
+  return clampToVisibleWorkArea(pos, windowSize);
+}
+
+function getWindowSize(window: BrowserWindow): WindowSize {
+  const candidate = window as BrowserWindow & { getBounds?: () => { width: number; height: number } };
+  if (typeof candidate.getBounds !== "function") return defaultPetWindowSize;
+  const bounds = candidate.getBounds();
+  if (!Number.isFinite(bounds.width) || bounds.width <= 0 || !Number.isFinite(bounds.height) || bounds.height <= 0) return defaultPetWindowSize;
+  return { width: bounds.width, height: bounds.height };
 }
 
 /** Exported for unit testing only — do not call from production code. */

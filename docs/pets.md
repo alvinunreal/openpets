@@ -125,6 +125,9 @@ target vectors and physics overrides through the engine's public API
 **sole continuous position writer**; all per-pet step loops were eliminated to
 prevent jitter from competing writers. Sub-pixel fractional accumulators
 (`fracX` / `fracY` in `MotionState`) ensure smooth movement at any tick rate.
+Gravity and per-tick containment use the live native pet-window bounds, not only
+the nominal canvas dimensions, so platform-specific window chrome cannot place
+the window below a display work area.
 See [Plugin platform](/plugins) and [Plugin SDK v3](/sdk) for the plugin side.
 
 ### Display containment and cross-display roaming
