@@ -1,5 +1,5 @@
 ---
-description: Product direction and delivery goal for OpenPets v4: a conversational pet that can use enabled companion capabilities.
+description: "Product direction and delivery goal for OpenPets v4: a conversational pet that can use enabled companion capabilities."
 ---
 
 # OpenPets v4 — Pet Assistant
@@ -25,26 +25,23 @@ surface; chat and voice product surfaces consume those integrations.
 
 ## The product experience
 
-Voice is the first conversation surface:
-
-1. The person clicks the pet's Talk control or uses its keyboard shortcut.
-2. The pet visibly enters a listening state and OpenPets shows its microphone
-   indicator.
-3. The person speaks naturally: “Set a focus timer for 25 minutes,” “Remind me
-   tomorrow at 9,” or “What focus session is running?”
-4. The pet understands the request, invokes an available capability, reflects
-   its state while working, and answers plainly: “Focus started for 25 minutes.”
-5. The person can continue the conversation, interrupt the pet, mute it, or end
-   the session explicitly.
+The intended voice product experience is described here for v4 planning, but
+the current #147 delivery deliberately adds no Talk control or keyboard
+shortcut. Those activation surfaces are deferred to #150. The host contract
+already supports the eventual flow: one activation owns one bounded session,
+the pet enters listening, the person speaks, the canonical assistant may invoke
+an enabled capability, and authoritative output is spoken before the session
+can accept another turn.
 
 Chat is another v4 conversation surface, not a separate assistant product. It
 uses the same conversation, capabilities, execution results, and pet behavior;
 it only changes the input and output modality.
 
-Voice conversations include live transcription, so spoken requests and the
-pet's responses are available in the conversation UI as text. The persistence
-policy is bounded, recent local history that the owner can inspect and delete;
-v4 does not infer or retain long-term semantic memory.
+The generic #147 session emits final user and assistant transcript events only;
+it does not expose a conversation UI or retain transcript/history. Chat UI and
+bounded recent-history management remain deferred to #148 and #149. The
+provider-neutral host contract does not infer or retain long-term semantic
+memory.
 
 OpenPets connects the experience to configured AI, speech-to-text, and
 text-to-speech providers through host-owned integrations. The product contract
@@ -100,6 +97,31 @@ sensitive-action confirmation surface. The Control Center already provides
 editable provider profiles and communication preferences on the host. Later v4
 issues add retained history and voice controls on top of the host contract
 rather than moving provider or capability authority into plugins.
+### #147 generic voice contract
+
+The desktop host composes final-only bounded STT capture, the canonical
+generation-pinned Pet Assistant capability runtime, and provider-backed TTS.
+Text, STT, and TTS profiles are selected independently; the STT selection is
+snapshotted before capture and remains fixed through transcription. Assistant
+capability results remain authoritative, and the terminal assistant response is
+the exact text handed to TTS. TTS playback is request-scoped with duration-aware
+bounded deadlines and settles replacement, stop, renderer loss, navigation, and
+timeout paths exactly once. Voice activity renders through a dedicated composable
+pet slot so cleanup does not erase unrelated plugin display state.
+
+An activation owns one session and its microphone reservation. Ending releases
+that reservation; a later activation creates a fresh session. Assistant,
+plugin one-shot, and private Realtime lanes release only their own work. A
+shared host resource owner destroys the privacy indicator only after all lanes
+have stopped. #147 adds no Talk controls/shortcut, chat UI, retained history, or
+Realtime protocol behavior; #150, #148, #149, and #139 remain deferred.
+
+The current #138/#146/#145 implementation has no chat surface,
+transcript/history persistence, or editable sensitive-action confirmation
+surface. The Control Center already provides editable provider profiles and
+communication preferences on the host. Later v4 issues add conversation
+surfaces on top of the host contract rather than moving provider or capability
+authority into plugins.
 
 ## v4 outcomes
 

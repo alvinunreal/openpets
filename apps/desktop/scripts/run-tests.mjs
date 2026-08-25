@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, "..");
 
-const preloadChecks = ["control-center-preload.cjs", "pet-preload.cjs", "plugin-sdk-preload.cjs", "panel-preload.cjs", "voice-realtime-preload.cjs"];
+const preloadChecks = ["control-center-preload.cjs", "pet-preload.cjs", "pet-tts-helper.cjs", "plugin-sdk-preload.cjs", "panel-preload.cjs", "voice-realtime-preload.cjs"];
 const behaviorTests = [
   ".test-dist/tests/lease-manager.test.js",
   ".test-dist/tests/lease-manager-fixes.test.js",
@@ -51,6 +51,10 @@ const behaviorTests = [
   ".test-dist/tests/voice-bridge.test.js",
   ".test-dist/tests/voice-lifecycle.test.js",
   ".test-dist/tests/voice-conversation.test.js",
+  ".test-dist/tests/voice-assistant-session.test.js",
+  ".test-dist/tests/voice-assistant-host-core.test.js",
+  ".test-dist/tests/voice-playback.test.js",
+  ".test-dist/tests/voice-activity-slot.test.js",
   ".test-dist/tests/tray-voice.test.js",
   ".test-dist/tests/plugin-bridge-fuzz.test.js",
   ".test-dist/tests/pet-fallback-notify.test.js",

@@ -307,7 +307,9 @@ for (const failure of [
   assert.equal(transport.resources.audioAttached, false);
   assert.equal(transport.resources.windowAlive, false);
   assert.equal(current.indicator.liveTracks, 0);
-  assert.equal(current.surface.destroyCount, 1);
+  assert.equal(current.surface.destroyCount, 0, "lane shutdown must not destroy shared privacy state");
+  current.indicator.shutdown();
+  assert.equal(current.surface.destroyCount, 1, "the shared owner performs final indicator destruction");
   assert.equal(current.microphoneArbiter.activeOwner, null);
   await assert.rejects(() => current.service.start(), /shut down/);
 }

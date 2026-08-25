@@ -20,6 +20,7 @@ import {
 } from "../src/voice-listening-service.js";
 import { VoicePrivacyIndicator, type VoicePrivacyIndicatorSurface } from "../src/voice-privacy-indicator.js";
 import { VoiceOperationState } from "../src/voice-operation-state.js";
+import { VoiceMicrophoneArbiter } from "../src/voice-microphone-arbiter.js";
 
 class FakeSurface implements VoicePrivacyIndicatorSurface {
   showCount = 0;
@@ -123,7 +124,7 @@ type Fixture = {
 
 function fixture(
   transcriber: (capture: VoiceCaptureResult, signal: AbortSignal) => Promise<string> = async () => "  hello  ",
-  options: { acquisitionTimeoutMs?: number; transcriptionTimeoutMs?: number; onPhaseChange?: (phase: "acquiring" | "recording" | "transcribing") => void } = {},
+  options: { acquisitionTimeoutMs?: number; transcriptionTimeoutMs?: number; onPhaseChange?: (phase: "acquiring" | "recording" | "transcribing") => void; microphoneArbiter?: VoiceMicrophoneArbiter } = {},
 ): Fixture {
   const surface = new FakeSurface();
   const indicator = new VoicePrivacyIndicator(() => surface);
@@ -131,7 +132,7 @@ function fixture(
   const capture = new VoiceCaptureService((_, onAcquired) => {
     attempt = new ControlledAttempt(onAcquired);
     return attempt;
-  }, indicator, { acquisitionTimeoutMs: options.acquisitionTimeoutMs });
+  }, indicator, { acquisitionTimeoutMs: options.acquisitionTimeoutMs, microphoneArbiter: options.microphoneArbiter });
   const listening = new VoiceListeningService(capture, transcriber, { transcriptionTimeoutMs: options.transcriptionTimeoutMs, onPhaseChange: options.onPhaseChange });
   return { surface, indicator, capture, listening, getAttempt: () => attempt! };
 }
@@ -144,6 +145,31 @@ assert.equal(VOICE_ACQUISITION_TIMEOUT_MS, 15_000);
 assert.equal(VOICE_TRANSCRIPTION_TIMEOUT_MS, 30_000);
 assert.equal(VOICE_MIN_RECORDING_DURATION_MS, 1_000);
 assert.equal(VOICE_MAX_RECORDING_DURATION_MS, 30_000);
+
+{
+  const captureArbiter = new VoiceMicrophoneArbiter();
+  const foreignArbiter = new VoiceMicrophoneArbiter();
+  const foreignReservation = foreignArbiter.reserve("listen");
+  const current = fixture(async () => "hello", { microphoneArbiter: captureArbiter });
+
+  await assert.rejects(() => current.capture.start(5_000, foreignReservation), /different arbiter/);
+  assert.equal(captureArbiter.activeOwner, null, "foreign reservations do not acquire the capture arbiter");
+  foreignArbiter.releaseReservation(foreignReservation);
+}
+
+{
+  const microphoneArbiter = new VoiceMicrophoneArbiter();
+  const reservation = microphoneArbiter.reserve("listen");
+  const current = fixture(async () => "hello", { microphoneArbiter });
+  const handlePromise = current.capture.start(5_000, reservation);
+  await flush();
+  current.getAttempt().resolveAcquisition();
+  const handle = await handlePromise;
+  current.getAttempt().recording.resolveCapture();
+  await handle.result;
+  microphoneArbiter.releaseReservation(reservation);
+  assert.equal(microphoneArbiter.activeOwner, null, "same-arbiter reservations still complete normal capture");
+}
 
 {
   const state = new VoiceOperationState();
@@ -334,7 +360,7 @@ assert.equal(VOICE_MAX_RECORDING_DURATION_MS, 30_000);
   await flush();
   await current.listening.shutdown();
   await assert.rejects(pending, /OpenPets is shutting down\./);
-  assert.equal(current.surface.destroyCount, 1);
+  assert.equal(current.surface.destroyCount, 0, "shared privacy indicator teardown belongs to the host");
   assert.equal(current.getAttempt().disposeCount, 1);
 }
 

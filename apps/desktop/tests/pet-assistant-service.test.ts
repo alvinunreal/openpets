@@ -30,6 +30,7 @@ function model(responses: readonly PetAssistantTextModelResponse[], requests: Pe
 {
   const resultObject = { started: true, minutes: 25 };
   const requests: PetAssistantTextModelRequest[] = [];
+  const activities: string[] = [];
   const service = new PetAssistantService(model([
     { type: "tool-calls", toolCalls: [{ id: "call-1", name: petAssistantToolName("focus.buddy", "start"), arguments: { minutes: 25 } }] },
     { type: "text", text: "Focus started for 25 minutes." },
@@ -38,9 +39,11 @@ function model(responses: readonly PetAssistantTextModelResponse[], requests: Pe
     assert.deepEqual(input, { minutes: 25 });
     return { ok: true, result: resultObject };
   }));
+  service.subscribe((event) => { if (event.type === "activity") activities.push(event.activity); });
   const result = await service.startTurn("conversation", "Start focus for 25 minutes.");
   assert.equal(result.status, "completed");
   assert.equal(result.response, "Focus started for 25 minutes.");
+  assert.deepEqual(activities, ["thinking", "acting", "thinking", "responding"], "the assistant returns to thinking after each capability batch");
   assert.deepEqual((requests[1]?.messages.at(-1) as { result: { result: unknown } }).result.result, resultObject);
 }
 

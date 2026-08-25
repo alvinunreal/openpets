@@ -21,7 +21,7 @@ export interface HostProviderOperations {
   binary(snapshot: ProviderOperationSnapshot, path: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<Uint8Array>;
   stream(snapshot: ProviderOperationSnapshot, path: string, body: Record<string, unknown>, onData: (data: string) => void, signal?: AbortSignal): Promise<void>;
   transcribe(snapshot: ProviderOperationSnapshot, audio: Uint8Array, mimeType: string, signal?: AbortSignal): Promise<string>;
-  synthesize(snapshot: ProviderOperationSnapshot, text: string, opts: { voice?: string; rate?: number }): Promise<{ readonly bytes: Uint8Array; readonly mimeType: "audio/mpeg" } | null>;
+  synthesize(snapshot: ProviderOperationSnapshot, text: string, opts: { voice?: string; rate?: number }, signal?: AbortSignal): Promise<{ readonly bytes: Uint8Array; readonly mimeType: "audio/mpeg" } | null>;
   negotiateRealtime(snapshot: ProviderOperationSnapshot, sdp: string, session: Readonly<Record<string, unknown>>, signal?: AbortSignal): Promise<string>;
 }
 
@@ -87,11 +87,11 @@ export class HostProviderService implements HostProviderOperations {
     } finally { await request.release(); }
   }
 
-  async synthesize(snapshot: ProviderOperationSnapshot, text: string, opts: { voice?: string; rate?: number }): Promise<{ readonly bytes: Uint8Array; readonly mimeType: "audio/mpeg" } | null> {
+  async synthesize(snapshot: ProviderOperationSnapshot, text: string, opts: { voice?: string; rate?: number }, signal?: AbortSignal): Promise<{ readonly bytes: Uint8Array; readonly mimeType: "audio/mpeg" } | null> {
     const profile = snapshot.profile;
     if (profile.adapter === "system-tts") return null;
     if (profile.adapter === "minimax-tts") {
-      const parsed = await this.json(snapshot, "/t2a_v2", { model: profile.model, text, stream: false, output_format: "hex", audio_setting: { format: "mp3" }, voice_setting: { voice_id: opts.voice || "English_expressive_narrator", ...(opts.rate === undefined ? {} : { speed: opts.rate }) } }, undefined, MINIMAX_MAX_RESPONSE_BYTES) as { data?: { audio?: string; status?: number }; base_resp?: { status_code?: number; status_msg?: string } };
+      const parsed = await this.json(snapshot, "/t2a_v2", { model: profile.model, text, stream: false, output_format: "hex", audio_setting: { format: "mp3" }, voice_setting: { voice_id: opts.voice || "English_expressive_narrator", ...(opts.rate === undefined ? {} : { speed: opts.rate }) } }, signal, MINIMAX_MAX_RESPONSE_BYTES) as { data?: { audio?: string; status?: number }; base_resp?: { status_code?: number; status_msg?: string } };
       if (parsed.base_resp?.status_code !== undefined && parsed.base_resp.status_code !== 0) throw providerError("MiniMax speech synthesis failed.", "provider.response.invalid");
       const hex = parsed.data?.audio;
       if (parsed.data?.status !== 2 || typeof hex !== "string" || hex.length === 0 || hex.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(hex)) throw providerError("MiniMax returned invalid speech audio.", "provider.response.invalid");
@@ -100,10 +100,10 @@ export class HostProviderService implements HostProviderOperations {
     }
     if (profile.adapter === "elevenlabs-tts") {
       const voice = opts.voice || "21m00Tcm4TlvDq8ikWAM";
-      return { bytes: await this.binary(snapshot, `/text-to-speech/${encodeURIComponent(voice)}`, { text, model_id: profile.model, ...(opts.rate === undefined ? {} : { voice_settings: { speed: opts.rate } }) }), mimeType: "audio/mpeg" };
+      return { bytes: await this.binary(snapshot, `/text-to-speech/${encodeURIComponent(voice)}`, { text, model_id: profile.model, ...(opts.rate === undefined ? {} : { voice_settings: { speed: opts.rate } }) }, signal), mimeType: "audio/mpeg" };
     }
     if (profile.adapter === "openai-compatible-speech") {
-      return { bytes: await this.binary(snapshot, "/audio/speech", { model: profile.model, input: text, voice: opts.voice || "alloy", response_format: "mp3", ...(opts.rate === undefined ? {} : { speed: opts.rate }) }), mimeType: "audio/mpeg" };
+      return { bytes: await this.binary(snapshot, "/audio/speech", { model: profile.model, input: text, voice: opts.voice || "alloy", response_format: "mp3", ...(opts.rate === undefined ? {} : { speed: opts.rate }) }, signal), mimeType: "audio/mpeg" };
     }
     throw providerError("Selected provider is not a TTS profile.", "provider.role.unsupported");
   }

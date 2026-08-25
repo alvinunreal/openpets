@@ -1,4 +1,5 @@
 const { ipcRenderer } = require("electron");
+const { splitSystemSpeech } = require("./pet-tts-helper.cjs");
 
 const allowedMotionStates = new Set(["idle", "run-left", "run-right"]);
 const allowedReactionStates = new Set(["idle", "running-right", "running-left", "waving", "jumping", "failed", "waiting", "running", "review"]);
@@ -324,40 +325,92 @@ ipcRenderer.on("openpets:stop-audio", () => {
 
 // --- Plugin TTS ---------------------------------------------------------------
 
+let generatedTtsRequest = 0;
+let activeTts = null;
+
+const sendTtsCompletion = (request, outcome) => {
+  try { ipcRenderer.send(request.kind === "audio" ? "openpets:tts-audio-finished" : "openpets:tts-speech-finished", { requestId: request.requestId, kind: request.kind, outcome }); } catch { /* main process observes renderer loss separately */ }
+};
+
+const stopTtsMedia = (request) => {
+  if (!request) return;
+  if (request.kind === "audio") {
+    try { request.media.pause(); } catch { /* noop */ }
+    return;
+  }
+  try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch { /* noop */ }
+};
+
+const settleTts = (request, outcome) => {
+  if (!request || activeTts !== request) return false;
+  activeTts = null;
+  stopTtsMedia(request);
+  sendTtsCompletion(request, outcome);
+  return true;
+};
+
+const stopMatchingTts = (requestId, kind) => {
+  const request = activeTts;
+  if (!request) return false;
+  if (requestId !== undefined && requestId !== request.requestId) return false;
+  if (kind !== undefined && request.kind !== kind) return false;
+  return settleTts(request, "stopped");
+};
+
 ipcRenderer.on("openpets:tts-speak", (_event, payload) => {
   try {
     if (!payload || typeof payload.text !== "string" || !window.speechSynthesis) return;
-    const utterance = new SpeechSynthesisUtterance(payload.text.slice(0, 500));
-    if (typeof payload.rate === "number" && payload.rate >= 0.5 && payload.rate <= 2) utterance.rate = payload.rate;
-    if (typeof payload.voice === "string" && payload.voice) {
-      const match = window.speechSynthesis.getVoices().find((voice) => voice.name === payload.voice || voice.lang === payload.voice);
-      if (match) utterance.voice = match;
-    }
-    window.speechSynthesis.speak(utterance);
-  } catch { /* tts is best-effort */ }
+    settleTts(activeTts, "stopped");
+    const request = { requestId: typeof payload.requestId === "string" ? payload.requestId : `renderer-tts-${++generatedTtsRequest}`, kind: "system", media: { chunks: splitSystemSpeech(payload.text), index: 0 } };
+    activeTts = request;
+    const speakNext = () => {
+      if (activeTts !== request) return;
+      const text = request.media.chunks[request.media.index];
+      if (typeof text !== "string") { settleTts(request, "ended"); return; }
+      const utterance = new SpeechSynthesisUtterance(text);
+      if (typeof payload.rate === "number" && payload.rate >= 0.5 && payload.rate <= 2) utterance.rate = payload.rate;
+      if (typeof payload.voice === "string" && payload.voice) {
+        const match = window.speechSynthesis.getVoices().find((voice) => voice.name === payload.voice || voice.lang === payload.voice);
+        if (match) utterance.voice = match;
+      }
+      utterance.addEventListener("end", () => {
+        if (activeTts !== request) return;
+        request.media.index += 1;
+        if (request.media.index >= request.media.chunks.length) settleTts(request, "ended");
+        else speakNext();
+      });
+      utterance.addEventListener("error", () => { settleTts(request, "error"); });
+      try { window.speechSynthesis.speak(utterance); } catch { settleTts(request, "error"); }
+    };
+    speakNext();
+  } catch { settleTts(activeTts, "error"); }
 });
 
-ipcRenderer.on("openpets:tts-stop", () => {
-  try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch { /* noop */ }
+ipcRenderer.on("openpets:tts-stop", (_event, payload) => {
+  stopMatchingTts(typeof payload?.requestId === "string" ? payload.requestId : undefined, "system");
 });
-
-let activeTtsAudio = null;
 
 ipcRenderer.on("openpets:tts-audio", (_event, payload) => {
   try {
     if (!payload || typeof payload.dataUrl !== "string" || !payload.dataUrl.startsWith("data:audio/")) return;
-    if (activeTtsAudio) activeTtsAudio.pause();
+    settleTts(activeTts, "stopped");
     const element = new Audio(payload.dataUrl);
-    activeTtsAudio = element;
-    element.addEventListener("ended", () => { if (activeTtsAudio === element) activeTtsAudio = null; });
-    element.addEventListener("error", () => { if (activeTtsAudio === element) activeTtsAudio = null; });
-    void element.play().catch(() => { if (activeTtsAudio === element) activeTtsAudio = null; });
-  } catch { /* tts is best-effort */ }
+    const request = { requestId: typeof payload.requestId === "string" ? payload.requestId : `renderer-tts-${++generatedTtsRequest}`, kind: "audio", media: element };
+    activeTts = request;
+    element.addEventListener("ended", () => {
+      settleTts(request, "ended");
+    });
+    element.addEventListener("error", () => {
+      settleTts(request, "error");
+    });
+    void element.play().catch(() => {
+      settleTts(request, "error");
+    });
+  } catch { settleTts(activeTts, "error"); }
 });
 
-ipcRenderer.on("openpets:tts-audio-stop", () => {
-  try { if (activeTtsAudio) activeTtsAudio.pause(); } catch { /* noop */ }
-  activeTtsAudio = null;
+ipcRenderer.on("openpets:tts-audio-stop", (_event, payload) => {
+  stopMatchingTts(typeof payload?.requestId === "string" ? payload.requestId : undefined, "audio");
 });
 
 const installMouseInterop = () => {

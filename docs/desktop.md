@@ -254,17 +254,37 @@ wake-word listening is implemented. While active, the existing tray menu exposes
 transcription** while provider transcription is pending; the control disappears
 when the operation settles.
 
-Phase 1 also adds a host-private `VoiceConversationService` and a separate
-hidden, sandboxed realtime renderer. The service owns one persistent conversation,
-shares the microphone lease with one-shot listening, tracks interruptions and
-mute state internally, rejects stale session events, and releases privacy state
-on every close path. The renderer owns `getUserMedia`, WebRTC, the data channel,
-and remote audio; the host keeps the OpenAI credential and performs bounded SDP
-negotiation. The session uses automatic server VAD turns with interruption and no
-tools. This phase intentionally has no visible conversation status, UI, tray
-control, pet indicator, settings, public SDK method, plugin permission, plugin
-tool, transcript, memory, or generic TTS behavior. Those are deferred until the
-host lifecycle and protocol are reviewed for Phase 2.
+The private `VoiceConversationService` and hidden, sandboxed realtime renderer
+remain infrastructure only. The service owns one realtime lane, shares the
+microphone lease with one-shot listening, tracks interruptions and mute state,
+rejects stale events, and releases only its own track/lease on close. It never
+destroys the shared privacy indicator; `voice-resource-owner.ts` performs that
+final teardown after the assistant, plugin one-shot, and realtime lanes stop.
+The renderer owns `getUserMedia`, WebRTC, the data channel, and remote audio; the
+host keeps the OpenAI credential and performs bounded SDP negotiation. Realtime
+protocol work remains deferred to #139.
+
+#### Generic host voice session (#147)
+
+`voice-assistant-host.ts` exposes a host controller/factory, not an app-lifetime
+terminal session. Each activation creates one `VoiceAssistantSession`; ending it
+releases the microphone reservation and the next activation creates a fresh
+session. The composition is bounded final-only capture/transcription → canonical
+Pet Assistant → authoritative TTS. Text, STT, and TTS provider profiles are
+independent, with the STT profile snapshotted before capture begins. No Talk
+control, shortcut, chat UI, retained history, or Realtime protocol is added here.
+
+Pet-window playback is request-scoped by `{ requestId, kind }`. Renderer audio and
+system speech settle replacement, matching/unscoped stop, error, close, renderer
+loss, navigation, and timeout paths exactly once. Deadlines are bounded but
+duration-aware: system speech accounts for the complete chunked text and speech
+rate, while provider audio receives a generous allowance under the hard maximum.
+System speech reports one completion only after the last chunk, preserving the
+authoritative assistant text. Voice activity uses its own composable pet slot, so
+voice animation/status cleanup cannot erase an unrelated plugin message, media
+bubble, or status badge. It maps listening/thinking/acting/speaking to
+waiting/thinking/working/running and clears the voice slot on mute, pause, end,
+and shutdown.
 
 #### Pet Assistant host integration (#138, #146)
 
