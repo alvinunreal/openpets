@@ -160,7 +160,9 @@ export class PetAssistantService {
       const terminalResult = toolOutcomes.length > 0
         ? { ...result, ...(outcomeSummary === undefined ? {} : { response: outcomeSummary }), toolOutcomes }
         : result;
-      if (active.turnMessages && active.turnMessages.length > 0) this.#commit(conversationId, active.archiveTurnId, active.turnMessages);
+      if (active.turnMessages && shouldRetainActiveContext(terminalResult, active.turnMessages)) {
+        this.#commit(conversationId, active.archiveTurnId, active.turnMessages);
+      }
       this.#archiveTerminalText(conversationId, active.archiveTurnId, terminalResult, active.turnMessages);
       active.terminal.value = freezeEvent(terminalResult);
       if (result.status === "cancelled") this.#emitActivity(conversationId, turnId, "cancelled", active.activeToolName);
@@ -412,6 +414,11 @@ function selectArchivedContext(messages: readonly PetAssistantArchivedMessage[],
     .map((message): PetAssistantMessage => deepFreeze({ role: message.role, content: message.text }));
   while (selected.length > 0 && jsonByteLength(selected) > PET_ASSISTANT_ARCHIVED_CONTEXT_MAX_BYTES) selected.shift();
   return selected;
+}
+
+/** Preserve completed side effects for the next turn without retaining unanswered user-only failures. */
+function shouldRetainActiveContext(result: PetAssistantTurnResult, messages: readonly PetAssistantMessage[]): boolean {
+  return result.status === "completed" || messages.some((message) => message.role === "tool" && message.result.status === "completed");
 }
 
 /** Structured non-completed outcomes replace untrusted final model prose. */

@@ -84,6 +84,18 @@ function messageContent(message: PetAssistantTextModelRequest["messages"][number
     assert.equal(failedResult.status, "failed");
     assert.deepEqual(archive.list(), [], "a failed turn does not leave unanswered prompt context behind");
 
+    const activeRequests: PetAssistantTextModelRequest[] = [];
+    let attempt = 0;
+    const activeContext = new PetAssistantService({ generate: (request) => {
+      attempt += 1;
+      if (attempt === 1) throw new Error("first turn failed");
+      activeRequests.push(request);
+      return { type: "text", text: "fresh answer" };
+    } }, emptyRuntime);
+    await activeContext.startTurn(PET_ASSISTANT_CONVERSATION_ID, "unanswered active question");
+    await activeContext.startTurn(PET_ASSISTANT_CONVERSATION_ID, "next active question");
+    assert.equal(activeRequests[0]!.messages.some((message) => messageContent(message) === "unanswered active question"), false, "a failed turn never enters active in-memory context");
+
     let providerCalls = 0;
     const archiveErrors: string[] = [];
     const unavailableArchive = {
