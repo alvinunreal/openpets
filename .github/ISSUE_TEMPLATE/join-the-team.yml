@@ -1,0 +1,44 @@
+name: Join the team
+description: Apply for a core team role - developer, vibe coder, pixel artist, community founder, platform maintainer, or docs writer.
+title: "[Team] "
+labels: ["team-application"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for wanting to help build OpenPets. Short answers are fine - this is a conversation starter, not a job interview.
+        Open roles are described at https://openpets.dev/contribute
+  - type: dropdown
+    id: role
+    attributes:
+      label: Role
+      description: Which area do you want to own?
+      options:
+        - Core Developer
+        - Vibe Coder
+        - Pixel Artist
+        - Community Founder
+        - Platform Maintainer (Linux)
+        - Platform Maintainer (Windows)
+        - Platform Maintainer (macOS)
+        - Docs Writer
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: about
+    attributes:
+      label: About you
+      description: Who you are and why OpenPets. Links welcome - GitHub projects, portfolio, pets or plugins you made, communities you have run.
+    validations:
+      required: true
+  - type: input
+    id: time
+    attributes:
+      label: Time you can give
+      placeholder: e.g. a few hours a week
+  - type: textarea
+    id: first-step
+    attributes:
+      label: What would you start with?
+      description: An open issue you would take, a pet you would draw, a doc you would fix, or how you would kick off the community.
