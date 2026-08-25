@@ -58,6 +58,15 @@ router, or participates in LAN pet presence or leases. The v1 transport is raw
 unencrypted TCP and is intended only for a trusted private network or an
 encrypted overlay with its own ACLs; CGNAT addressing alone is not encryption.
 
+The host provider service owns exactly three independent selections: one text
+profile, one STT profile, and one TTS profile. Secret credential values are
+resolved only from `PluginSecretsStore`; optional static provider header values
+are persisted in the local provider-profile settings, while Control Center
+snapshots expose header names only. Generic
+OpenAI-compatible text covers cloud gateways and Ollama/LM Studio/vLLM, while
+native Anthropic, MiniMax speech, ElevenLabs speech, system TTS, and explicit
+Whisper-compatible transcription retain their distinct wire contracts.
+
 ## The packages, and what each is for
 
 | Package | Role | Doc |
@@ -88,7 +97,7 @@ default pet and ignores remote configuration.
 
 After `PluginService.start()` resolves, the desktop constructs one canonical
 in-memory Pet Assistant service. Each turn reads the current host text-provider
-configuration and the current host-owned personality profile, discovers enabled
+provider operation and the current host-owned personality profile, discovers enabled
 generation-pinned capabilities, and routes validated tool calls back through
 `PluginService`. Provider codecs and the lifecycle enforce bounded context,
 payloads, results, timeouts, cancellation, and final output. Assistant requests
@@ -104,10 +113,14 @@ turn start, so a Settings edit applies to the next turn without changing an
 already-running turn. If any structured capability outcome is rejected,
 unavailable, or indeterminate, the terminal user-visible response is a
 deterministic host-generated status summary instead of untrusted model prose;
-turns whose outcomes all complete retain the model response. Chat/voice UI,
-transcript/history persistence, and provider-profile UI remain separate v4 work.
+turns whose outcomes all complete retain the model response. Chat/voice UI and
+transcript/history persistence remain separate v4 work; provider-profile
+management is implemented through the host-owned Control Center bridge.
 
-These are the flows worth holding in memory. Each links to the doc that details it.
+Provider profile management for issue #145 is a host-owned Control Center flow:
+the renderer consumes redacted snapshots and explicit actions over preload while
+the main process owns validation, persistence, and credentials. These are the
+flows worth holding in memory. Each links to the doc that details it.
 
 - **Agent reaction → visible pet.** Agent activity is classified into a reaction
   category, sent via the client over IPC, the lease manager routes it to a pet

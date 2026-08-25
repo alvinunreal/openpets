@@ -41,6 +41,7 @@ type ActiveTurn = {
   activeCall?: PetAssistantToolCall;
   turnMessages?: PetAssistantMessage[];
   readonly composition: PetAssistantComposition;
+  model: PetAssistantTextModel;
 };
 
 const cancelledError = new Error("Pet Assistant turn cancelled.");
@@ -86,7 +87,7 @@ export class PetAssistantService {
     const abortFromCaller = () => controller.abort();
     if (signal.aborted) controller.abort();
     else signal.addEventListener("abort", abortFromCaller, { once: true });
-    const active: ActiveTurn = { turnId: `turn-${this.#nextTurn++}`, controller, terminal: {}, invocationStarted: false, composition: this.#compositionProvider() };
+    const active: ActiveTurn = { turnId: `turn-${this.#nextTurn++}`, controller, terminal: {}, invocationStarted: false, composition: this.#compositionProvider(), model: this.#model };
     this.#active.set(conversationId, active);
     const pending = this.#runTurn(conversationId, text, controller.signal, active).finally(() => {
       signal.removeEventListener("abort", abortFromCaller);
@@ -150,6 +151,7 @@ export class PetAssistantService {
     signal.addEventListener("abort", abort, { once: true });
 
     try {
+      if (this.#model.beginOperation) active.model = await waitFor(Promise.resolve(this.#model.beginOperation()), signal);
       if (signal.aborted) return finish({ conversationId, turnId, status: "cancelled", error: cancelledError.message });
       if (text.trim() === "") return finish(this.#failed(conversationId, turnId, "Assistant user message must not be empty."));
       if (byteLength(text) > this.#limits.maxMessageBytes) return finish(this.#failed(conversationId, turnId, "Assistant user message is too large."));
@@ -185,7 +187,7 @@ export class PetAssistantService {
         if (jsonByteLength(request) > this.#limits.maxContextBytes) return finish(this.#failed(conversationId, turnId, "Assistant context is too large."));
         let generated: PetAssistantTextModelResponse;
         try {
-          generated = await waitFor(this.#model.generate(request, signal), signal);
+          generated = await waitFor(active.model.generate(request, signal), signal);
         } catch (error) {
           if (active.terminal.value) return active.terminal.value;
           if (signal.aborted || error === cancelledError) return finish({ conversationId, turnId, status: "cancelled", error: cancelledError.message });

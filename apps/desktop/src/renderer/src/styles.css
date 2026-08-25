@@ -695,4 +695,28 @@ body.theme-dark .plugin-config-backdrop {
     @apply text-xs font-black text-navy;
   }
 
+  /* Providers Section Styling */
+  .providers-grid { @apply grid grid-cols-1 min-[900px]:grid-cols-2 gap-4; }
+  .provider-role-card { @apply flex flex-col gap-3 rounded-[24px] border border-blue-100/70 bg-white/70 p-5 shadow-sm transition-[border-color,background-color] hover:border-blue-200 hover:bg-white; }
+  .provider-role-header { @apply flex items-start justify-between gap-3; }
+  .provider-realtime-callout { @apply flex flex-col gap-2 rounded-2xl border border-blue-200/60 bg-gradient-to-br from-blue-50/80 to-cyan-50/40 p-4 shadow-sm; }
+  .provider-presets-bar { @apply flex flex-wrap gap-2; }
+  .provider-preset-chip { @apply inline-flex items-center gap-1.5 rounded-xl border border-blue-100 bg-white/80 px-3 py-1.5 text-xs font-bold text-slatecopy shadow-sm transition-[transform,background-color,border-color] hover:-translate-y-0.5 hover:border-brand hover:bg-blue-50/60 active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed; }
+  .provider-profile-card { @apply flex flex-col gap-4 rounded-[24px] border border-blue-100/70 bg-white/60 p-5 shadow-sm transition-all hover:bg-white/90; }
+  .provider-profile-header { @apply flex flex-wrap items-start justify-between gap-3; }
+  .provider-meta-row { @apply flex flex-wrap items-center gap-4 text-xs text-slatecopy font-semibold; }
+  .provider-credential-box { @apply flex flex-col gap-2 rounded-xl border border-blue-100/50 bg-blue-50/30 p-3; }
+  .provider-header-table,
+  .provider-auth-box { @apply flex flex-col gap-2 rounded-xl border border-blue-100/50 bg-white/50 p-3; }
+
+  body.theme-dark .provider-role-card,
+  body.theme-dark .provider-profile-card { @apply border-slate-700/60 bg-slate-900/60 text-slate-100; }
+  body.theme-dark .provider-role-card:hover,
+  body.theme-dark .provider-profile-card:hover { @apply bg-slate-900/90 border-slate-600; }
+  body.theme-dark .provider-realtime-callout { @apply border-slate-700 bg-slate-800/80; }
+  body.theme-dark .provider-preset-chip { @apply border-slate-700 bg-slate-800/80 text-slate-200; }
+  body.theme-dark .provider-credential-box,
+  body.theme-dark .provider-header-table,
+  body.theme-dark .provider-auth-box { @apply border-slate-800 bg-slate-950/50; }
+
 }

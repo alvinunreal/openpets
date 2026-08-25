@@ -45,6 +45,12 @@ dist checks. Three buckets:
   canonical IPv4/CGNAT boundaries, peer normalization, socket caps/deadlines,
   away-pet side-effect suppression, and listener shutdown. Compiled to
   `.test-dist/`.
+- Provider-profile behavior is covered by `provider-profiles.test.ts`,
+  `provider-service.test.ts`, `text-model-client.test.ts`, and
+  `plugin-ai-gateway.test.ts`: independent
+  persistence/selection, URL/header boundaries, fake-endpoint routing, native
+  versus compatible codecs, operation snapshots, redacted status, and no-fetch
+  unsupported realtime. Tests use fake fetches and no credentials.
 - **Contract** (`apps/desktop/contracts/*.contract.ts`): the public boundaries - - `catalog-fixture.contract.ts` - catalog validation against fixture data.
   - `local-ipc-protocol.contract.ts` - IPC request/response parsing
     ([IPC and remote control](/ipc)).

@@ -9,6 +9,7 @@ import { getActiveLocaleLang } from "./i18n/index.js";
 import { debug, warn } from "./logger.js";
 import { playPetWindowAudio, stopPetWindowAudio } from "./pet-window.js";
 import { PluginAiGateway } from "./plugin-ai-gateway.js";
+import { HostProviderService } from "./provider-service.js";
 import { readDroppedFileText, startPluginEventSources, subscribePluginEvent } from "./plugin-events-source.js";
 import { PluginOauthBroker } from "./plugin-oauth.js";
 import { openPluginPanel } from "./plugin-panels.js";
@@ -65,6 +66,7 @@ function cpuPercent(): number {
 
 export type ElectronPluginHostCapabilities = PluginHostCapabilities & {
   readonly secretsStore: PluginSecretsStore;
+  readonly providerService: HostProviderService;
   readonly aiGateway: PluginAiGateway;
   /** Tear down everything a plugin owns on stop/reload. */
   clearPlugin(pluginId: string): Promise<void>;
@@ -81,7 +83,8 @@ export function getPluginHostCapabilitiesForUi(): ElectronPluginHostCapabilities
 export function createElectronPluginHostCapabilities(userDataPath: string): ElectronPluginHostCapabilities {
   startPluginEventSources();
   const secretsStore = new PluginSecretsStore(userDataPath);
-  const aiGateway = new PluginAiGateway(secretsStore);
+  const providerService = new HostProviderService(secretsStore);
+  const aiGateway = new PluginAiGateway(providerService);
   const oauthBroker = new PluginOauthBroker(secretsStore);
   const pickedFiles = new Map<string, PickedFileEntry>();
   const userSounds = new UserSoundStore(join(userDataPath, "plugin-user-sounds"));
@@ -98,6 +101,7 @@ export function createElectronPluginHostCapabilities(userDataPath: string): Elec
 
   const capabilities: ElectronPluginHostCapabilities = {
     secretsStore,
+    providerService,
     aiGateway,
     bubbles: {
       async show({ petId, pluginId, bubble, callbacks }) {

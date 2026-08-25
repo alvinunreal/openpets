@@ -9,11 +9,10 @@ import type { PluginAssistantCapability, PluginAssistantCapabilityExecutionOutco
 import type { PluginRuntime } from "../src/plugin-runtime.js";
 import { getPetAssistantService, startPetAssistantHost, stopPetAssistantHost } from "../src/pet-assistant-host.js";
 import { petAssistantToolName } from "../src/pet-assistant-tools.js";
-import { getPluginPlatformSettings, initializePluginPlatformSettings, updatePluginPlatformSettings } from "../src/plugin-platform-settings.js";
+import { initializePluginPlatformSettings, createProviderProfile, selectProviderProfile } from "../src/plugin-platform-settings.js";
 import type { PluginSecretsStore } from "../src/plugin-secrets.js";
 
 const userDataPath = mkdtempSync(join(tmpdir(), "openpets-pet-assistant-host-"));
-const previousSettings = getPluginPlatformSettings();
 const previousFetch = globalThis.fetch;
 const pluginHandle = Object.freeze({ registration: "focus-start" }) as unknown as PluginAssistantCapabilityHandle;
 let receivedHandle: PluginAssistantCapabilityHandle | undefined;
@@ -38,7 +37,8 @@ const runtime = {
 
 try {
   initializePluginPlatformSettings(userDataPath);
-  updatePluginPlatformSettings({ ai: { provider: "openai", model: "host-test", baseUrl: "https://host.test/v1" } });
+  createProviderProfile({ id: "host-test", label: "Host test", adapter: "openai-compatible-text", model: "host-test", baseUrl: "https://host.test/v1", secretRef: "host-test" });
+  selectProviderProfile("text", "host-test");
   let fetchCount = 0;
   globalThis.fetch = async () => {
     fetchCount += 1;
@@ -60,7 +60,6 @@ try {
 } finally {
   await stopPetAssistantHost();
   globalThis.fetch = previousFetch;
-  updatePluginPlatformSettings(previousSettings);
   rmSync(userDataPath, { recursive: true, force: true });
 }
 

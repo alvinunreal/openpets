@@ -117,7 +117,8 @@ tray.ts → openControlCenterWindow(route) → windows.ts
 ```
 main.ts → initializePluginService(userData, defaultPluginPetApi, appVersion, ElectronPluginJsHost).start()
 ├── plugin-state.ts reads/writes userData/openpets-plugin-state.json
-├── plugin-platform-settings.ts gates audio, voice, speech, mic, quiet hours, and AI provider choices
+├── plugin-platform-settings.ts gates audio/voice/microphone/quiet hours and persists validated provider profiles/selections
+├── provider-service.ts resolves redacted role operation snapshots and compatible/native text, STT, TTS, and private realtime codecs
 ├── plugin-assets.ts validates/resolves declared plugin assets for SDK refs and rendered UI
 ├── plugin-user-sound-store.ts stores imported user sounds as plugin-scoped opaque refs
 ├── plugin-diagnostics.ts records plugin errors/quota/settings blocks for inspector/health UI
@@ -265,7 +266,8 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `plugin-oauth.ts`: Host-mediated OAuth/PKCE flow and token session lifecycle for plugins.
 - `plugin-panels.ts`: Sandboxed plugin panel BrowserWindow coordinator and message bridge.
 - `plugin-pet-registry.ts`: Registry for default and plugin-spawned pets, including lifecycle and SDK targeting.
-- `plugin-platform-settings.ts`: Global plugin-platform settings for audio, voice, speech, microphone, quiet hours, and provider toggles.
+- `plugin-platform-settings.ts`: Global plugin-platform settings for audio, voice, speech, microphone, quiet hours, and independent provider profiles/selections; no legacy `ai` object is read.
+- `provider-service.ts`: Host-owned provider operation boundary; credentials come from `PluginSecretsStore`, status is redacted, and provider failures remain operation errors rather than plugin health failures.
 - `plugin-secrets.ts`: Plugin-scoped encrypted secret storage backed by Electron safe storage primitives.
 - `plugin-toast.ts`: Host toast/notification routing for plugin UI events.
 - `plugin-user-sound-store.ts`: Plugin-scoped imported user sound registry that stores opaque sound refs instead of raw filesystem paths.
@@ -275,7 +277,7 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `voice-conversation.ts` / `voice-realtime-electron.ts`: Generation-safe host conversation lifecycle and thin hidden renderer/WebRTC adapter; intentionally not exposed through the plugin SDK.
 - `voice-capture-cancellation.ts`: Idempotent renderer-cancel/window-destroy ordering for Electron capture teardown.
 - `voice-listening-service.ts`: Transcription timeout, abort handling, whitespace-only rejection, and late-event suppression.
-- `voice-operation-state.ts`: Internal acquisition/recording/transcription state surfaced to host tray controls.
+- `voice-operation-state.ts`: Internal acquisition/recording/transcription state surfaced to host tray controls, including reservations held during asynchronous listen initialization.
 - `voice-privacy-indicator.ts` / `voice-privacy-indicator-electron.ts`: Track-driven host privacy indicator, hidden until acquisition succeeds.
 
 **Agent Integration**:
@@ -285,7 +287,7 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `update-version.ts`: Version parsing and comparison
 
 **Tests** (excluded from detailed codemap coverage per repository conventions):
-- Behavior tests live in `tests/*.test.ts` (compiled to `.test-dist/tests/`); `codex-pets.test.ts` asserts released V1/V2 metadata fixtures and strict V2 atlas contracts
+- Behavior tests live in `tests/*.test.ts` (compiled to `.test-dist/tests/`); provider profile persistence/routing is covered by `provider-profiles.test.ts`, `text-model-client.test.ts`, and `plugin-ai-gateway.test.ts`; `codex-pets.test.ts` asserts released V1/V2 metadata fixtures and strict V2 atlas contracts
 - Contract tests live in `contracts/*.contract.ts` (compiled to `.test-dist/contracts/`)
 - Runtime checks (`check-*.ts`) remain in `src/` for packaging/validation (compiled to `dist/`)
 

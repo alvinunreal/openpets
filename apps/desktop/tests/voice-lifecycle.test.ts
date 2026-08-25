@@ -338,4 +338,17 @@ assert.equal(VOICE_MAX_RECORDING_DURATION_MS, 30_000);
   assert.equal(current.getAttempt().disposeCount, 1);
 }
 
+{
+  const operations = new VoiceOperationState();
+  const initialization = operations.reserve();
+  assert.throws(() => operations.reserve(), /already in progress/, "a concurrent listen initialization must reserve ownership before awaiting its provider snapshot");
+  operations.releaseReservation(initialization);
+  const later = operations.reserve();
+  operations.begin(async () => undefined, later);
+  assert.equal(operations.snapshot()?.phase, "acquiring");
+  operations.settle();
+  const recovered = operations.reserve();
+  operations.releaseReservation(recovered);
+}
+
 console.log("Voice capture lifecycle behavior verified.");

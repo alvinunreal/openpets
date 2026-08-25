@@ -121,6 +121,18 @@ capability of its own. The renderer is the only "frontend" in scope for these
 docs (the `web/` marketing site is out of scope). See
 `src/renderer/src/codemap.md` for component structure.
 
+Provider-profile bridge operations are exposed by
+`control-center-preload.cjs` without a generic patch route: list profiles,
+presets, role status, and derived realtime status; create/update/delete a
+profile; select a profile independently for each role; update platform gates;
+and set/check/delete a profile credential. Responses contain only credential
+presence and header names. The Control Center implements this provider-profile
+surface; chat, voice, transcript/history, and sensitive-action confirmation
+surfaces remain follow-up product work.
+Provider updates use sparse patches: omitted fields preserve current values,
+`null` clears `baseUrl`, `secretRef`, or `auth`, omitted `headers` preserves the
+redacted header list, and `headers: []` intentionally clears it.
+
 ### Pet windows
 
 Pet rendering lives in `pet-window.ts` plus the two controllers
@@ -253,9 +265,11 @@ host lifecycle and protocol are reviewed for Phase 2.
 #### Pet Assistant host integration (#138, #146)
 
 Once `PluginService.start()` resolves, `pet-assistant-host.ts` constructs the
-single host-owned `PetAssistantService`. `text-model-client.ts` translates the
-current Anthropic or OpenAI-compatible OpenAI/Ollama/MiniMax settings and host
-secret into the provider-neutral model contract. The adapter never uses the
+single host-owned `PetAssistantService`. `text-model-client.ts` uses a stable
+operation snapshot from `provider-service.ts` for the selected text profile;
+secret credential values are resolved from `PluginSecretsStore` and never enter
+settings or snapshots; optional static provider header values remain in the
+local provider-profile settings and snapshots expose only their names. The adapter never uses the
 plugin `ctx.ai` gateway. Capability discovery and execution call the
 generation-pinned `PluginService` APIs; pre-invocation lifecycle rejection is
 unavailable, while a disable/reload after invocation is indeterminate.
@@ -278,8 +292,9 @@ data. Personality is explicitly communication-only and cannot grant capabilities
 change permissions, or rewrite failed, rejected, unavailable, or indeterminate
 outcomes. When any such non-completed outcome exists, the terminal response is a
 deterministic host-generated status summary rather than model prose; all-completed
-turns preserve the model response. Chat/voice UI, transcript persistence, and
-provider-profile UI remain separate v4 work.
+turns preserve the model response. Chat/voice UI and transcript persistence
+remain separate v4 work; provider-profile management is implemented in the
+Control Center through the host-owned bridge.
 
 The plugin subsystem also owns **display deliveries**: a lazy, transparent,
 host-owned surface used by `ctx.ui.delivery`. A delivery is rendered as a single
