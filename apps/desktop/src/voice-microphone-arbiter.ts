@@ -80,6 +80,10 @@ export class VoiceMicrophoneArbiter {
     return reservation;
   }
 
+  ownsReservation(reservation: VoiceMicrophoneReservation): boolean {
+    return this.#reservations.has(reservation);
+  }
+
   releaseReservation(reservation: VoiceMicrophoneReservation): void {
     const metadata = this.#reservations.get(reservation);
     if (!metadata || metadata.released) return;

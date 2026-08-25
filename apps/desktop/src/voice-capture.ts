@@ -106,6 +106,9 @@ export class VoiceCaptureService {
 
     try {
       if (microphoneReservation && !this.#microphoneArbiter) throw new Error("A microphone reservation requires its arbiter.");
+      if (microphoneReservation && this.#microphoneArbiter && !this.#microphoneArbiter.ownsReservation(microphoneReservation)) {
+        throw new Error("A microphone reservation belongs to a different arbiter.");
+      }
       active.microphoneLease = microphoneReservation
         ? microphoneReservation.acquireTrack()
         : toTrackLease(this.#microphoneArbiter?.acquire("listen"));
