@@ -7,10 +7,10 @@ import { PetAssistantFeedbackReducer } from "./pet-assistant-feedback.js";
 import type { HostProviderOperations } from "./provider-service.js";
 import { playPetWindowTtsAudio, speakPetWindowTts, stopPetWindowTts, stopPetWindowTtsAudio, subscribePetWindowSpeechCompletion } from "./pet-window.js";
 import type { VoiceAssistantPlayer, VoiceAssistantSpeech } from "./voice-assistant-session.js";
-import { VoiceAssistantSession, type VoiceAssistantSessionEvent, type VoiceAssistantSessionSnapshot } from "./voice-assistant-session.js";
+import { VoiceAssistantSession, type VoiceAssistantSessionSnapshot } from "./voice-assistant-session.js";
 import { getVoicePlaybackTimeoutMs, VoiceAssistantPlaybackCoordinator } from "./voice-assistant-playback.js";
 import { installWindowLossHandlers } from "./voice-playback-window.js";
-import { HostVoiceInput, PetAssistantVoiceAdapter, ProviderVoiceSynthesizer, VoiceAssistantHostController } from "./voice-assistant-host-core.js";
+import { HostVoiceInput, PetAssistantVoiceAdapter, ProviderVoiceSynthesizer, VoiceAssistantHostController, type VoiceAssistantHostEvent } from "./voice-assistant-host-core.js";
 import type { VoiceCaptureService } from "./voice-capture.js";
 import { getSharedVoiceCaptureService, getSharedVoiceMicrophoneArbiter } from "./plugin-voice.js";
 import type { VoiceMicrophoneArbiter } from "./voice-microphone-arbiter.js";
@@ -20,6 +20,7 @@ import type { VoiceAssistantShortcutSnapshot } from "./voice-assistant-shortcut.
 import { shutdownVoiceAssistantResources, shutdownVoiceAssistantWithCleanup } from "./voice-assistant-host-cleanup.js";
 
 export type VoiceAssistantHostOptions = {
+  readonly sessionId: number;
   readonly provider: HostProviderOperations;
   readonly assistant: PetAssistantService;
   readonly microphoneArbiter?: VoiceMicrophoneArbiter;
@@ -30,18 +31,21 @@ export type VoiceAssistantHostOptions = {
 
 /** Single main-process Talk contract used by IPC, preload, and host controls. */
 export type VoiceAssistantTalkSnapshot = VoiceAssistantSessionSnapshot & {
+  readonly sessionId: number;
   readonly shortcut: VoiceAssistantShortcutSnapshot["accelerator"];
   readonly shortcutStatus: VoiceAssistantShortcutSnapshot["status"];
   readonly shortcutReason: string | null;
 };
-export type VoiceAssistantTalkEvent = Exclude<VoiceAssistantSessionEvent, { readonly type: "snapshot" }> | {
+export type VoiceAssistantTalkEvent = (Exclude<VoiceAssistantHostEvent, { readonly type: "snapshot" }> & { readonly sessionId: number }) | {
   readonly type: "snapshot";
   readonly sequence: number;
+  readonly sessionId: number;
   readonly snapshot: VoiceAssistantTalkSnapshot;
 };
 
 /** Host-private composition of bounded voice I/O, Pet Assistant, and pet speech. */
 export class VoiceAssistantHost {
+  readonly sessionId: number;
   readonly #player: PetWindowVoicePlayer;
   readonly #session: VoiceAssistantSession;
   readonly #unsubscribeSession: () => void;
@@ -49,6 +53,7 @@ export class VoiceAssistantHost {
   readonly #conversationController = getPetAssistantConversationController();
 
   constructor(options: VoiceAssistantHostOptions) {
+    this.sessionId = options.sessionId;
     this.#feedbackReducer = options.feedbackReducer;
     const input = new HostVoiceInput(options.provider, options.capture ?? getSharedVoiceCaptureService());
     const adapter = new PetAssistantVoiceAdapter(options.assistant);
@@ -56,7 +61,7 @@ export class VoiceAssistantHost {
     this.#player = new PetWindowVoicePlayer();
     this.#session = new VoiceAssistantSession({
       conversationId: PET_ASSISTANT_CONVERSATION_ID,
-      turnIdPrefix: nextVoiceSessionTurnPrefix(),
+      turnIdPrefix: `voice-session-${options.sessionId}`,
       microphoneArbiter: options.microphoneArbiter ?? getSharedVoiceMicrophoneArbiter(),
       input,
       assistant: adapter,
@@ -99,6 +104,7 @@ const voiceEventListeners = new Set<(event: VoiceAssistantTalkEvent) => void>();
 const voiceEventUnsubscribers = new Map<(event: VoiceAssistantTalkEvent) => void, () => void>();
 let voiceProjectionSequence = 0;
 let voiceSessionOrdinal = 0;
+let activeSessionId = 0;
 let feedbackReducer: PetAssistantFeedbackReducer | null = null;
 let unsubscribeAssistantFeedback: (() => void) | null = null;
 
@@ -107,7 +113,10 @@ export function startVoiceAssistantHost(provider: HostProviderOperations, assist
   if (stopping) throw new Error("Voice assistant host shutdown is in progress.");
   feedbackReducer = new PetAssistantFeedbackReducer(defaultPetFeedbackTarget);
   unsubscribeAssistantFeedback = assistant.subscribe((event) => feedbackReducer?.applyAssistantEvent(event));
-  activeHost = new VoiceAssistantHostController(() => new VoiceAssistantHost({ provider, assistant, feedbackReducer: feedbackReducer! }));
+  activeHost = new VoiceAssistantHostController(() => {
+    activeSessionId = ++voiceSessionOrdinal;
+    return new VoiceAssistantHost({ provider, assistant, feedbackReducer: feedbackReducer!, sessionId: activeSessionId });
+  });
   for (const listener of voiceEventListeners) voiceEventUnsubscribers.set(listener, activeHost.subscribe((event) => listener(addShortcutToEvent(event))));
   info("app", "Voice assistant host ready");
   return activeHost;
@@ -129,6 +138,7 @@ export function stopVoiceAssistantHost(): Promise<void> {
       getPetAssistantModalityCoordinator().releaseModality("voice");
       setDefaultPetVoiceTerminalFeedback(null);
       if (activeHost === host) activeHost = null;
+      activeSessionId = 0;
       info("app", "Voice assistant host stopped");
     },
   ).finally(() => { stopping = null; });
@@ -136,14 +146,14 @@ export function stopVoiceAssistantHost(): Promise<void> {
 }
 
 export function getVoiceAssistantSnapshot(): VoiceAssistantTalkSnapshot {
-  return addShortcutSnapshot(activeHost?.session?.snapshot() ?? createIdleVoiceAssistantSnapshot());
+  return addShortcutSnapshot(activeHost?.session?.snapshot() ?? createIdleVoiceAssistantSnapshot(), activeSessionId);
 }
 
 export function onVoiceAssistantEvent(listener: (event: VoiceAssistantTalkEvent) => void): () => void {
   voiceEventListeners.add(listener);
   const unsubscribe = activeHost?.subscribe((event) => listener(addShortcutToEvent(event)));
   if (unsubscribe) voiceEventUnsubscribers.set(listener, unsubscribe);
-  else listener({ type: "snapshot", sequence: 0, snapshot: getVoiceAssistantSnapshot() });
+  else listener({ type: "snapshot", sequence: 0, sessionId: activeSessionId, snapshot: getVoiceAssistantSnapshot() });
   return () => {
     voiceEventListeners.delete(listener);
     voiceEventUnsubscribers.get(listener)?.();
@@ -157,7 +167,7 @@ export async function startVoiceAssistant(): Promise<VoiceAssistantTalkSnapshot>
   const session = await host.activate();
   const { openControlCenterWindow } = await import("./windows.js");
   openControlCenterWindow("conversation");
-  return addShortcutSnapshot(session.snapshot());
+  return addShortcutSnapshot(session.snapshot(), activeSessionId);
 }
 
 export async function toggleVoiceAssistant(): Promise<VoiceAssistantTalkSnapshot> {
@@ -166,7 +176,7 @@ export async function toggleVoiceAssistant(): Promise<VoiceAssistantTalkSnapshot
   const { openControlCenterWindow } = await import("./windows.js");
   const session = await host.toggle();
   openControlCenterWindow("conversation");
-  return addShortcutSnapshot(session?.snapshot() ?? createIdleVoiceAssistantSnapshot());
+  return addShortcutSnapshot(session?.snapshot() ?? createIdleVoiceAssistantSnapshot(), activeSessionId);
 }
 
 export async function muteVoiceAssistant(): Promise<VoiceAssistantTalkSnapshot> {
@@ -203,17 +213,16 @@ function createIdleVoiceAssistantSnapshot(): VoiceAssistantSessionSnapshot {
   return Object.freeze({ status: "ended", activity: null, muted: false, conversationId: PET_ASSISTANT_CONVERSATION_ID, generation: 0, turnId: null, userTranscript: null, assistantTranscript: null, interruptionCount: 0, error: null });
 }
 
-function addShortcutSnapshot(snapshot: VoiceAssistantSessionSnapshot): VoiceAssistantTalkSnapshot {
+function addShortcutSnapshot(snapshot: VoiceAssistantSessionSnapshot, sessionId: number): VoiceAssistantTalkSnapshot {
   const shortcut = getVoiceAssistantShortcutSnapshot();
-  return Object.freeze({ ...snapshot, shortcut: shortcut.accelerator, shortcutStatus: shortcut.status, shortcutReason: shortcut.reason ?? null });
+  return Object.freeze({ ...snapshot, sessionId, shortcut: shortcut.accelerator, shortcutStatus: shortcut.status, shortcutReason: shortcut.reason ?? null });
 }
 
-function addShortcutToEvent(event: VoiceAssistantSessionEvent): VoiceAssistantTalkEvent {
-  return event.type === "snapshot" ? { ...event, snapshot: addShortcutSnapshot(event.snapshot) } : event;
+function addShortcutToEvent(event: VoiceAssistantHostEvent): VoiceAssistantTalkEvent {
+  return event.type === "snapshot" ? { ...event, snapshot: addShortcutSnapshot(event.snapshot, event.sessionId) } : event;
 }
 
 function nextVoiceProjectionSequence(): number { voiceProjectionSequence += 1; return voiceProjectionSequence; }
-function nextVoiceSessionTurnPrefix(): string { voiceSessionOrdinal += 1; return `voice-session-${voiceSessionOrdinal}`; }
 
 const defaultPetFeedbackTarget = {
   setActivity: (reaction: import("./local-ipc-protocol.js").OpenPetsReaction | null) => setDefaultPetVoiceActivity(reaction),

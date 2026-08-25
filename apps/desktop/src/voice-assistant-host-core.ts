@@ -10,8 +10,11 @@ const HOST_RECORDING_DURATION_MS = 10_000;
 
 export type VoiceAssistantHostInstance = {
   readonly session: VoiceAssistantSession;
+  readonly sessionId?: number;
   shutdown(): Promise<void>;
 };
+
+export type VoiceAssistantHostEvent = VoiceAssistantSessionEvent & { readonly sessionId: number };
 
 /** Owns activation scope; ended sessions are discarded before the next activation. */
 export class VoiceAssistantHostController {
@@ -19,7 +22,7 @@ export class VoiceAssistantHostController {
   #active: VoiceAssistantHostInstance | null = null;
   #transition: Promise<void> = Promise.resolve();
   #stopped = false;
-  readonly #listeners = new Set<(event: VoiceAssistantSessionEvent) => void>();
+  readonly #listeners = new Set<(event: VoiceAssistantHostEvent) => void>();
   #unsubscribeSession: (() => void) | null = null;
 
   constructor(create: () => VoiceAssistantHostInstance) {
@@ -28,9 +31,9 @@ export class VoiceAssistantHostController {
 
   get session(): VoiceAssistantSession | null { return this.#active?.session ?? null; }
 
-  subscribe(listener: (event: VoiceAssistantSessionEvent) => void): () => void {
+  subscribe(listener: (event: VoiceAssistantHostEvent) => void): () => void {
     this.#listeners.add(listener);
-    if (this.#active) listener({ type: "snapshot", sequence: 0, snapshot: this.#active.session.snapshot() });
+    if (this.#active) listener({ type: "snapshot", sequence: 0, snapshot: this.#active.session.snapshot(), sessionId: this.#active.sessionId ?? 0 });
     return () => { this.#listeners.delete(listener); };
   }
 
@@ -48,8 +51,9 @@ export class VoiceAssistantHostController {
         const created = this.#create();
         this.#active = created;
         this.#unsubscribeSession = created.session.subscribe((event) => {
+          const sessionEvent = { ...event, sessionId: created.sessionId ?? 0 } as VoiceAssistantHostEvent;
           for (const listener of [...this.#listeners]) {
-            try { listener(event); } catch { /* observers cannot affect session cleanup */ }
+            try { listener(sessionEvent); } catch { /* observers cannot affect session cleanup */ }
           }
         });
         try { await created.session.start(); }
@@ -83,8 +87,9 @@ export class VoiceAssistantHostController {
       const created = this.#create();
       this.#active = created;
       this.#unsubscribeSession = created.session.subscribe((event) => {
+        const sessionEvent = { ...event, sessionId: created.sessionId ?? 0 } as VoiceAssistantHostEvent;
         for (const listener of [...this.#listeners]) {
-          try { listener(event); } catch { /* observers cannot affect session cleanup */ }
+          try { listener(sessionEvent); } catch { /* observers cannot affect session cleanup */ }
         }
       });
       try { await created.session.start(); }

@@ -53,6 +53,7 @@ export type VoiceAssistantErrorScope = "input" | "assistant" | "synthesis" | "pl
 export type VoiceAssistantShortcutStatus = "registered" | "conflict" | "unavailable" | "invalid";
 
 export type VoiceAssistantSessionSnapshot = {
+  readonly sessionId: number;
   readonly status: VoiceAssistantSessionStatus;
   readonly activity: VoiceAssistantActivity | null;
   readonly muted: boolean;
@@ -69,28 +70,35 @@ export type VoiceAssistantSessionSnapshot = {
 };
 
 export type VoiceAssistantTalkEvent =
-  | { readonly type: "snapshot"; readonly sequence: number; readonly snapshot: VoiceAssistantSessionSnapshot }
-  | { readonly type: "transcript"; readonly sequence: number; readonly turnId: string; readonly speaker: "user" | "assistant"; readonly kind: "partial" | "final"; readonly text: string }
-  | { readonly type: "error"; readonly sequence: number; readonly scope: VoiceAssistantErrorScope; readonly message: string; readonly turnId?: string }
-  | { readonly type: "interrupted"; readonly sequence: number; readonly generation: number; readonly turnId: string | null }
-  | { readonly type: "turn-settled"; readonly sequence: number; readonly turnId: string; readonly outcome: "completed" | "cancelled" | "failed" }
-  | { readonly type: "ended"; readonly sequence: number; readonly reason: "ended" | "shutdown" };
+  | { readonly type: "snapshot"; readonly sequence: number; readonly sessionId: number; readonly snapshot: VoiceAssistantSessionSnapshot }
+  | { readonly type: "transcript"; readonly sequence: number; readonly sessionId: number; readonly turnId: string; readonly speaker: "user" | "assistant"; readonly kind: "partial" | "final"; readonly text: string }
+  | { readonly type: "error"; readonly sequence: number; readonly sessionId: number; readonly scope: VoiceAssistantErrorScope; readonly message: string; readonly turnId?: string }
+  | { readonly type: "interrupted"; readonly sequence: number; readonly sessionId: number; readonly generation: number; readonly turnId: string | null }
+  | { readonly type: "turn-settled"; readonly sequence: number; readonly sessionId: number; readonly turnId: string; readonly outcome: "completed" | "cancelled" | "failed" }
+  | { readonly type: "ended"; readonly sequence: number; readonly sessionId: number; readonly reason: "ended" | "shutdown" };
 
 export function createVoiceSnapshotOrdering(): {
   beginRequest(): number;
   shouldApplyResponse(requestVersion: number): boolean;
   beginInitialRequest(): number;
-  noteEvent(sequence: number): boolean;
+  noteEvent(sessionId: number, sequence: number): boolean;
   shouldApplyInitialSnapshot(requestVersion: number): boolean;
 } {
   let version = 0;
+  let latestSessionId = -1;
   let latestSequence = -1;
   return {
     beginRequest: () => version,
     shouldApplyResponse: (requestVersion) => version === requestVersion,
     beginInitialRequest: () => version,
-    noteEvent: (sequence) => {
-      if (!Number.isSafeInteger(sequence) || sequence <= latestSequence) return false;
+    noteEvent: (sessionId, sequence) => {
+      if (!Number.isSafeInteger(sessionId) || sessionId < 0 || !Number.isSafeInteger(sequence) || sequence < 0) return false;
+      if (sessionId < latestSessionId) return false;
+      if (sessionId > latestSessionId) {
+        latestSessionId = sessionId;
+        latestSequence = -1;
+      }
+      if (sequence <= latestSequence) return false;
       latestSequence = sequence;
       version += 1;
       return true;

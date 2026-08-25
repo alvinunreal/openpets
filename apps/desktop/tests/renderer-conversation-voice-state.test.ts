@@ -8,20 +8,26 @@ assert.equal(voiceBadgeClass("ending", "speaking", true), "voice-badge-neutral",
 
 const ordering = createVoiceSnapshotOrdering();
 const initialRequestVersion = ordering.beginInitialRequest();
-ordering.noteEvent(0);
+ordering.noteEvent(0, 0);
 assert.equal(ordering.shouldApplyInitialSnapshot(initialRequestVersion), false, "an event received before the initial snapshot resolves remains authoritative");
 
 const actionOrdering = createVoiceSnapshotOrdering();
 const actionRequestVersion = actionOrdering.beginRequest();
 let resolveAction!: () => void;
 const actionResponse = new Promise<boolean>((resolve) => { resolveAction = () => resolve(actionOrdering.shouldApplyResponse(actionRequestVersion)); });
-actionOrdering.noteEvent(1);
+actionOrdering.noteEvent(0, 1);
 resolveAction();
 assert.equal(await actionResponse, false, "a subscribed event remains authoritative when it arrives before an action response resolves");
 
 const sequenceOrdering = createVoiceSnapshotOrdering();
-assert.equal(sequenceOrdering.noteEvent(12), true, "newer Talk snapshots are accepted");
-assert.equal(sequenceOrdering.noteEvent(11), false, "older queued Talk snapshots are rejected");
+assert.equal(sequenceOrdering.noteEvent(7, 12), true, "newer Talk snapshots are accepted");
+assert.equal(sequenceOrdering.noteEvent(7, 11), false, "older queued Talk snapshots are rejected");
+
+const restartedSessionOrdering = createVoiceSnapshotOrdering();
+assert.equal(restartedSessionOrdering.noteEvent(21, 48), true, "session A accepts its high sequence event");
+assert.equal(restartedSessionOrdering.noteEvent(22, 1), true, "session B resets its partitioned sequence high-water mark");
+assert.equal(restartedSessionOrdering.noteEvent(22, 2), true, "session B accepts subsequent valid events");
+assert.equal(restartedSessionOrdering.noteEvent(21, 49), false, "stale session A events cannot overwrite session B");
 
 const rejectedShortcut = resolveShortcutSaveOutcome("CommandOrControl+Alt+Space", {
   preferences: { voiceAssistantShortcut: "CommandOrControl+Shift+Space" },
