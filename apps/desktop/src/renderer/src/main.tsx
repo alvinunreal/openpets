@@ -6,6 +6,7 @@ import openPetsLogoUrl from "../../../assets/openpets.webp";
 import defaultThumbUrl from "../../../assets/default-pet-thumbnail.png";
 import { ConversationView } from "./conversation/ConversationView.js";
 import type { ConversationEvent, ConversationSnapshot, VoiceAssistantTalkEvent, VoiceAssistantSessionSnapshot } from "./conversation/conversation-types.js";
+import { resolveShortcutSaveOutcome } from "./settings-shortcut-state.js";
 
 import claudeLogoUrl from "../../../assets/integrations/claude.svg";
 import opencodeLogoUrl from "../../../assets/integrations/opencode.svg";
@@ -2189,8 +2190,16 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
       try {
         const next = await api.updatePreferences({ voiceAssistantShortcut: value });
         setSettings(next);
-        setShortcutDraft(next.preferences.voiceAssistantShortcut ?? value);
-        setMessage("Pet Talk shortcut saved");
+        const outcome = resolveShortcutSaveOutcome(value, next);
+        setShortcutDraft(outcome.savedAccelerator);
+        if (outcome.accepted) {
+          setShortcutSaveError("");
+          setMessage("Pet Talk shortcut saved");
+        } else {
+          const reason = outcome.reason ?? "Pet Talk shortcut was not activated.";
+          setShortcutSaveError(reason);
+          setError(reason);
+        }
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : "Failed to save shortcut.";
         setShortcutSaveError(errMsg);
