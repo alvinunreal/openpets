@@ -64,7 +64,7 @@ export function ConversationView({ api }: { api: ConversationApi }) {
 
     const unsubscribeVoice = api.onVoiceAssistantEvent?.((event) => {
       if (!isMounted) return;
-      voiceSnapshotOrdering.noteEvent();
+      if (!voiceSnapshotOrdering.noteEvent(event.sequence)) return;
       if (event.type === "snapshot") {
         setVoiceSnapshot(normalizeVoiceSnapshot(event.snapshot));
       } else if (event.type === "error") {

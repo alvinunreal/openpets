@@ -80,15 +80,21 @@ export function createVoiceSnapshotOrdering(): {
   beginRequest(): number;
   shouldApplyResponse(requestVersion: number): boolean;
   beginInitialRequest(): number;
-  noteEvent(): void;
+  noteEvent(sequence: number): boolean;
   shouldApplyInitialSnapshot(requestVersion: number): boolean;
 } {
   let version = 0;
+  let latestSequence = -1;
   return {
     beginRequest: () => version,
     shouldApplyResponse: (requestVersion) => version === requestVersion,
     beginInitialRequest: () => version,
-    noteEvent: () => { version += 1; },
+    noteEvent: (sequence) => {
+      if (!Number.isSafeInteger(sequence) || sequence <= latestSequence) return false;
+      latestSequence = sequence;
+      version += 1;
+      return true;
+    },
     shouldApplyInitialSnapshot: (requestVersion) => requestVersion === 0 && version === requestVersion,
   };
 }
