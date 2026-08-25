@@ -62,7 +62,10 @@ export class VoiceAssistantShortcutManager {
       this.#snapshot = { accelerator, status: "invalid", reason: "Shortcut must use a canonical Electron accelerator." };
       return this.#snapshot;
     }
-    if (this.#registeredAccelerator === accelerator && this.#snapshot.status === "registered") return this.#snapshot;
+    if (this.#registeredAccelerator === accelerator && this.#snapshot.status === "registered") {
+      this.#snapshot = { accelerator, status: "registered" };
+      return this.#snapshot;
+    }
     if (this.#registeredAccelerator && this.#snapshot.status === "unavailable") return this.#snapshot;
 
     const previousAccelerator = this.#registeredAccelerator;
