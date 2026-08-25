@@ -77,15 +77,19 @@ export type VoiceAssistantTalkEvent =
   | { readonly type: "ended"; readonly sequence: number; readonly reason: "ended" | "shutdown" };
 
 export function createVoiceSnapshotOrdering(): {
+  beginRequest(): number;
+  shouldApplyResponse(requestVersion: number): boolean;
   beginInitialRequest(): number;
   noteEvent(): void;
   shouldApplyInitialSnapshot(requestVersion: number): boolean;
 } {
   let version = 0;
   return {
+    beginRequest: () => version,
+    shouldApplyResponse: (requestVersion) => version === requestVersion,
     beginInitialRequest: () => version,
     noteEvent: () => { version += 1; },
-    shouldApplyInitialSnapshot: (requestVersion) => requestVersion === 0 && version === 0,
+    shouldApplyInitialSnapshot: (requestVersion) => requestVersion === 0 && version === requestVersion,
   };
 }
 

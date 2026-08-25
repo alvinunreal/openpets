@@ -170,9 +170,10 @@ export function ConversationView({ api }: { api: ConversationApi }) {
     }
     setVoiceBusy(true);
     setVoiceActionError("");
+    const requestVersion = voiceSnapshotOrdering.beginRequest();
     try {
       const result = await api.startVoiceAssistant();
-      setVoiceSnapshot(normalizeVoiceSnapshot(result));
+      if (voiceSnapshotOrdering.shouldApplyResponse(requestVersion)) setVoiceSnapshot(normalizeVoiceSnapshot(result));
     } catch (err) {
       setVoiceActionError(err instanceof Error ? err.message : "Failed to start voice assistant.");
     } finally {
@@ -188,9 +189,10 @@ export function ConversationView({ api }: { api: ConversationApi }) {
     }
     setVoiceBusy(true);
     setVoiceActionError("");
+    const requestVersion = voiceSnapshotOrdering.beginRequest();
     try {
       const result = await fn();
-      setVoiceSnapshot(normalizeVoiceSnapshot(result));
+      if (voiceSnapshotOrdering.shouldApplyResponse(requestVersion)) setVoiceSnapshot(normalizeVoiceSnapshot(result));
     } catch (err) {
       setVoiceActionError(err instanceof Error ? err.message : "Failed to update mute state.");
     } finally {
@@ -205,9 +207,10 @@ export function ConversationView({ api }: { api: ConversationApi }) {
     }
     setVoiceBusy(true);
     setVoiceActionError("");
+    const requestVersion = voiceSnapshotOrdering.beginRequest();
     try {
       const result = await api.interruptVoiceAssistant();
-      setVoiceSnapshot(normalizeVoiceSnapshot(result));
+      if (voiceSnapshotOrdering.shouldApplyResponse(requestVersion)) setVoiceSnapshot(normalizeVoiceSnapshot(result));
     } catch (err) {
       setVoiceActionError(err instanceof Error ? err.message : "Failed to interrupt voice assistant.");
     } finally {
@@ -222,9 +225,10 @@ export function ConversationView({ api }: { api: ConversationApi }) {
     }
     setVoiceBusy(true);
     setVoiceActionError("");
+    const requestVersion = voiceSnapshotOrdering.beginRequest();
     try {
       const result = await api.endVoiceAssistant();
-      setVoiceSnapshot(normalizeVoiceSnapshot(result));
+      if (voiceSnapshotOrdering.shouldApplyResponse(requestVersion)) setVoiceSnapshot(normalizeVoiceSnapshot(result));
     } catch (err) {
       setVoiceActionError(err instanceof Error ? err.message : "Failed to end voice assistant session.");
     } finally {

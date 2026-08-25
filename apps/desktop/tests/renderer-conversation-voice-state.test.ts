@@ -10,4 +10,12 @@ const initialRequestVersion = ordering.beginInitialRequest();
 ordering.noteEvent();
 assert.equal(ordering.shouldApplyInitialSnapshot(initialRequestVersion), false, "an event received before the initial snapshot resolves remains authoritative");
 
+const actionOrdering = createVoiceSnapshotOrdering();
+const actionRequestVersion = actionOrdering.beginRequest();
+let resolveAction!: () => void;
+const actionResponse = new Promise<boolean>((resolve) => { resolveAction = () => resolve(actionOrdering.shouldApplyResponse(actionRequestVersion)); });
+actionOrdering.noteEvent();
+resolveAction();
+assert.equal(await actionResponse, false, "a subscribed event remains authoritative when it arrives before an action response resolves");
+
 console.log("Renderer Talk ending state verified.");
