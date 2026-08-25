@@ -14,7 +14,7 @@ OpenPets desktop companion application. Tray-first Electron app providing animat
   - CSP: `default-src 'none'`, inline styles only
   - Mock keychain to prevent OS credential prompts
   - IPC network security: loopback/private address filtering for TCP mode
-- **State Management**: File-based JSON state with atomic writes (temp + rename), including bounded Pet Assistant personality preferences
+- **State Management**: File-based JSON state with atomic writes (temp + rename), including bounded Pet Assistant personality preferences and a separate host-owned local conversation archive
 - **Pet Architecture**: 
   - Default pet (always visible when enabled)
   - Agent pets (lease-based, appear on explicit agent requests)
@@ -27,7 +27,7 @@ OpenPets desktop companion application. Tray-first Electron app providing animat
 
 ## Flow
 
-**Startup**: `main.ts` → `installAppLifecycle()` → `initializeAppState()` → `initializeLogger()` → `createAppTray()` → `startLocalIpcServer()` → initialize plugin service with JavaScript host/SDK bridge → optionally `showDefaultPet()`
+**Startup**: `main.ts` → `installAppLifecycle()` → `initializeAppState()` → `initializeLogger()` → `createAppTray()` → `startLocalIpcServer()` → initialize plugin service with JavaScript host/SDK bridge → construct Pet Assistant host and local conversation archive → optionally `showDefaultPet()`
 
 **Pet Display**: IPC Request → `local-ipc.ts` → `LeaseManager.acquire()` → `agent-pet-controller.ts` → `pet-window.ts` → HTML/CSS spritesheet animation with reaction-to-animation mapping
 
@@ -72,6 +72,8 @@ OpenPets desktop companion application. Tray-first Electron app providing animat
 - `pet-motion-engine.ts`: Shared-ticker motion engine (~60 fps) — `Map<petHandleId, MotionState>`, single `setInterval` for all pets, sub-pixel fractional accumulators, bottom-center gravity-floor anchor, `registerPet`/`unregisterPet` seams, sole continuous position writer.
 - `display.ts`: Screen-geometry helpers — `getDefaultPetInitialPosition`, `clampToVisibleWorkArea` (legacy single-display), `clampToNearestDisplayIfOffscreen` (permissive multi-display), `isOnAnyDisplay`, `setCrossDisplayRoamingEnabled`/`isCrossDisplayRoamingEnabled` flag; display list cache with `invalidateDisplayCache()`
 - `app-state.ts`: Persistent state management (JSON file)
+- `pet-assistant-host.ts`/`pet-assistant-service.ts`: Host-owned provider-neutral assistant lifecycle, bounded active context, and canonical terminal-text archive integration
+- `pet-assistant-archive.ts`: Atomic local archive with 200-message/30-day/512KiB retention, 64KiB entry cap, quarantine recovery, and bounded prompt-window support
 - `agent-setup.ts`: Claude/OpenCode/Cursor integration logic
 - `plugin-service.ts`: Plugin orchestration for snapshots, enable/config/reload, command execution, catalog install/update/uninstall, local loading, permission approval, JavaScript host wiring, and runtime reloads
 - `plugin-manifest.ts`: `openpets.plugin.json` v1/v2 schema/types/validator for declarative timer plugins and JavaScript SDK plugins, config fields, permissions, commands/status/network, and actions
@@ -101,7 +103,7 @@ OpenPets desktop companion application. Tray-first Electron app providing animat
 
 ## Test Structure
 
-- **Behavior tests** (`tests/*.test.ts`): Unit tests for lease manager (incl. PID liveness + pool toggle), state management, version checking, ZIP safety, Codex pets, Claude memory, reaction animation mapping, plugin bridge/gateway guards, bounded voice capture lifecycle (`voice-lifecycle.test.ts`), private realtime conversation lifecycle (`voice-conversation.test.ts`), display geometry helpers (`display.test.ts`), pet motion-engine clamping and shared-ticker (`pet-motion-engine-clamp.test.ts`, `pet-motion-engine-shared-ticker.test.ts`), gravity seam (`pet-motion-engine-gravity-seam.test.ts`), single-writer invariant (`pet-motion-engine-single-writer.test.ts`), roaming controller (`pet-roaming-controller.test.ts`), and pool toggle (`pool-toggle.test.ts`). Compiled to `.test-dist/tests/`.
+- **Behavior tests** (`tests/*.test.ts`): Unit tests for lease manager (incl. PID liveness + pool toggle), state management, version checking, ZIP safety, Codex pets, Claude memory, reaction animation mapping, host Pet Assistant/archive retention and prompt boundaries, plugin bridge/gateway guards, bounded voice capture lifecycle (`voice-lifecycle.test.ts`), private realtime conversation lifecycle (`voice-conversation.test.ts`), display geometry helpers (`display.test.ts`), pet motion-engine clamping and shared-ticker (`pet-motion-engine-clamp.test.ts`, `pet-motion-engine-shared-ticker.test.ts`), gravity seam (`pet-motion-engine-gravity-seam.test.ts`), single-writer invariant (`pet-motion-engine-single-writer.test.ts`), roaming controller (`pet-roaming-controller.test.ts`), and pool toggle (`pool-toggle.test.ts`). Compiled to `.test-dist/tests/`.
 - **Contract tests** (`contracts/*.contract.ts`): Public API boundary validation for catalog fixtures, IPC protocol, and plugin manifest schema. Compiled to `.test-dist/contracts/`.
 - **Runtime checks** (`src/check-*.ts`): Remaining runtime validation checks compiled to `dist/`.
 - **Test runner** (`scripts/run-tests.mjs`): Orchestrates preload syntax checks → test compilation → behavior tests → contract tests → dist checks.

@@ -5,7 +5,7 @@ import "./styles.css";
 import openPetsLogoUrl from "../../../assets/openpets.webp";
 import defaultThumbUrl from "../../../assets/default-pet-thumbnail.png";
 import { ConversationView } from "./conversation/ConversationView.js";
-import type { ConversationEvent, ConversationSnapshot, VoiceAssistantTalkEvent, VoiceAssistantSessionSnapshot } from "./conversation/conversation-types.js";
+import type { ConversationEvent, ConversationSnapshot, LocalConversationHistoryMessage, VoiceAssistantTalkEvent, VoiceAssistantSessionSnapshot } from "./conversation/conversation-types.js";
 import { resolveShortcutSaveOutcome } from "./settings-shortcut-state.js";
 
 import claudeLogoUrl from "../../../assets/integrations/claude.svg";
@@ -196,6 +196,9 @@ type ControlCenterApi = {
   getLanStatus(): Promise<LanStatusSnapshot>;
   getI18n(): Promise<I18nSnapshot>;
   getConversationSnapshot(): Promise<ConversationSnapshot>;
+  getConversationHistory(): Promise<readonly LocalConversationHistoryMessage[]>;
+  deleteConversationHistoryMessage(id: string): Promise<{ deleted: boolean }>;
+  clearConversationHistory(): Promise<{ cleared: boolean }>;
   sendConversationMessage(text: string): Promise<unknown>;
   cancelConversationTurn(): Promise<{ cancelled: boolean }>;
   onConversationEvent(callback: (event: ConversationEvent) => void): () => void;

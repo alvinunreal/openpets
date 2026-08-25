@@ -128,12 +128,29 @@ presets, role status, and derived realtime status; create/update/delete a
 profile; select a profile independently for each role; update platform gates;
 and set/check/delete a profile credential. Responses contain only credential
 presence and header names. The Control Center Conversation surface consumes a
-sanitized, host-owned current-session projection; it does not persist transcript
-history or own assistant state. The projection retains only the most recent
-200 display items. Normalized voice transcript events remain an integration
-seam for #147: their adapter must provide a process-lifetime monotonic sequence
-within the voice source; voice ordering is deliberately independent from the
-canonical assistant event sequence.
+sanitized, host-owned current-session projection; it does not own assistant
+state or the persisted archive. The projection retains only the most recent
+200 display items. Separately, #149 provides a local-only atomic archive at
+`userData/openpets-conversation-history.json`. It stores only terminal
+user/assistant text from the canonical shared voice/chat conversation, retaining
+at most 200 messages for 30 days and 512 KiB total, with a 64 KiB per-entry cap
+and newest entries preserved. Corrupt or malformed archives are quarantined
+when possible, replaced with an empty archive, and never partially trusted.
+If archive storage is unavailable, history is disabled for that session without
+blocking the Pet Assistant.
+The archive is distinct from active in-memory context. Its prompt contribution
+is the most recent 24 entries, bounded to 128 KiB; tool definitions/results,
+provider payloads, and personality data are excluded. A narrow preload/main
+bridge exposes list, delete-one, and delete-all only to the Conversation route.
+Its separate **Local history** panel lets the owner open an archived message,
+return to the active session, delete one entry, or confirm irreversible deletion
+of all entries; it refreshes when the host becomes ready and after terminal
+turns/deletions. No semantic retrieval, summary, preference, network
+synchronization, or provider call is involved in archive reads or erasure.
+Normalized voice transcript events remain an
+integration seam for #147: their adapter must provide a process-lifetime
+monotonic sequence within the voice source; voice ordering is deliberately
+independent from the canonical assistant event sequence.
 Provider updates use sparse patches: omitted fields preserve current values,
 `null` clears `baseUrl`, `secretRef`, or `auth`, omitted `headers` preserves the
 redacted header list, and `headers: []` intentionally clears it.
@@ -300,10 +317,11 @@ releases the microphone reservation and the next activation creates a fresh
 session. The composition is bounded final-only capture/transcription → canonical
 Pet Assistant → authoritative TTS. Text, STT, and TTS provider profiles are
 independent, with the STT profile snapshotted before capture begins. #150 adds
-bounded host controls and a pet-owned Talk entry, but no provider protocol,
-retained history, or Realtime behavior. Session transcript events are normalized
-into the #148 current-session Conversation projection; voice lifecycle itself
-remains host-owned. A single app-lifetime feedback reducer consumes typed and
+bounded host controls and a pet-owned Talk entry, but no provider protocol or
+Realtime behavior. Session transcript events are normalized
+into the #148 current-session Conversation projection; terminal text is also
+eligible for the #149 host archive, while voice lifecycle itself remains
+host-owned. A single app-lifetime feedback reducer consumes typed and
 voice canonical events plus listening and actual playback transitions. Canonical
 `responding` remains thinking, speaking is emitted only after playback starts,
 cancellation is not failure, and missing-information is shown only when the
@@ -344,16 +362,26 @@ one stable composition snapshot. The profile contains bounded `petName`, `tone`,
 `style`, `ownerAddress`, and `responseLength` fields with neutral defaults.
 
 The system prompt order is immutable host rules, optional curated context, and a
-fixed-order JSON personality data block with escaped prompt markers. Recent
-conversation messages follow the system message, while the current structured
-capability definitions and authoritative results remain provider-neutral tool
-data. Personality is explicitly communication-only and cannot grant capabilities,
-change permissions, or rewrite failed, rejected, unavailable, or indeterminate
-outcomes. When any such non-completed outcome exists, the terminal response is a
-deterministic host-generated status summary rather than model prose; all-completed
-turns preserve the model response. Chat/voice UI and transcript persistence
-remain separate v4 work; provider-profile management is implemented in the
-Control Center through the host-owned bridge.
+fixed-order JSON personality data block with escaped prompt markers. The
+most-recent local archive window follows the system message and is bounded to
+24 entries/128 KiB; active in-memory context remains a separate bounded layer.
+The archive contains only terminal user/assistant text from the canonical shared
+conversation. Tool definitions/results, provider payloads, and personality data
+never enter it. The current structured capability definitions and authoritative
+results remain provider-neutral tool data. Personality is explicitly
+communication-only and cannot grant capabilities, change permissions, or
+rewrite failed, rejected, unavailable, or indeterminate outcomes. When any
+such non-completed outcome exists, the terminal response is a deterministic
+host-generated status summary rather than model prose; all-completed turns
+preserve the model response. The archive is local-only and atomic, with 200
+messages/30 days/512 KiB retention and a 64 KiB per-entry cap; corrupt data is
+quarantined/replaced. A narrow Control Center bridge permits only listing,
+deleting one archived message, or clearing the archive; its local-history panel
+is separate from the active session and updates after a terminal turn or owner
+deletion. There is no semantic retrieval, summary, preference, network
+synchronization, or provider call for archive reads. Provider-profile management
+is implemented in the Control Center
+through the host-owned bridge.
 
 The plugin subsystem also owns **display deliveries**: a lazy, transparent,
 host-owned surface used by `ctx.ui.delivery`. A delivery is rendered as a single

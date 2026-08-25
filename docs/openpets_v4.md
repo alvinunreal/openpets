@@ -18,10 +18,12 @@ Issue #138 supplies the host-owned provider adapter, canonical in-memory
 conversation/tool loop, generation-pinned capability routing, and bounded
 turn/lifecycle behavior. Issue #146 adds the persisted, owner-editable
 personality profile and deterministic prompt composition on that same host
-foundation. The Control Center now has a current-session Conversation surface;
-persisted/recent history and sensitive-action confirmation UI remain separate
-work. Provider profiles/settings are implemented as a host-owned Control Center
-surface; chat and voice product surfaces consume those integrations.
+foundation. Issue #149 adds the host-owned local conversation archive and
+bounded recent-history prompt input, alongside a narrow Control Center
+list/open/delete bridge. The Control Center has a current-session Conversation
+surface and a separate local-history panel, while provider profiles/settings
+remain a host-owned Control Center surface consumed by chat and voice product
+surfaces.
 
 ## The product experience
 
@@ -38,9 +40,10 @@ uses the same conversation, capabilities, execution results, and pet behavior;
 it only changes the input and output modality.
 
 The generic #147 session emits final user and assistant transcript events only;
-#150 adapts those events into the shared current-session Conversation surface;
-it does not retain transcript/history. Bounded recent-history management remains
-deferred to #149. The
+#150 adapts those events into the shared current-session Conversation surface.
+#149 additionally archives only terminal user/assistant text from the canonical
+shared conversation in a local host-owned file. It does not archive tool
+definitions, tool results, provider payloads, or personality data. The
 provider-neutral host contract does not infer or retain long-term semantic
 memory.
 
@@ -94,11 +97,12 @@ accepts, and the result it returns.
   product is a pet that can converse and act.
 
 The current #138/#146/#145/#148 implementation has a typed current-session
-Conversation surface but no transcript/history persistence or editable
-sensitive-action confirmation surface. The Control Center already provides
-editable provider profiles and communication preferences on the host. Later v4
-issues add retained history on top of the host contract
-rather than moving provider or capability authority into plugins.
+Conversation surface. #149 provides host-side transcript/history persistence
+and a Control Center local-history list/open/delete surface; editable
+sensitive-action confirmation remains separate. The Control Center already provides
+editable provider profiles and communication preferences on the host. Retained
+history stays on the host rather than moving provider or capability authority
+into plugins.
 ### #147 generic voice contract
 
 The desktop host composes final-only bounded STT capture, the canonical
@@ -116,15 +120,17 @@ that reservation; a later activation creates a fresh session. Assistant,
 plugin one-shot, and private Realtime lanes release only their own work. A
 shared host resource owner destroys the privacy indicator only after all lanes
 have stopped. #150 adds activation controls and the shared Conversation
-projection hookup without adding provider protocol, retained history, or
-Realtime behavior; those remain separate work.
+projection hookup without changing provider protocol or Realtime behavior;
+retained history is host-owned, owner-deletable in the Control Center, and
+remains separate from the active projection.
 
-The current #138/#146/#145 implementation has no chat surface,
-transcript/history persistence, or editable sensitive-action confirmation
-surface. The Control Center already provides editable provider profiles and
-communication preferences on the host. Later v4 issues add conversation
-surfaces on top of the host contract rather than moving provider or capability
-authority into plugins.
+The current #138/#146/#145 implementation has no chat surface or editable
+sensitive-action confirmation surface. #149 provides host-side
+transcript/history persistence and its Control Center local-history surface.
+The Control Center already provides editable provider
+profiles and communication preferences on the host. Conversation surfaces stay
+on top of the host contract rather than moving provider or capability authority
+into plugins.
 
 ## v4 outcomes
 
@@ -169,14 +175,15 @@ verifiable delivery work:
   Realtime adapter for the same assistant contract.
 - [#148](https://github.com/alvinunreal/openpets/issues/148) — shared
   chat/transcript UI (current-session projection delivered).
-- [#149](https://github.com/alvinunreal/openpets/issues/149) — recent-history
-  management.
+- [#149](https://github.com/alvinunreal/openpets/issues/149) — host-side local
+  recent-history archive, bounded prompt context, and owner history controls.
 - [#150](https://github.com/alvinunreal/openpets/issues/150) — pet Talk controls,
   shortcut lifecycle, and voice projection hookup.
 
 With #137, #138, #143, #144, and the current host/UI work complete, remaining
-v4 work includes provider adapters and retained history. OpenAI Realtime is an
-optimized optional adapter, not the provider-neutral basis for voice.
+v4 work includes provider adapters.
+OpenAI Realtime is an optimized optional adapter, not the provider-neutral basis
+for voice.
 
 ## Two-developer GitHub workflow
 
@@ -201,5 +208,15 @@ coordination point for v4 work.
 - Pet personality is owner-editable, but only affects communication style; it
   cannot bypass host rules, permissions, or authoritative capability outcomes.
 - Focus and Reminder actions execute without a confirmation step in v4.
+- Conversation history is local-only host persistence: an atomic
+  `userData/openpets-conversation-history.json` archive retains at most 200
+  messages for 30 days and 512 KiB total, with each entry capped at 64 KiB and
+  newest entries preserved. Corrupt or malformed data is quarantined when
+  possible, replaced with an empty archive, and never partially trusted.
+- Owner-controlled delete-one and delete-all operations belong to the host
+  contract behind the narrow main-process bridge used by Control Center local
+  history controls. There is no semantic
+  retrieval, summary, preferences, network synchronization, or provider
+  call involved in reading or erasing this archive.
 - Calendar, wake words, long-term semantic memory, unrestricted machine access,
   and a universal confirmation framework are outside v4.

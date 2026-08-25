@@ -106,7 +106,7 @@ function model(responses: readonly PetAssistantTextModelResponse[], requests: Pe
   assert.equal(executions, 2);
 }
 
-// A failed later model call retains the completed invocation in the draft and terminal result.
+// A failed later model call preserves the terminal tool outcome but not an incomplete active context exchange.
 {
   const requests: PetAssistantTextModelRequest[] = [];
   let generations = 0;
@@ -121,7 +121,7 @@ function model(responses: readonly PetAssistantTextModelResponse[], requests: Pe
   assert.equal(first.status, "failed");
   assert.equal(first.toolOutcomes?.[0]?.result.status, "completed");
   await service.startTurn("draft", "What happened?");
-  assert.equal(requests[2]?.messages.some((message) => message.role === "tool" && message.toolCallId === "draft-call"), true);
+  assert.equal(requests[2]?.messages.some((message) => message.role === "tool" && message.toolCallId === "draft-call"), false);
 }
 
 // Tool-call ids are unique across the whole turn, not only within one provider response.
