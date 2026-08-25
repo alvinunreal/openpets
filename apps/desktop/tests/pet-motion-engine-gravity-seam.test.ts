@@ -23,6 +23,7 @@ import { describe, it, after, afterEach } from "node:test";
 
 import { computeGravityFloor, _setScreenForTesting, _setIsPetWindowDraggingForTesting, _resetMotionStatesForTesting, registerPet, motionSetPhysics } from "../src/pet-motion-engine.js";
 import { _setScreenForTesting as setDisplayScreen, invalidateDisplayCache, setCrossDisplayRoamingEnabled, defaultPetWindowSize } from "../src/display.js";
+import { setConfinementEnabled } from "../src/confinement-manager.js";
 
 const petH = defaultPetWindowSize.height; // 420
 
@@ -177,6 +178,43 @@ describe("gravity seam oscillation regression", () => {
         `indicates the display-selection flip-flop is still occurring (floor_A=${floorA})`,
       );
     }
+  });
+
+  it("keeps the native window bottom inside the work area on Windows-sized bounds", async () => {
+    const display = { bounds: { x: 0, y: 0, width: 1536, height: 864 }, workArea: { x: 0, y: 0, width: 1536, height: 816 } };
+    const screen = {
+      getCursorScreenPoint: () => ({ x: 0, y: 0 }),
+      getAllDisplays: () => [display],
+      getPrimaryDisplay: () => display,
+      getDisplayNearestPoint: () => display,
+    };
+
+    _setScreenForTesting(screen as any);
+    setDisplayScreen(screen as any);
+    invalidateDisplayCache();
+    setCrossDisplayRoamingEnabled(false);
+    setConfinementEnabled(false);
+    _setIsPetWindowDraggingForTesting(() => false);
+
+    let petX = 500;
+    let petY = 300;
+    const nativeWindow = {
+      getPosition: (): [number, number] => [petX, petY],
+      getBounds: () => ({ x: petX, y: petY, width: 344, height: 424 }),
+      isDestroyed: () => false,
+      isVisible: () => true,
+      setPosition: (x: number, y: number) => {
+        petX = x;
+        petY = y;
+      },
+    };
+    const accessor = () => nativeWindow as any;
+
+    registerPet("native-bounds-test", accessor);
+    motionSetPhysics("native-bounds-test", accessor, { gravity: true, bounce: 0 });
+    await new Promise<void>((resolve) => setTimeout(resolve, loopIntervalMs * 30));
+
+    assert.ok(petY + nativeWindow.getBounds().height <= display.workArea.y + display.workArea.height, "gravity must keep the native window bottom inside the Windows work area");
   });
 });
 
