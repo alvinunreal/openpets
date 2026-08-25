@@ -93,8 +93,8 @@ async function completeWithSnapshot(provider: HostProviderOperations, snapshot: 
 async function streamWithSnapshot(provider: HostProviderOperations, snapshot: ProviderOperationSnapshot, req: PluginAiRequest, onToken: (chunk: string) => void): Promise<{ text: string }> {
   let text = "";
   const body = snapshot.profile.adapter === "anthropic-text"
-    ? { model: snapshot.profile.model, max_tokens: req.maxTokens ?? 1024, ...(req.system ? { system: req.system } : {}), messages: req.messages }
-    : { model: snapshot.profile.model, ...(req.maxTokens === undefined ? {} : { max_tokens: req.maxTokens }), ...(req.system ? { messages: [{ role: "system", content: req.system }, ...req.messages] } : { messages: req.messages }) };
+    ? { model: snapshot.profile.model, max_tokens: req.maxTokens ?? 1024, ...(req.temperature === undefined ? {} : { temperature: req.temperature }), ...(req.system ? { system: req.system } : {}), messages: req.messages }
+    : { model: snapshot.profile.model, ...(req.maxTokens === undefined ? {} : { max_tokens: req.maxTokens }), ...(req.temperature === undefined ? {} : { temperature: req.temperature }), ...(req.system ? { messages: [{ role: "system", content: req.system }, ...req.messages] } : { messages: req.messages }) };
   await provider.stream(snapshot, snapshot.profile.adapter === "anthropic-text" ? "/v1/messages" : "/chat/completions", body, (data) => {
     if (data === "[DONE]") return;
     try { const event = JSON.parse(data) as { type?: string; delta?: { type?: string; text?: string }; choices?: Array<{ delta?: { content?: string } }> }; const token = snapshot.profile.adapter === "anthropic-text" ? event.delta?.text : event.choices?.[0]?.delta?.content; if (token) { text += token; onToken(token); } } catch { /* ignore keepalive lines */ }

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 
 import { PluginAiGateway, VOICE_REALTIME_MAX_SDP_BYTES } from "../src/plugin-ai-gateway.js";
 import { initializePluginPlatformSettings, createProviderProfile, selectProviderProfile } from "../src/plugin-platform-settings.js";
+import type { HostProviderOperations, ProviderOperationSnapshot } from "../src/provider-service.js";
 import type { PluginSecretsStore } from "../src/plugin-secrets.js";
 
 const userDataPath = mkdtempSync(join(tmpdir(), "openpets-provider-gateway-"));
@@ -74,6 +75,19 @@ try {
   assert.equal(calls.length, 0, "unsupported realtime must not fetch");
   selectProviderProfile("text", "realtime");
   await assert.rejects(() => gateway.negotiateRealtime(`v=0${"x".repeat(VOICE_REALTIME_MAX_SDP_BYTES)}`, {}), /offer is invalid/);
+
+  let streamAdapter: "anthropic-text" | "openai-compatible-text" = "anthropic-text";
+  const streamedBodies: Array<{ path: string; body: Record<string, unknown> }> = [];
+  const streamProvider = {
+    snapshot: async (): Promise<ProviderOperationSnapshot> => ({ role: "text", profile: { id: "stream", label: "Stream", adapter: streamAdapter, model: "stream-model", baseUrl: "https://stream.example/v1" } }),
+    stream: async (_snapshot: ProviderOperationSnapshot, path: string, body: Record<string, unknown>): Promise<void> => { streamedBodies.push({ path, body }); },
+  } as unknown as HostProviderOperations;
+  const streamGateway = new PluginAiGateway(streamProvider);
+  for (const adapter of ["anthropic-text", "openai-compatible-text"] as const) {
+    streamAdapter = adapter;
+    await streamGateway.stream({ messages: [{ role: "user", content: "hi" }], temperature: 0.35 }, () => undefined);
+    assert.equal(streamedBodies.at(-1)?.body.temperature, 0.35, `${adapter} streaming must preserve temperature`);
+  }
 } finally {
   globalThis.fetch = previousFetch;
   rmSync(userDataPath, { recursive: true, force: true });

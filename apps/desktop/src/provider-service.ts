@@ -3,6 +3,8 @@ import { defaultProviderAuth, getPluginPlatformSettings, type ProviderProfile, t
 
 export const hostSecretsOwner = "__openpets-host";
 export const providerSecretKey = (ref: string): string => `provider:${ref}`;
+export const MINIMAX_MAX_AUDIO_BYTES = 64 * 1024 * 1024;
+const MINIMAX_MAX_RESPONSE_BYTES = MINIMAX_MAX_AUDIO_BYTES * 2 + 16 * 1024;
 
 export type ProviderOperationSnapshot = {
   readonly role: ProviderRole | "realtime";
@@ -89,10 +91,11 @@ export class HostProviderService implements HostProviderOperations {
     const profile = snapshot.profile;
     if (profile.adapter === "system-tts") return null;
     if (profile.adapter === "minimax-tts") {
-      const parsed = await this.json(snapshot, "/t2a_v2", { model: profile.model, text, stream: false, output_format: "hex", audio_setting: { format: "mp3" }, voice_setting: { voice_id: opts.voice || "English_expressive_narrator", ...(opts.rate === undefined ? {} : { speed: opts.rate }) } }) as { data?: { audio?: string; status?: number }; base_resp?: { status_code?: number; status_msg?: string } };
+      const parsed = await this.json(snapshot, "/t2a_v2", { model: profile.model, text, stream: false, output_format: "hex", audio_setting: { format: "mp3" }, voice_setting: { voice_id: opts.voice || "English_expressive_narrator", ...(opts.rate === undefined ? {} : { speed: opts.rate }) } }, undefined, MINIMAX_MAX_RESPONSE_BYTES) as { data?: { audio?: string; status?: number }; base_resp?: { status_code?: number; status_msg?: string } };
       if (parsed.base_resp?.status_code !== undefined && parsed.base_resp.status_code !== 0) throw providerError("MiniMax speech synthesis failed.", "provider.response.invalid");
       const hex = parsed.data?.audio;
-      if (parsed.data?.status !== 2 || typeof hex !== "string" || hex.length === 0 || hex.length % 2 !== 0 || hex.length > 64 * 1024 * 1024 || !/^[0-9a-f]+$/i.test(hex)) throw providerError("MiniMax returned invalid speech audio.", "provider.response.invalid");
+      if (parsed.data?.status !== 2 || typeof hex !== "string" || hex.length === 0 || hex.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(hex)) throw providerError("MiniMax returned invalid speech audio.", "provider.response.invalid");
+      if (hex.length > MINIMAX_MAX_AUDIO_BYTES * 2) throw providerError("MiniMax speech audio is too large.", "provider.response.too_large");
       return { bytes: Buffer.from(hex, "hex"), mimeType: "audio/mpeg" };
     }
     if (profile.adapter === "elevenlabs-tts") {

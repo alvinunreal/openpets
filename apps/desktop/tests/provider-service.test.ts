@@ -26,6 +26,7 @@ try {
   createProviderProfile({ id: "text", label: "Text", adapter: "openai-compatible-text", model: "model", baseUrl: "https://provider.example/v1", secretRef: "text" });
   createProviderProfile({ id: "stt", label: "STT", adapter: "openai-compatible-transcription", model: "whisper", baseUrl: "https://provider.example/v1", secretRef: "stt" });
   createProviderProfile({ id: "tts", label: "TTS", adapter: "openai-compatible-speech", model: "speech", baseUrl: "https://provider.example/v1", secretRef: "tts" });
+  createProviderProfile({ id: "minimax", label: "MiniMax", adapter: "minimax-tts", model: "speech-2.8-turbo", baseUrl: "https://provider.example/v1", secretRef: "minimax" });
   selectProviderProfile("text", "text");
   selectProviderProfile("stt", "stt");
   selectProviderProfile("tts", "tts");
@@ -66,6 +67,16 @@ try {
   const oversizedSnapshot = await oversizedService.snapshot("text");
   await assert.rejects(() => oversizedService.json(oversizedSnapshot, "/chat/completions", {}), /too large/);
   assert.equal(oversizedCancelled, true, "chunked oversized responses must cancel their body");
+
+  selectProviderProfile("tts", "minimax");
+  const minimaxSnapshot = await service.snapshot("tts");
+  const largeJson = JSON.stringify({ data: { audio: "494433", status: 2 }, padding: "x".repeat(2 * 1024 * 1024) });
+  const minimaxService = new HostProviderService(secrets, { fetchImpl: async () => new Response(largeJson, { status: 200 }) });
+  const audio = await minimaxService.synthesize(minimaxSnapshot, "hello", {});
+  assert.deepEqual(Array.from(audio?.bytes ?? []), [0x49, 0x44, 0x33], "MiniMax JSON responses above the generic limit must remain readable");
+
+  const invalidMinimaxService = new HostProviderService(secrets, { fetchImpl: async () => new Response(JSON.stringify({ data: { audio: "not-hex", status: 2 }, base_resp: { status_code: 0 } }), { status: 200 }) });
+  await assert.rejects(() => invalidMinimaxService.synthesize(minimaxSnapshot, "hello", {}), /invalid speech audio/);
 
 } finally {
   rmSync(dir, { recursive: true, force: true });
