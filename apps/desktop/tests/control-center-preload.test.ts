@@ -8,8 +8,9 @@ const source = readFileSync(join(desktopRoot, "control-center-preload.cjs"), "ut
 let exposed: Record<string, (...args: any[]) => any> | undefined;
 const listeners = new Map<string, Function>();
 const sent: Array<{ channel: string; args: unknown[] }> = [];
+const invoked: Array<{ channel: string; args: unknown[] }> = [];
 const ipcRenderer = {
-  invoke: async () => undefined,
+  invoke: async (channel: string, ...args: unknown[]) => { invoked.push({ channel, args }); return undefined; },
   on: (channel: string, listener: Function) => { listeners.set(channel, listener); },
   removeListener: (channel: string, listener: Function) => { if (listeners.get(channel) === listener) listeners.delete(channel); },
   send: (channel: string, ...args: unknown[]) => { sent.push({ channel, args }); },
@@ -28,4 +29,12 @@ cleanup();
 assert.equal(sent[1]?.channel, "openpets:conversation-unsubscribe");
 assert.deepEqual(sent[1]?.args, sent[0]?.args);
 assert.equal(listeners.has("openpets:conversation-event"), false);
+await exposed.getConversationHistory();
+await exposed.deleteConversationHistoryMessage("message-1");
+await exposed.clearConversationHistory();
+assert.deepEqual(invoked.map(({ channel }) => channel), [
+  "openpets:get-conversation-history",
+  "openpets:delete-conversation-history-message",
+  "openpets:clear-conversation-history",
+], "history actions use narrow invoke bridge methods");
 console.log("control-center preload conversation cleanup passed.");

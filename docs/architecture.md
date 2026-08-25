@@ -115,9 +115,22 @@ unavailable, or indeterminate, the terminal user-visible response is a
 deterministic host-generated status summary instead of untrusted model prose;
 turns whose outcomes all complete retain the model response. The Control Center
 Conversation route consumes a host-owned, in-memory current-session projection
-of those canonical events. It is presentation state only: persisted/recent
-history remains separate v4 work; provider-profile management is implemented
-through the host-owned Control Center bridge.
+of those canonical events. It is presentation state only and remains distinct
+from the host-owned local archive delivered by #149. The archive is atomic,
+local-only, and stores only terminal user/assistant text from the canonical
+shared voice/chat conversation. It retains at most 200 messages for 30 days and
+512 KiB total, with a 64 KiB per-entry cap and newest entries preserved. Corrupt
+or malformed data is quarantined when possible, replaced with an empty archive,
+and never partially trusted. A most-recent archive window of at most 24 entries
+and 128 KiB may be added to the next assistant prompt; tool definitions/results,
+provider payloads, and personality data never enter that archive window. Owner
+delete-one/delete-all operations are exposed only through a narrow main-process
+bridge to the Control Center's separate local-history list/open/delete panel;
+the panel refreshes after a terminal turn or deletion and never clears active
+context. There is no semantic retrieval, summary, preferences, network
+synchronization, or provider call for archive
+reads/erasure. Provider-profile management is implemented through the
+host-owned Control Center bridge.
 
 ### Generic host voice session and Talk controls (#147, #150)
 
@@ -136,8 +149,8 @@ the contract does not fabricate microphone device metadata. Voice turns pass a
 host-owned turn id into the canonical assistant service, so canonical events and
 voice transcript projection use explicit correlation rather than matching text.
 Ending voice releases voice-only resources without clearing the shared assistant
-conversation. Retained transcript/history and Realtime protocol behavior remain
-separate work.
+conversation. The shared conversation can contribute terminal text to the
+host-owned local archive; Realtime protocol behavior remains separate work.
 Typed chat and Talk acquire the same host-owned modality lease before model or
 microphone work for this conversation; competing starts fail with an actionable
 busy error and cleanup releases the lease on terminal, end, or shutdown. Pet

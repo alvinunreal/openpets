@@ -5,8 +5,9 @@ import type {
 } from "./pet-assistant-types.js";
 import type { PetAssistantService } from "./pet-assistant-service.js";
 import { PetAssistantModalityCoordinator } from "./pet-assistant-modality.js";
+import { PET_ASSISTANT_CONVERSATION_ID, type PetAssistantArchivedMessage } from "./pet-assistant-archive.js";
 
-export const PET_ASSISTANT_CONVERSATION_ID = "openpets-control-center-current";
+export { PET_ASSISTANT_CONVERSATION_ID } from "./pet-assistant-archive.js";
 export const MAX_CONVERSATION_MESSAGE_BYTES = 64 * 1024;
 export const MAX_CONVERSATION_ITEMS = 200;
 
@@ -253,6 +254,18 @@ export class PetAssistantConversationController {
     if (!this.#activeTypedTurn) return false;
     this.#activeTypedTurn.abort();
     return true;
+  }
+
+  getConversationHistory(): readonly PetAssistantArchivedMessage[] {
+    return this.#service.getConversationHistory();
+  }
+
+  deleteConversationHistoryMessage(id: string): boolean {
+    return this.#service.deleteConversationHistoryMessage(id);
+  }
+
+  clearConversationHistory(): void {
+    this.#service.clearConversationHistory();
   }
 
   applyNormalizedVoiceTranscript(event: PetAssistantNormalizedVoiceTranscriptEvent): boolean {

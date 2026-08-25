@@ -22,7 +22,7 @@ OpenPets is a pnpm/TypeScript monorepo for an Electron desktop companion app plu
 | Directory | Responsibility Summary | Detailed Map |
 |-----------|------------------------|--------------|
 | `apps/` | Deployable application workspace, currently the tray-first Electron desktop app that consumes shared packages, local IPC, pet windows, and desktop plugin support. | [View Map](apps/codemap.md) |
-| `apps/desktop/` | User-facing Electron companion app: tray UX, pet windows, pet installation, plugin automation/runtime, agent setup, update checks, and local IPC server. | [View Map](apps/desktop/codemap.md) |
+| `apps/desktop/` | User-facing Electron companion app: tray UX, pet windows, pet installation, host-owned Pet Assistant/local conversation archive, plugin automation/runtime, agent setup, update checks, and local IPC server. | [View Map](apps/desktop/codemap.md) |
 | `apps/desktop/contracts/` | Desktop public-boundary contract tests for catalog fixtures, local IPC protocol behavior, and plugin manifest schema validation. | [View Map](apps/desktop/contracts/codemap.md) |
 | `apps/desktop/src/` | Main-process service layer for app lifecycle, state, tray/windows, IPC routing, lease-managed agent pets, catalog installation, SDK v3 plugin subsystem, i18n, and editor integration. | [View Map](apps/desktop/src/codemap.md) |
 | `apps/desktop/src/i18n/` | Desktop host i18n catalogs and localized reaction speech pools. | [View Map](apps/desktop/src/i18n/codemap.md) |

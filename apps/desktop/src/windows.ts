@@ -24,6 +24,7 @@ import { getPluginService, type PluginConfigSoundPickResult, type PluginServiceR
 import { endVoiceAssistant, getVoiceAssistantSnapshot, interruptVoiceAssistant, muteVoiceAssistant, onVoiceAssistantEvent, startVoiceAssistant, unmuteVoiceAssistant } from "./voice-assistant-host.js";
 import { getPetAssistantConversationController, onPetAssistantConversationControllerReady } from "./pet-assistant-host.js";
 import { createEmptyPetAssistantConversationSnapshot, validateConversationMessageInput } from "./pet-assistant-conversation.js";
+import { clearConversationHistory, deleteConversationHistoryMessage, getConversationHistory } from "./pet-assistant-history-ipc.js";
 import { defaultPetSprite, getConfiguredSpriteStates, reactionAnimationMetadata, selectableAnimationMetadata, waitingAnimationDurationOptions } from "./reaction-animation-mapping.js";
 import { readSafePluginManifest } from "./plugin-manifest-reader.js";
 import { registerPluginAssetProtocol } from "./plugin-asset-protocol.js";
@@ -241,6 +242,21 @@ export function installInternalUiHandlers(): void {
     return getPetAssistantConversationController()?.getSnapshot() ?? createEmptyPetAssistantConversationSnapshot();
   });
 
+  ipcMain.handle("openpets:get-conversation-history", (event) => {
+    assertAllowedSender(event, ["control-center"]);
+    return getConversationHistory(getPetAssistantConversationController());
+  });
+
+  ipcMain.handle("openpets:delete-conversation-history-message", (event, id: unknown): { deleted: boolean } => {
+    assertAllowedSender(event, ["control-center"]);
+    return deleteConversationHistoryMessage(getPetAssistantConversationController(), id);
+  });
+
+  ipcMain.handle("openpets:clear-conversation-history", (event): { cleared: true } => {
+    assertAllowedSender(event, ["control-center"]);
+    return clearConversationHistory(getPetAssistantConversationController());
+  });
+
   ipcMain.handle("openpets:conversation-send-message", async (event, text: unknown) => {
     assertAllowedSender(event, ["control-center"]);
     return getPetAssistantConversationController()?.sendTypedMessage(validateConversationMessageInput(text))
@@ -344,6 +360,12 @@ export function installInternalUiHandlers(): void {
           cleanup();
         }
       });
+      try {
+        const snapshot = controller.getSnapshot();
+        sender.send("openpets:conversation-event", { type: "snapshot", sequence: snapshot.lastSequence, snapshot });
+      } catch {
+        cleanup();
+      }
     };
     conversationSubscriptions.set(sender.id, { token, cleanup });
     sender.once("destroyed", onDestroyed);

@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 
 import { applyConversationEvent, applyConversationSnapshot, emptyConversationSnapshot, isConversationSnapshot } from "./conversation-state.js";
+import { clearLocalConversationHistory, isLocalConversationHistory, removeLocalConversationHistoryMessage } from "./history-state.js";
 import { createVoiceSnapshotOrdering, voiceBadgeClass, voiceStatusLabel } from "./conversation-types.js";
 import type {
   ConversationActionStatus,
   ConversationEvent,
   ConversationSnapshot,
+  LocalConversationHistoryMessage,
   VoiceAssistantErrorScope,
   VoiceAssistantTalkEvent,
   VoiceAssistantSessionSnapshot,
@@ -14,6 +16,9 @@ import type {
 
 type ConversationApi = {
   getConversationSnapshot(): Promise<unknown>;
+  getConversationHistory?(): Promise<unknown>;
+  deleteConversationHistoryMessage?(id: string): Promise<{ deleted: boolean }>;
+  clearConversationHistory?(): Promise<{ cleared: boolean }>;
   sendConversationMessage(text: string): Promise<unknown>;
   cancelConversationTurn(): Promise<{ cancelled: boolean }>;
   onConversationEvent(callback: (event: ConversationEvent) => void): () => void;
@@ -34,6 +39,11 @@ export function ConversationView({ api }: { api: ConversationApi }) {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  const [history, setHistory] = useState<readonly LocalConversationHistoryMessage[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState("");
+  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
+  const [historyBusy, setHistoryBusy] = useState(false);
 
   const [voiceSnapshot, setVoiceSnapshot] = useState<VoiceAssistantSessionSnapshot>(() => normalizeVoiceSnapshot(null));
   const [shortcutInfo, setShortcutInfo] = useState<{ accelerator?: string; status?: VoiceAssistantShortcutStatus; reason?: string } | null>(null);
@@ -55,11 +65,32 @@ export function ConversationView({ api }: { api: ConversationApi }) {
     }
   }
 
+  async function loadHistory(): Promise<void> {
+    if (!api.getConversationHistory) {
+      setHistoryLoading(false);
+      return;
+    }
+    setHistoryLoading(true);
+    try {
+      const next = await api.getConversationHistory();
+      if (!isLocalConversationHistory(next)) throw new Error("Local conversation history was malformed.");
+      setHistory(next);
+      setSelectedHistoryId((current) => current && next.some((message) => message.id === current) ? current : null);
+      setHistoryError("");
+    } catch (nextError) {
+      setHistoryError(nextError instanceof Error ? nextError.message : "Local history is unavailable.");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
   useEffect(() => {
     let isMounted = true;
 
     const unsubscribeConv = api.onConversationEvent((event) => {
-      if (isMounted) setSnapshot((current: ConversationSnapshot) => applyConversationEvent(current, event));
+      if (!isMounted) return;
+      setSnapshot((current: ConversationSnapshot) => applyConversationEvent(current, event));
+      if (event.snapshot.revision === 0 || event.snapshot.terminal !== undefined) void loadHistory();
     });
 
     const unsubscribeVoice = api.onVoiceAssistantEvent?.((event) => {
@@ -123,6 +154,7 @@ export function ConversationView({ api }: { api: ConversationApi }) {
     }
 
     void loadSnapshot();
+    void loadHistory();
 
     return () => {
       isMounted = false;
@@ -130,6 +162,39 @@ export function ConversationView({ api }: { api: ConversationApi }) {
       unsubscribeVoice?.();
     };
   }, [api]);
+
+  async function deleteHistoryMessage(id: string): Promise<void> {
+    if (!api.deleteConversationHistoryMessage || historyBusy) return;
+    setHistoryBusy(true);
+    try {
+      const result = await api.deleteConversationHistoryMessage(id);
+      if (result.deleted) {
+        setHistory((current) => removeLocalConversationHistoryMessage(current, id));
+        setSelectedHistoryId((current) => current === id ? null : current);
+      }
+      setHistoryError("");
+    } catch (nextError) {
+      setHistoryError(nextError instanceof Error ? nextError.message : "The history entry could not be deleted.");
+    } finally {
+      setHistoryBusy(false);
+    }
+  }
+
+  async function clearHistory(): Promise<void> {
+    if (!api.clearConversationHistory || historyBusy || history.length === 0) return;
+    if (!window.confirm("Delete all local conversation history? This cannot be undone.")) return;
+    setHistoryBusy(true);
+    try {
+      await api.clearConversationHistory();
+      setHistory(clearLocalConversationHistory());
+      setSelectedHistoryId(null);
+      setHistoryError("");
+    } catch (nextError) {
+      setHistoryError(nextError instanceof Error ? nextError.message : "Local history could not be cleared.");
+    } finally {
+      setHistoryBusy(false);
+    }
+  }
 
   async function sendMessage(): Promise<void> {
     const text = draft.trim();
@@ -495,8 +560,58 @@ export function ConversationView({ api }: { api: ConversationApi }) {
           </div>
         </form>
       </section>
+      <aside className="conversation-history glass" aria-label="Local history">
+        <div className="conversation-history-header">
+          <div>
+            <p className="eyebrow">Local history</p>
+            <h3>Archived messages</h3>
+            <p>Stored on this device and separate from the active shared session.</p>
+          </div>
+          <button className="btn btn-danger btn-sm" type="button" disabled={historyBusy || history.length === 0} onClick={() => void clearHistory()}>
+            Delete all
+          </button>
+        </div>
+        {historyError && (
+          <div className="error conversation-error" role="alert">
+            {historyError}
+            <button className="conversation-retry" type="button" onClick={() => void loadHistory()}>Retry</button>
+          </div>
+        )}
+        {selectedHistoryId ? (
+          <div className="conversation-history-selected">
+            <button className="conversation-history-back" type="button" onClick={() => setSelectedHistoryId(null)}>Return to active session</button>
+            {(() => {
+              const selected = history.find((message) => message.id === selectedHistoryId);
+              return selected ? (
+                <article className="conversation-history-entry conversation-history-entry-selected">
+                  <div className="conversation-history-entry-meta"><strong>{selected.role === "user" ? "You" : "Pet Assistant"}</strong><span>{formatHistoryDate(selected.createdAt)}</span></div>
+                  <p>{selected.text}</p>
+                  <button className="btn btn-danger btn-sm" type="button" disabled={historyBusy} onClick={() => void deleteHistoryMessage(selected.id)}>Delete message</button>
+                </article>
+              ) : null;
+            })()}
+          </div>
+        ) : historyLoading ? (
+          <div className="conversation-empty">Loading local history...</div>
+        ) : history.length === 0 ? (
+          <div className="conversation-empty"><strong>No archived messages</strong><span>Completed Pet Assistant messages will appear here.</span></div>
+        ) : (
+          <div className="conversation-history-list">
+            {[...history].reverse().map((message) => (
+              <button className="conversation-history-entry" type="button" key={message.id} onClick={() => setSelectedHistoryId(message.id)}>
+                <span className="conversation-history-entry-meta"><strong>{message.role === "user" ? "You" : "Pet Assistant"}</strong><span>{formatHistoryDate(message.createdAt)}</span></span>
+                <span>{message.text}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </aside>
     </div>
   );
+}
+
+function formatHistoryDate(timestamp: number): string {
+  return new Date(timestamp).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
 function normalizeVoiceSnapshot(raw: unknown): VoiceAssistantSessionSnapshot {

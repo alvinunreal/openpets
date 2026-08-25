@@ -41,6 +41,15 @@ export type ConversationSnapshot = {
   readonly revision: number;
 };
 
+export type LocalConversationHistoryMessage = {
+  readonly id: string;
+  readonly conversationId: "openpets-control-center-current";
+  readonly turnId: string;
+  readonly role: "user" | "assistant";
+  readonly text: string;
+  readonly createdAt: number;
+};
+
 export type ConversationEvent = {
   readonly type: "snapshot";
   readonly sequence: number;

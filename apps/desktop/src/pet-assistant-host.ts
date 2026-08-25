@@ -4,6 +4,7 @@ import type { PluginAssistantCapabilityExecutionOutcome, PluginAssistantCapabili
 import type { PluginService } from "./plugin-service.js";
 import type { PluginSecretsStore } from "./plugin-secrets.js";
 import { PetAssistantService } from "./pet-assistant-service.js";
+import type { PetAssistantConversationArchive } from "./pet-assistant-archive.js";
 import { PetAssistantConversationController } from "./pet-assistant-conversation.js";
 import { TextModelClient } from "./text-model-client.js";
 import type { HostProviderOperations } from "./provider-service.js";
@@ -22,7 +23,11 @@ const modalityCoordinator = new PetAssistantModalityCoordinator();
 const conversationControllerReadyListeners = new Set<(controller: PetAssistantConversationController) => void>();
 
 type HostCapabilityHandle = PetAssistantGenerationHandle & { readonly pluginHandle: PluginAssistantCapabilityHandle };
-export type PetAssistantHostOptions = { readonly compositionProvider?: () => PetAssistantComposition; readonly providerOperations?: HostProviderOperations };
+export type PetAssistantHostOptions = {
+  readonly compositionProvider?: () => PetAssistantComposition;
+  readonly providerOperations?: HostProviderOperations;
+  readonly conversationArchive?: PetAssistantConversationArchive;
+};
 
 /** Construct the host assistant only after the plugin runtime has started. */
 export function startPetAssistantHost(pluginService: PluginService, secrets: PluginSecretsStore, options: PetAssistantHostOptions = {}): PetAssistantService {
@@ -45,6 +50,8 @@ export function startPetAssistantHost(pluginService: PluginService, secrets: Plu
     // App state is host-owned and synchronous; the service snapshots this
     // profile before each turn without coupling itself to Electron state.
     compositionProvider: options.compositionProvider ?? (() => ({ personality: getAppStateSnapshot().preferences.personality })),
+    conversationArchive: options.conversationArchive,
+    onConversationArchiveError: (error) => warn("app", "Pet Assistant conversation archive write failed", { reason: error instanceof Error ? error.message : "unknown" }),
   });
   service.subscribe((event) => {
     if (event.type === "terminal" && event.result.status === "failed") warn("app", "Pet Assistant turn failed", { reason: event.result.error });
