@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { applyConversationEvent, applyConversationSnapshot, emptyConversationSnapshot, isConversationSnapshot } from "./conversation-state.js";
-import { voiceBadgeClass, voiceStatusLabel } from "./conversation-types.js";
+import { createVoiceSnapshotOrdering, voiceBadgeClass, voiceStatusLabel } from "./conversation-types.js";
 import type {
   ConversationActionStatus,
   ConversationEvent,
@@ -39,6 +39,7 @@ export function ConversationView({ api }: { api: ConversationApi }) {
   const [shortcutInfo, setShortcutInfo] = useState<{ accelerator?: string; status?: VoiceAssistantShortcutStatus; reason?: string } | null>(null);
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [voiceActionError, setVoiceActionError] = useState("");
+  const voiceSnapshotOrdering = useRef(createVoiceSnapshotOrdering()).current;
 
   async function loadSnapshot(): Promise<void> {
     setLoading(true);
@@ -57,42 +58,13 @@ export function ConversationView({ api }: { api: ConversationApi }) {
   useEffect(() => {
     let isMounted = true;
 
-    if (api.getVoiceAssistantSnapshot) {
-      api.getVoiceAssistantSnapshot()
-        .then((snap) => {
-          if (isMounted) setVoiceSnapshot(normalizeVoiceSnapshot(snap));
-        })
-        .catch((err) => {
-          if (isMounted) setVoiceActionError(err instanceof Error ? err.message : "Voice status unavailable.");
-        });
-    }
-
-    if (api.getSettingsState) {
-      api.getSettingsState()
-        .then((res: any) => {
-          if (!isMounted) return;
-          if (res?.voiceAssistantShortcutStatus) {
-            setShortcutInfo({
-              accelerator: res.voiceAssistantShortcutStatus.accelerator,
-              status: res.voiceAssistantShortcutStatus.status,
-              reason: res.voiceAssistantShortcutStatus.reason,
-            });
-          } else if (res?.preferences?.voiceAssistantShortcut) {
-            setShortcutInfo({
-              accelerator: res.preferences.voiceAssistantShortcut,
-              status: "registered",
-            });
-          }
-        })
-        .catch(() => { /* ignore */ });
-    }
-
     const unsubscribeConv = api.onConversationEvent((event) => {
       if (isMounted) setSnapshot((current: ConversationSnapshot) => applyConversationEvent(current, event));
     });
 
     const unsubscribeVoice = api.onVoiceAssistantEvent?.((event) => {
       if (!isMounted) return;
+      voiceSnapshotOrdering.noteEvent();
       if (event.type === "snapshot") {
         setVoiceSnapshot(normalizeVoiceSnapshot(event.snapshot));
       } else if (event.type === "error") {
@@ -118,6 +90,37 @@ export function ConversationView({ api }: { api: ConversationApi }) {
         }
       }
     });
+
+    if (api.getVoiceAssistantSnapshot) {
+      const requestVersion = voiceSnapshotOrdering.beginInitialRequest();
+      api.getVoiceAssistantSnapshot()
+        .then((snap) => {
+          if (isMounted && voiceSnapshotOrdering.shouldApplyInitialSnapshot(requestVersion)) setVoiceSnapshot(normalizeVoiceSnapshot(snap));
+        })
+        .catch((err) => {
+          if (isMounted) setVoiceActionError(err instanceof Error ? err.message : "Voice status unavailable.");
+        });
+    }
+
+    if (api.getSettingsState) {
+      api.getSettingsState()
+        .then((res: any) => {
+          if (!isMounted) return;
+          if (res?.voiceAssistantShortcutStatus) {
+            setShortcutInfo({
+              accelerator: res.voiceAssistantShortcutStatus.accelerator,
+              status: res.voiceAssistantShortcutStatus.status,
+              reason: res.voiceAssistantShortcutStatus.reason,
+            });
+          } else if (res?.preferences?.voiceAssistantShortcut) {
+            setShortcutInfo({
+              accelerator: res.preferences.voiceAssistantShortcut,
+              status: "registered",
+            });
+          }
+        })
+        .catch(() => { /* ignore */ });
+    }
 
     void loadSnapshot();
 

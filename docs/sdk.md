@@ -91,6 +91,12 @@ per schema, depth six for schemas, 32 properties per object, 128 total schema
 properties, 32 array items, 4,096 characters per string, 64 KiB per input or
 result, and a five-second host execution wait.
 
+If validated input is missing a required field, the host may return the
+structured failure discriminator `missingInformation: true`. This tells the
+assistant surface to request that value from the user; it is distinct from
+generic rejected, unavailable, or indeterminate capability outcomes and does
+not add provider-specific behavior.
+
 The host owns capability discovery and execution routing. Plugin disable,
 reload, and stop revoke registrations, and an in-flight result from an old
 plugin generation is rejected rather than returned as current state. Capability

@@ -63,19 +63,42 @@ export class VoiceAssistantShortcutManager {
       return this.#snapshot;
     }
     if (this.#registeredAccelerator === accelerator && this.#snapshot.status === "registered") return this.#snapshot;
+    if (this.#registeredAccelerator && this.#snapshot.status === "unavailable") return this.#snapshot;
 
-    if (!this.#unregisterCurrent()) return this.#snapshot;
+    const previousAccelerator = this.#registeredAccelerator;
     try {
       const registered = this.#registry.register(accelerator, this.#onTriggered);
       if (!registered) {
-        this.#snapshot = { accelerator, status: "conflict", reason: "Another application already owns this shortcut." };
+        this.#snapshot = previousAccelerator
+          ? { accelerator: previousAccelerator, status: "registered", reason: "The requested shortcut is already in use; the previous shortcut remains active." }
+          : { accelerator, status: "conflict", reason: "Another application already owns this shortcut." };
         return this.#snapshot;
       }
-      this.#registeredAccelerator = accelerator;
-      this.#snapshot = { accelerator, status: "registered" };
     } catch (error) {
-      this.#snapshot = { accelerator, status: "unavailable", reason: error instanceof Error ? error.message : "The operating system rejected shortcut registration." };
+      this.#snapshot = previousAccelerator
+        ? { accelerator: previousAccelerator, status: "registered", reason: `The requested shortcut could not be registered; the previous shortcut remains active. ${error instanceof Error ? error.message : "The operating system rejected shortcut registration."}` }
+        : { accelerator, status: "unavailable", reason: error instanceof Error ? error.message : "The operating system rejected shortcut registration." };
+      return this.#snapshot;
     }
+
+    if (previousAccelerator) {
+      try {
+        this.#registry.unregister(previousAccelerator);
+      } catch (error) {
+        try {
+          this.#registry.unregister(accelerator);
+        } catch (rollbackError) {
+          this.#registeredAccelerator = accelerator;
+          this.#snapshot = { accelerator, status: "registered", reason: `The previous shortcut could not be released and the replacement could not be rolled back. ${rollbackError instanceof Error ? rollbackError.message : "The operating system refused to release the replacement shortcut."}` };
+          return this.#snapshot;
+        }
+        this.#snapshot = { accelerator: previousAccelerator, status: "registered", reason: `The requested shortcut could not replace the previous shortcut. ${error instanceof Error ? error.message : "The operating system refused to release the previous shortcut."}` };
+        return this.#snapshot;
+      }
+    }
+
+    this.#registeredAccelerator = accelerator;
+    this.#snapshot = { accelerator, status: "registered" };
     return this.#snapshot;
   }
 
@@ -99,6 +122,10 @@ export class VoiceAssistantShortcutManager {
       return false;
     }
   }
+}
+
+export function resolveVoiceAssistantShortcutPreference(current: string, requested: string, snapshot: VoiceAssistantShortcutSnapshot): string {
+  return snapshot.status === "registered" && snapshot.accelerator === requested ? requested : current;
 }
 
 let runtimeManager: VoiceAssistantShortcutManager | null = null;

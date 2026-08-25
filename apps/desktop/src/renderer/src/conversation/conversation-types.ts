@@ -76,6 +76,19 @@ export type VoiceAssistantTalkEvent =
   | { readonly type: "turn-settled"; readonly sequence: number; readonly turnId: string; readonly outcome: "completed" | "cancelled" | "failed" }
   | { readonly type: "ended"; readonly sequence: number; readonly reason: "ended" | "shutdown" };
 
+export function createVoiceSnapshotOrdering(): {
+  beginInitialRequest(): number;
+  noteEvent(): void;
+  shouldApplyInitialSnapshot(requestVersion: number): boolean;
+} {
+  let version = 0;
+  return {
+    beginInitialRequest: () => version,
+    noteEvent: () => { version += 1; },
+    shouldApplyInitialSnapshot: (requestVersion) => requestVersion === 0 && version === 0,
+  };
+}
+
 export function voiceStatusLabel(status: VoiceAssistantSessionStatus, activity: VoiceAssistantActivity | null, muted: boolean): string {
   if (status === "ending") return "Ending…";
   if (muted) return "Voice Muted";

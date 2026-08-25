@@ -32,7 +32,7 @@ import { getRemoteControlService } from "./remote-control-service.js";
 import { getPluginHostCapabilitiesForUi, type ElectronPluginHostCapabilities } from "./plugin-host-capabilities.js";
 import { hostSecretsOwner, providerSecretKey } from "./provider-service.js";
 import { validateRemoteScopeList, type RemoteControlScope } from "./remote-control-protocol.js";
-import { configureVoiceAssistantShortcut, getVoiceAssistantShortcutSnapshot } from "./voice-assistant-shortcut.js";
+import { configureVoiceAssistantShortcut, getVoiceAssistantShortcutSnapshot, resolveVoiceAssistantShortcutPreference } from "./voice-assistant-shortcut.js";
 import {
   buildProviderControlCenterSnapshot,
   createProviderProfile,
@@ -551,8 +551,14 @@ export function installInternalUiHandlers(): void {
     const previousLocale = getActiveLocale();
     const previousPoolEnabled = getAppStateSnapshot().preferences.petPoolEnabled;
     const validatedPatch = validatePreferencePatch(patch);
-    const state = updatePreferences(validatedPatch);
-    if (validatedPatch.voiceAssistantShortcut) configureVoiceAssistantShortcut(state.preferences.voiceAssistantShortcut);
+    const currentShortcut = getAppStateSnapshot().preferences.voiceAssistantShortcut;
+    const shortcutSnapshot = validatedPatch.voiceAssistantShortcut
+      ? configureVoiceAssistantShortcut(validatedPatch.voiceAssistantShortcut)
+      : null;
+    const effectivePatch = shortcutSnapshot && validatedPatch.voiceAssistantShortcut
+      ? { ...validatedPatch, voiceAssistantShortcut: resolveVoiceAssistantShortcutPreference(currentShortcut, validatedPatch.voiceAssistantShortcut, shortcutSnapshot) }
+      : validatedPatch;
+    const state = updatePreferences(effectivePatch);
     if (validatedPatch.personality) debug("ui", "Pet Assistant personality preferences updated", { fields: Object.keys(validatedPatch.personality) });
     const nextOverrides = JSON.stringify(state.preferences.reactionAnimationOverrides ?? {});
     if (state.preferences.petScale !== previousScale || state.preferences.waitingAnimationDurationMs !== previousWaitingAnimationDurationMs || nextOverrides !== previousOverrides) {
