@@ -18,10 +18,10 @@ Issue #138 supplies the host-owned provider adapter, canonical in-memory
 conversation/tool loop, generation-pinned capability routing, and bounded
 turn/lifecycle behavior. Issue #146 adds the persisted, owner-editable
 personality profile and deterministic prompt composition on that same host
-foundation. There is not yet a chat surface, transcript/history persistence, or
-sensitive-action confirmation UI. Provider profiles/settings are implemented as
-a host-owned Control Center surface; later chat and voice product surfaces
-consume those integrations.
+foundation. The Control Center now has a current-session Conversation surface;
+persisted/recent history and sensitive-action confirmation UI remain separate
+work. Provider profiles/settings are implemented as a host-owned Control Center
+surface; chat and voice product surfaces consume those integrations.
 
 ## The product experience
 
@@ -91,6 +91,12 @@ accepts, and the result it returns.
 - Realtime voice transport is infrastructure, not the product by itself. The
   product is a pet that can converse and act.
 
+The current #138/#146/#145/#148 implementation has a typed current-session
+Conversation surface but no transcript/history persistence or editable
+sensitive-action confirmation surface. The Control Center already provides
+editable provider profiles and communication preferences on the host. Later v4
+issues add retained history and voice controls on top of the host contract
+rather than moving provider or capability authority into plugins.
 ### #147 generic voice contract
 
 The desktop host composes final-only bounded STT capture, the canonical

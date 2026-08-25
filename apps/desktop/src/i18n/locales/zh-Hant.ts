@@ -49,6 +49,7 @@ export const zhHant: Partial<Messages> = {
 
   // --- Navigation tabs (renderer) ---
   "nav.dashboard": "儀表板",
+  "nav.conversation": "對話",
   "nav.pets": "寵物",
   "nav.settings": "設定",
   "nav.plugins": "外掛",
@@ -57,6 +58,8 @@ export const zhHant: Partial<Messages> = {
   // --- Route metadata (renderer hero header) ---
   "route.dashboard.title": "儀表板",
   "route.dashboard.description": "總覽你的活躍夥伴、狀態與系統指標。",
+  "route.conversation.title": "對話",
+  "route.conversation.description": "在共用的目前工作階段中與你的寵物聊天。",
   "route.pets.title": "寵物",
   "route.pets.description": "安裝、匯入、預覽並選擇你的預設桌面夥伴。",
   "route.settings.title": "設定",

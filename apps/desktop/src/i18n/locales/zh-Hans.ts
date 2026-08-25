@@ -49,6 +49,7 @@ export const zhHans: Partial<Messages> = {
 
   // --- Navigation tabs (renderer) ---
   "nav.dashboard": "仪表盘",
+  "nav.conversation": "对话",
   "nav.pets": "宠物",
   "nav.settings": "设置",
   "nav.plugins": "插件",
@@ -57,6 +58,8 @@ export const zhHans: Partial<Messages> = {
   // --- Route metadata (renderer hero header) ---
   "route.dashboard.title": "仪表盘",
   "route.dashboard.description": "查看活跃伙伴、状态及系统指标的概览。",
+  "route.conversation.title": "对话",
+  "route.conversation.description": "在共享的当前会话中与你的宠物聊天。",
   "route.pets.title": "宠物",
   "route.pets.description": "安装、导入、预览并选择你的默认桌面伙伴。",
   "route.settings.title": "设置",

@@ -1,4 +1,5 @@
 const { contextBridge, ipcRenderer } = require("electron");
+let conversationSubscriptionNonce = 0;
 
 const api = {
   getPetsState: () => ipcRenderer.invoke("openpets:get-pets-state"),
@@ -6,6 +7,19 @@ const api = {
   getSettingsState: () => ipcRenderer.invoke("openpets:get-settings-state"),
   getLanStatus: () => ipcRenderer.invoke("openpets:get-lan-status"),
   getI18n: () => ipcRenderer.invoke("openpets:get-i18n"),
+  getConversationSnapshot: () => ipcRenderer.invoke("openpets:get-conversation-snapshot"),
+  sendConversationMessage: (text) => ipcRenderer.invoke("openpets:conversation-send-message", text),
+  cancelConversationTurn: () => ipcRenderer.invoke("openpets:conversation-cancel-turn"),
+  onConversationEvent: (callback) => {
+    const listener = (_event, conversationEvent) => callback(conversationEvent);
+    const subscriptionToken = `${Date.now()}-${conversationSubscriptionNonce++}`;
+    ipcRenderer.on("openpets:conversation-event", listener);
+    ipcRenderer.send("openpets:conversation-subscribe", subscriptionToken);
+    return () => {
+      ipcRenderer.removeListener("openpets:conversation-event", listener);
+      ipcRenderer.send("openpets:conversation-unsubscribe", subscriptionToken);
+    };
+  },
   updatePreferences: (patch) => ipcRenderer.invoke("openpets:update-preferences", patch),
   getReactionAnimationSettings: () => ipcRenderer.invoke("openpets:get-reaction-animation-settings"),
   getLaunchAtLogin: () => ipcRenderer.invoke("openpets:get-launch-at-login"),

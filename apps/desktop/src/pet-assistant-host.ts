@@ -4,6 +4,7 @@ import type { PluginAssistantCapabilityExecutionOutcome, PluginAssistantCapabili
 import type { PluginService } from "./plugin-service.js";
 import type { PluginSecretsStore } from "./plugin-secrets.js";
 import { PetAssistantService } from "./pet-assistant-service.js";
+import { PetAssistantConversationController } from "./pet-assistant-conversation.js";
 import { TextModelClient } from "./text-model-client.js";
 import type { HostProviderOperations } from "./provider-service.js";
 import type {
@@ -14,7 +15,9 @@ import type {
 } from "./pet-assistant-types.js";
 
 let assistantService: PetAssistantService | null = null;
+let conversationController: PetAssistantConversationController | null = null;
 let stopping: Promise<void> | null = null;
+const conversationControllerReadyListeners = new Set<(controller: PetAssistantConversationController) => void>();
 
 type HostCapabilityHandle = PetAssistantGenerationHandle & { readonly pluginHandle: PluginAssistantCapabilityHandle };
 export type PetAssistantHostOptions = { readonly compositionProvider?: () => PetAssistantComposition; readonly providerOperations?: HostProviderOperations };
@@ -44,7 +47,10 @@ export function startPetAssistantHost(pluginService: PluginService, secrets: Plu
   service.subscribe((event) => {
     if (event.type === "terminal" && event.result.status === "failed") warn("app", "Pet Assistant turn failed", { reason: event.result.error });
   });
+  conversationController = new PetAssistantConversationController(service);
   assistantService = service;
+  for (const listener of [...conversationControllerReadyListeners]) listener(conversationController);
+  conversationControllerReadyListeners.clear();
   info("app", "Pet Assistant host ready");
   return service;
 }
@@ -54,18 +60,37 @@ export function getPetAssistantService(): PetAssistantService | null {
   return assistantService;
 }
 
+/** Host-owned current-session presentation used by chat and future voice UI. */
+export function getPetAssistantConversationController(): PetAssistantConversationController | null {
+  return conversationController;
+}
+
+export function onPetAssistantConversationControllerReady(listener: (controller: PetAssistantConversationController) => void): () => void {
+  if (conversationController) {
+    listener(conversationController);
+    return () => {};
+  }
+  conversationControllerReadyListeners.add(listener);
+  return () => { conversationControllerReadyListeners.delete(listener); };
+}
+
 /** Stop the assistant before the plugin runtime is torn down. */
 export async function stopPetAssistantHost(): Promise<void> {
   if (stopping) return stopping;
   const service = assistantService;
   if (!service) return;
+  const presentation = conversationController;
   stopping = service.stop().then(() => {
-    if (assistantService === service) assistantService = null;
     info("app", "Pet Assistant host stopped");
   }).catch((error: unknown) => {
     warn("app", "Pet Assistant host stop failed", { reason: error instanceof Error ? error.message : "unknown" });
     throw error;
-  }).finally(() => { stopping = null; });
+  }).finally(() => {
+    presentation?.dispose();
+    if (conversationController === presentation) conversationController = null;
+    if (assistantService === service) assistantService = null;
+    stopping = null;
+  });
   return stopping;
 }
 

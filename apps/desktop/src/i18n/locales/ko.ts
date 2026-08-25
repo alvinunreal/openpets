@@ -49,6 +49,7 @@ export const ko: Partial<Messages> = {
 
   // --- Navigation tabs (renderer) ---
   "nav.dashboard": "대시보드",
+  "nav.conversation": "대화",
   "nav.pets": "펫",
   "nav.settings": "설정",
   "nav.plugins": "플러그인",
@@ -57,6 +58,8 @@ export const ko: Partial<Messages> = {
   // --- Route metadata (renderer hero header) ---
   "route.dashboard.title": "대시보드",
   "route.dashboard.description": "활성 동반자, 상태, 시스템 지표를 한눈에 확인하세요.",
+  "route.conversation.title": "대화",
+  "route.conversation.description": "공유된 현재 세션에서 펫과 대화하세요.",
   "route.pets.title": "펫",
   "route.pets.description": "기본 데스크톱 동반자를 설치, 가져오기, 미리보기하고 선택하세요.",
   "route.settings.title": "설정",
