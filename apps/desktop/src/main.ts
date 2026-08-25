@@ -1,4 +1,4 @@
-import { app, powerMonitor } from "electron";
+import { app, globalShortcut, powerMonitor } from "electron";
 import { existsSync } from "node:fs";
 import { delimiter, join, resolve } from "node:path";
 
@@ -23,6 +23,7 @@ import { startVoiceAssistantHost } from "./voice-assistant-host.js";
 import { createAppTray, refreshTrayMenu } from "./tray.js";
 import { checkForGitHubReleaseUpdate } from "./update-checker.js";
 import { installInternalUiHandlers, installInternalUiProtocol } from "./windows.js";
+import { initializeVoiceAssistantShortcut } from "./voice-assistant-shortcut.js";
 
 // OpenPets stores plugin secrets via Electron safeStorage, which requires a
 // real encryption backend. On Linux use the keyring so safeStorage can
@@ -100,6 +101,9 @@ if (!gotSingleInstanceLock) {
     }
 
     initializeAppState();
+    initializeVoiceAssistantShortcut(globalShortcut, () => {
+      void import("./voice-assistant-host.js").then(({ toggleVoiceAssistant }) => toggleVoiceAssistant()).catch((error: unknown) => logError("app", "voice shortcut toggle failed", error));
+    }, getAppStateSnapshot().preferences.voiceAssistantShortcut);
     // Resolve the UI language before any window or the tray is built.
     setLocaleFromPreference(getAppStateSnapshot().preferences.locale);
     initializeLanController();

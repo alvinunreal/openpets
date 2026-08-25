@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { createVoiceMenuItems } from "../src/tray-voice-menu.js";
+import { createVoiceAssistantTalkMenuLabel, createVoiceMenuItems } from "../src/tray-voice-menu.js";
 import { VoiceOperationState } from "../src/voice-operation-state.js";
 
 const state = new VoiceOperationState();
@@ -23,5 +23,10 @@ assert.equal(cancelCount, 1, "clicking the voice menu item should cancel once");
 
 state.settle();
 assert.deepEqual(menu(), [], "settling should remove the voice menu item");
+
+assert.equal(createVoiceAssistantTalkMenuLabel("ended"), "Talk to your pet", "ended Talk state offers start");
+for (const status of ["active", "muted", "paused", "ending"] as const) {
+  assert.equal(createVoiceAssistantTalkMenuLabel(status), "End talk", `${status} Talk state offers end`);
+}
 
 console.log("Tray voice cancellation behavior verified.");

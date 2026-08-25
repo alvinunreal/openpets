@@ -29,7 +29,7 @@ export type PetAssistantCapabilitySnapshot = {
 
 export type PetAssistantCapabilityExecutionOutcome =
   | { readonly ok: true; readonly result: AssistantJsonObject }
-  | { readonly ok: false; readonly error: { readonly stage?: string; readonly code?: string; readonly message: string } };
+  | { readonly ok: false; readonly error: { readonly stage?: string; readonly code?: string; readonly message: string; readonly missingInformation?: boolean } };
 
 export interface PetAssistantCapabilityRuntime {
   snapshot(signal: AbortSignal): PetAssistantCapabilitySnapshot | Promise<PetAssistantCapabilitySnapshot>;
@@ -54,7 +54,7 @@ export type PetAssistantToolCall = {
 
 export type PetAssistantToolResult =
   | { readonly status: "completed"; readonly result: AssistantJsonObject }
-  | { readonly status: "unavailable" | "rejected" | "indeterminate"; readonly reason: string };
+  | { readonly status: "unavailable" | "rejected" | "indeterminate"; readonly reason: string; readonly missingInformation?: boolean };
 
 export type PetAssistantMessage =
   | { readonly role: "system"; readonly content: string }
@@ -114,6 +114,11 @@ export type PetAssistantTurnResult = {
   readonly response?: string;
   readonly error?: string;
   readonly toolOutcomes?: readonly PetAssistantToolOutcome[];
+};
+
+export type PetAssistantTurnOptions = {
+  /** Host-owned correlation id for a modality-specific turn. */
+  readonly turnId?: string;
 };
 
 export type PetAssistantTranscriptMessage = {

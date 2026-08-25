@@ -5,15 +5,17 @@ import { createTrayIcon } from "./assets.js";
 import { hideDefaultPet, isDefaultPetVisible, setDefaultPetPaused, showDefaultPet } from "./default-pet-controller.js";
 import { t } from "./i18n/index.js";
 import { quitOpenPets } from "./lifecycle.js";
-import { info, openLogsFolder } from "./logger.js";
+import { info, openLogsFolder, warn } from "./logger.js";
 import { shellState, togglePaused } from "./state.js";
 import { getUpdateStatus, openUpdateReleasePage } from "./update-checker.js";
 import { getPluginVoiceOperation, subscribePluginVoiceOperation } from "./plugin-voice.js";
-import { createVoiceMenuItems } from "./tray-voice-menu.js";
+import { createVoiceAssistantTalkMenuLabel, createVoiceMenuItems } from "./tray-voice-menu.js";
 import { openControlCenterWindow } from "./windows.js";
+import { getVoiceAssistantSnapshot, onVoiceAssistantEvent } from "./voice-assistant-host.js";
 
 let tray: Tray | null = null;
 let voiceOperationSubscriptionInstalled = false;
+let voiceAssistantSubscriptionInstalled = false;
 
 export function createAppTray(): Tray {
   if (tray) {
@@ -25,6 +27,10 @@ export function createAppTray(): Tray {
   if (!voiceOperationSubscriptionInstalled) {
     voiceOperationSubscriptionInstalled = true;
     subscribePluginVoiceOperation(() => refreshTrayMenu());
+  }
+  if (!voiceAssistantSubscriptionInstalled) {
+    voiceAssistantSubscriptionInstalled = true;
+    onVoiceAssistantEvent(() => refreshTrayMenu());
   }
   refreshTrayMenu();
   info("tray", "created");
@@ -49,6 +55,12 @@ export function refreshTrayMenu(): void {
     },
     ...createUpdateMenuItems(),
     { type: "separator" },
+    {
+      label: createVoiceAssistantTalkMenuLabel(getVoiceAssistantSnapshot().status),
+      click: () => {
+        void import("./voice-assistant-host.js").then(({ toggleVoiceAssistant }) => toggleVoiceAssistant()).catch((error: unknown) => warn("tray", "Talk toggle failed", { reason: error instanceof Error ? error.message : String(error) }));
+      },
+    },
     ...createVoiceMenuItems(getPluginVoiceOperation()),
     {
       label: t("tray.defaultPet", { name: defaultPetName }),

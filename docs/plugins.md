@@ -138,6 +138,15 @@ Handlers receive a validated clone and must return an object-shaped,
 JSON-compatible, size-bounded result. Unsupported or malformed schemas,
 circular/non-JSON data, and oversized values are rejected.
 
+When a capability cannot proceed because the validated input is missing a
+required field, its structured failure may include `missingInformation: true`.
+This explicit assistant-capability outcome asks for the missing value; it is
+not provider-specific and does not mean that the plugin, capability, or host is
+generally rejected or unavailable. Generic validation failures, inactive or
+stale plugin generations, handler failures, timeouts, and unavailable or
+indeterminate execution remain ordinary structured rejected/unavailable
+outcomes without that discriminator.
+
 Focus Buddy and Quick Reminders are the first official examples. Focus Buddy
 registers `focus.start`, `focus.status`, `focus.pause`, `focus.resume`, and
 `focus.end`; its start capability accepts an explicit duration in minutes.

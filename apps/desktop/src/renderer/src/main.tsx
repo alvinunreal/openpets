@@ -5,7 +5,8 @@ import "./styles.css";
 import openPetsLogoUrl from "../../../assets/openpets.webp";
 import defaultThumbUrl from "../../../assets/default-pet-thumbnail.png";
 import { ConversationView } from "./conversation/ConversationView.js";
-import type { ConversationEvent, ConversationSnapshot } from "./conversation/conversation-types.js";
+import type { ConversationEvent, ConversationSnapshot, VoiceAssistantTalkEvent, VoiceAssistantSessionSnapshot } from "./conversation/conversation-types.js";
+import { resolveShortcutSaveOutcome } from "./settings-shortcut-state.js";
 
 import claudeLogoUrl from "../../../assets/integrations/claude.svg";
 import opencodeLogoUrl from "../../../assets/integrations/opencode.svg";
@@ -29,7 +30,13 @@ type PetPoolCandidate = { id: string; displayName: string };
 type AppearanceTheme = "system" | "light" | "dark";
 type PetAssistantResponseLength = "concise" | "balanced" | "detailed";
 type PetAssistantPersonality = { petName: string; tone: string; style: string; ownerAddress: string; responseLength: PetAssistantResponseLength };
-type SettingsState = { preferences: { openDefaultPetOnLaunch: boolean; appearanceTheme: AppearanceTheme; locale?: "system" | string; petScale: number; waitingAnimationDurationMs: number; reactionAnimationOverrides?: ReactionAnimationOverrides; petPoolEnabled: boolean; petPoolOrder?: readonly string[]; petConfinementEnabled: boolean; petCrossDisplayEnabled: boolean; petGravityEnabled: boolean; personality: PetAssistantPersonality }; petScaleOptions: PetScaleOption[]; petPoolCandidates: ReadonlyArray<PetPoolCandidate> };
+type VoiceAssistantShortcutStatus = "registered" | "conflict" | "unavailable" | "invalid";
+type VoiceAssistantShortcutSnapshot = {
+  readonly accelerator: string;
+  readonly status: VoiceAssistantShortcutStatus;
+  readonly reason?: string;
+};
+type SettingsState = { preferences: { openDefaultPetOnLaunch: boolean; appearanceTheme: AppearanceTheme; locale?: "system" | string; petScale: number; waitingAnimationDurationMs: number; reactionAnimationOverrides?: ReactionAnimationOverrides; petPoolEnabled: boolean; petPoolOrder?: readonly string[]; petConfinementEnabled: boolean; petCrossDisplayEnabled: boolean; petGravityEnabled: boolean; personality: PetAssistantPersonality; voiceAssistantShortcut?: string }; petScaleOptions: PetScaleOption[]; petPoolCandidates: ReadonlyArray<PetPoolCandidate>; voiceAssistantShortcutStatus?: VoiceAssistantShortcutSnapshot };
 type PreferencePatch = Omit<Partial<SettingsState["preferences"]>, "personality"> & { personality?: Partial<PetAssistantPersonality> };
 type LaunchAtLoginState = { supported: boolean; enabled: boolean };
 type LanTopologyIssue = { code: "self_reference" | "missing_reverse"; host: string; edge: "left" | "right" | "up" | "down"; neighbor: string };
@@ -192,6 +199,13 @@ type ControlCenterApi = {
   sendConversationMessage(text: string): Promise<unknown>;
   cancelConversationTurn(): Promise<{ cancelled: boolean }>;
   onConversationEvent(callback: (event: ConversationEvent) => void): () => void;
+  getVoiceAssistantSnapshot(): Promise<VoiceAssistantSessionSnapshot>;
+  startVoiceAssistant(): Promise<VoiceAssistantSessionSnapshot>;
+  muteVoiceAssistant(): Promise<VoiceAssistantSessionSnapshot>;
+  unmuteVoiceAssistant(): Promise<VoiceAssistantSessionSnapshot>;
+  interruptVoiceAssistant(): Promise<VoiceAssistantSessionSnapshot>;
+  endVoiceAssistant(): Promise<VoiceAssistantSessionSnapshot>;
+  onVoiceAssistantEvent(callback: (event: VoiceAssistantTalkEvent) => void): () => void;
   updatePreferences(patch: PreferencePatch): Promise<SettingsState>;
   getReactionAnimationSettings(): Promise<ReactionAnimationSettings>;
   getLaunchAtLogin(): Promise<LaunchAtLoginState>;
@@ -2070,9 +2084,26 @@ function ProvidersSettingsPanel({
   );
 }
 
+function shortcutStatusLabel(status?: VoiceAssistantShortcutStatus): string {
+  if (status === "registered") return "Active";
+  if (status === "conflict") return "Conflict";
+  if (status === "unavailable") return "Unavailable";
+  if (status === "invalid") return "Invalid";
+  return "Unknown";
+}
+
+function shortcutBadgeClass(status?: VoiceAssistantShortcutStatus): string {
+  if (status === "registered") return "voice-badge-active";
+  if (status === "conflict") return "voice-badge-conflict";
+  if (status === "unavailable" || status === "invalid") return "voice-badge-error";
+  return "voice-badge-neutral";
+}
+
 function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanceThemeChange: (theme: AppearanceTheme) => void; onTokenHandoff: (result: RemotePairingResult, endpoint: string | null) => void }) {
   const { t, localePreference, availableLocales, reload: reloadI18n } = useI18n();
   const [settings, setSettings] = useState<SettingsState | null>(null);
+  const [shortcutDraft, setShortcutDraft] = useState<string | null>(null);
+  const [shortcutSaveError, setShortcutSaveError] = useState<string>("");
   const [reactionSettings, setReactionSettings] = useState<ReactionAnimationSettings | null>(null);
   const [launchAtLogin, setLaunchAtLogin] = useState<LaunchAtLoginState | null>(null);
   const [lanStatus, setLanStatus] = useState<LanStatusSnapshot | null>(null);
@@ -2098,6 +2129,8 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
       api.getPluginsSnapshot().catch(() => null),
     ]);
     setSettings(nextSettings);
+    setShortcutDraft(nextSettings.preferences.voiceAssistantShortcut ?? "");
+    setShortcutSaveError("");
     setPersonalityDraft(nextSettings.preferences.personality);
     onAppearanceThemeChange(nextSettings.preferences.appearanceTheme);
     setReactionSettings(nextReactions);
@@ -2133,6 +2166,10 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
     void run(t("settings.busy.saving"), async () => {
       const next = await api.updatePreferences(patch);
       setSettings(next);
+      if ("voiceAssistantShortcut" in patch) {
+        setShortcutDraft(next.preferences.voiceAssistantShortcut ?? "");
+        setShortcutSaveError("");
+      }
       if ("personality" in patch) setPersonalityDraft(next.preferences.personality);
       if ("appearanceTheme" in patch) onAppearanceThemeChange(next.preferences.appearanceTheme);
       if ("reactionAnimationOverrides" in patch) {
@@ -2143,6 +2180,37 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
       }
       setMessage(success);
     });
+  }
+
+  function saveVoiceShortcut() {
+    const value = (shortcutDraft ?? "").trim();
+    if (!value) return;
+    setShortcutSaveError("");
+    void run(t("settings.busy.saving"), async () => {
+      try {
+        const next = await api.updatePreferences({ voiceAssistantShortcut: value });
+        setSettings(next);
+        const outcome = resolveShortcutSaveOutcome(value, next);
+        setShortcutDraft(outcome.savedAccelerator);
+        if (outcome.accepted) {
+          setShortcutSaveError("");
+          setMessage("Pet Talk shortcut saved");
+        } else {
+          const reason = outcome.reason ?? "Pet Talk shortcut was not activated.";
+          setShortcutSaveError(reason);
+          setError(reason);
+        }
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : "Failed to save shortcut.";
+        setShortcutSaveError(errMsg);
+        setError(errMsg);
+      }
+    });
+  }
+
+  function resetVoiceShortcut() {
+    setShortcutDraft(settings?.preferences.voiceAssistantShortcut ?? "");
+    setShortcutSaveError("");
   }
 
   function changeLocale(value: string) {
@@ -2266,6 +2334,66 @@ function SettingsView({ onAppearanceThemeChange, onTokenHandoff }: { onAppearanc
                   <select className="settings-select" value={settings?.preferences.petScale ?? ""} disabled={!settings || !!busy} onChange={(event) => patchPreferences({ petScale: Number(event.target.value) }, t("settings.toast.petScaleSaved"))}>
                     {(settings?.petScaleOptions ?? []).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                   </select>
+                </div>
+                <div className="settings-row">
+                  <div className="settings-row-info">
+                    <strong>Pet Talk Shortcut</strong>
+                    <small>Global hotkey to start voice conversation with your pet.</small>
+                    {settings?.voiceAssistantShortcutStatus?.reason && (
+                      <small className="mt-1 block text-xs font-semibold text-amber-700 dark:text-amber-400">
+                        {settings.voiceAssistantShortcutStatus.reason}
+                      </small>
+                    )}
+                    {shortcutSaveError && (
+                      <small className="mt-1 block text-xs font-semibold text-red-600 dark:text-red-400">
+                        {shortcutSaveError}
+                      </small>
+                    )}
+                  </div>
+                  <div className="flex flex-col items-end gap-2 min-w-0">
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      {settings?.voiceAssistantShortcutStatus?.status && (
+                        <span className={`voice-badge ${shortcutBadgeClass(settings.voiceAssistantShortcutStatus.status)}`}>
+                          {shortcutStatusLabel(settings.voiceAssistantShortcutStatus.status)}
+                        </span>
+                      )}
+                      <input
+                        type="text"
+                        className="settings-select w-48 font-mono text-xs"
+                        value={shortcutDraft ?? settings?.preferences.voiceAssistantShortcut ?? ""}
+                        placeholder="e.g. CommandOrControl+Shift+Space"
+                        disabled={!settings || !!busy}
+                        onChange={(event) => {
+                          setShortcutDraft(event.target.value);
+                          setShortcutSaveError("");
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            saveVoiceShortcut();
+                          }
+                        }}
+                      />
+                      <Button
+                        variant="secondary"
+                        size="compact"
+                        disabled={!settings || !!busy || (shortcutDraft ?? "") === (settings?.preferences.voiceAssistantShortcut ?? "")}
+                        onClick={saveVoiceShortcut}
+                      >
+                        Save
+                      </Button>
+                      {(shortcutDraft ?? "") !== (settings?.preferences.voiceAssistantShortcut ?? "") && (
+                        <Button
+                          variant="secondary"
+                          size="compact"
+                          disabled={!settings || !!busy}
+                          onClick={resetVoiceShortcut}
+                        >
+                          Reset
+                        </Button>
+                      )}
+                    </div>
+                  </div>
                 </div>
                 <div className="settings-row">
                   <div className="settings-row-info">

@@ -13,10 +13,12 @@ import type {
   PetAssistantCapabilityRuntime,
   PetAssistantGenerationHandle,
 } from "./pet-assistant-types.js";
+import { PetAssistantModalityCoordinator } from "./pet-assistant-modality.js";
 
 let assistantService: PetAssistantService | null = null;
 let conversationController: PetAssistantConversationController | null = null;
 let stopping: Promise<void> | null = null;
+const modalityCoordinator = new PetAssistantModalityCoordinator();
 const conversationControllerReadyListeners = new Set<(controller: PetAssistantConversationController) => void>();
 
 type HostCapabilityHandle = PetAssistantGenerationHandle & { readonly pluginHandle: PluginAssistantCapabilityHandle };
@@ -47,7 +49,7 @@ export function startPetAssistantHost(pluginService: PluginService, secrets: Plu
   service.subscribe((event) => {
     if (event.type === "terminal" && event.result.status === "failed") warn("app", "Pet Assistant turn failed", { reason: event.result.error });
   });
-  conversationController = new PetAssistantConversationController(service);
+  conversationController = new PetAssistantConversationController(service, undefined, modalityCoordinator);
   assistantService = service;
   for (const listener of [...conversationControllerReadyListeners]) listener(conversationController);
   conversationControllerReadyListeners.clear();
@@ -63,6 +65,10 @@ export function getPetAssistantService(): PetAssistantService | null {
 /** Host-owned current-session presentation used by chat and future voice UI. */
 export function getPetAssistantConversationController(): PetAssistantConversationController | null {
   return conversationController;
+}
+
+export function getPetAssistantModalityCoordinator(): PetAssistantModalityCoordinator {
+  return modalityCoordinator;
 }
 
 export function onPetAssistantConversationControllerReady(listener: (controller: PetAssistantConversationController) => void): () => void {
@@ -86,6 +92,7 @@ export async function stopPetAssistantHost(): Promise<void> {
     warn("app", "Pet Assistant host stop failed", { reason: error instanceof Error ? error.message : "unknown" });
     throw error;
   }).finally(() => {
+    modalityCoordinator.releaseAll();
     presentation?.dispose();
     if (conversationController === presentation) conversationController = null;
     if (assistantService === service) assistantService = null;
@@ -112,7 +119,7 @@ async function executeCapability(
   // The handle was current when invocation began. A later disable/reload is
   // therefore indeterminate, not an unavailable pre-invocation rejection.
   if (outcome.error.stage === "lifecycle" || outcome.error.stage === "handle") {
-    return { ok: false as const, error: { stage: "handler" as const, code: "internal_error" as const, message: outcome.error.message } };
+    return { ok: false as const, error: { stage: "handler" as const, code: "internal_error" as const, message: outcome.error.message, ...(outcome.error.missingInformation === true ? { missingInformation: true } : {}) } };
   }
   return outcome;
 }

@@ -4,19 +4,26 @@ import type { VoiceAssistantInput, VoiceAssistantInputOptions, VoiceAssistantInp
 import type { VoiceCaptureService } from "./voice-capture.js";
 import { VoiceListeningService } from "./voice-listening-service.js";
 import { VoiceAssistantSession } from "./voice-assistant-session.js";
+import type { VoiceAssistantSessionEvent } from "./voice-assistant-session.js";
 
 const HOST_RECORDING_DURATION_MS = 10_000;
 
 export type VoiceAssistantHostInstance = {
   readonly session: VoiceAssistantSession;
+  readonly sessionId?: number;
   shutdown(): Promise<void>;
 };
+
+export type VoiceAssistantHostEvent = VoiceAssistantSessionEvent & { readonly sessionId: number };
 
 /** Owns activation scope; ended sessions are discarded before the next activation. */
 export class VoiceAssistantHostController {
   readonly #create: () => VoiceAssistantHostInstance;
   #active: VoiceAssistantHostInstance | null = null;
   #transition: Promise<void> = Promise.resolve();
+  #stopped = false;
+  readonly #listeners = new Set<(event: VoiceAssistantHostEvent) => void>();
+  #unsubscribeSession: (() => void) | null = null;
 
   constructor(create: () => VoiceAssistantHostInstance) {
     this.#create = create;
@@ -24,19 +31,70 @@ export class VoiceAssistantHostController {
 
   get session(): VoiceAssistantSession | null { return this.#active?.session ?? null; }
 
+  subscribe(listener: (event: VoiceAssistantHostEvent) => void): () => void {
+    this.#listeners.add(listener);
+    if (this.#active) listener({ type: "snapshot", sequence: 0, snapshot: this.#active.session.snapshot(), sessionId: this.#active.sessionId ?? 0 });
+    return () => { this.#listeners.delete(listener); };
+  }
+
   activate(): Promise<VoiceAssistantSession> {
+    if (this.#stopped) return Promise.reject(new Error("Voice assistant host has stopped."));
     const next = this.#transition.then(async () => {
+      if (this.#stopped) throw new Error("Voice assistant host has stopped.");
       if (this.#active && this.#active.session.snapshot().status === "ended") {
+        this.#unsubscribeSession?.();
+        this.#unsubscribeSession = null;
         await this.#active.shutdown();
         this.#active = null;
       }
       if (!this.#active) {
         const created = this.#create();
         this.#active = created;
+        this.#unsubscribeSession = created.session.subscribe((event) => {
+          const sessionEvent = { ...event, sessionId: created.sessionId ?? 0 } as VoiceAssistantHostEvent;
+          for (const listener of [...this.#listeners]) {
+            try { listener(sessionEvent); } catch { /* observers cannot affect session cleanup */ }
+          }
+        });
         try { await created.session.start(); }
-        catch (error) { await created.shutdown().catch(() => undefined); this.#active = null; throw error; }
+        catch (error) { this.#unsubscribeSession?.(); this.#unsubscribeSession = null; await created.shutdown().catch(() => undefined); this.#active = null; throw error; }
       }
       return this.#active.session;
+    });
+    this.#transition = next.then(() => undefined, () => undefined);
+    return next;
+  }
+
+  toggle(): Promise<VoiceAssistantSession | null> {
+    if (this.#stopped) return Promise.reject(new Error("Voice assistant host has stopped."));
+    const next = this.#transition.then(async () => {
+      if (this.#stopped) throw new Error("Voice assistant host has stopped.");
+      const active = this.#active;
+      if (active && active.session.snapshot().status !== "ended") {
+        await active.session.end();
+        await active.shutdown();
+        this.#unsubscribeSession?.();
+        this.#unsubscribeSession = null;
+        if (this.#active === active) this.#active = null;
+        return null;
+      }
+      if (this.#active && this.#active.session.snapshot().status === "ended") {
+        this.#unsubscribeSession?.();
+        this.#unsubscribeSession = null;
+        await this.#active.shutdown();
+        this.#active = null;
+      }
+      const created = this.#create();
+      this.#active = created;
+      this.#unsubscribeSession = created.session.subscribe((event) => {
+        const sessionEvent = { ...event, sessionId: created.sessionId ?? 0 } as VoiceAssistantHostEvent;
+        for (const listener of [...this.#listeners]) {
+          try { listener(sessionEvent); } catch { /* observers cannot affect session cleanup */ }
+        }
+      });
+      try { await created.session.start(); }
+      catch (error) { this.#unsubscribeSession?.(); this.#unsubscribeSession = null; await created.shutdown().catch(() => undefined); this.#active = null; throw error; }
+      return created.session;
     });
     this.#transition = next.then(() => undefined, () => undefined);
     return next;
@@ -48,6 +106,8 @@ export class VoiceAssistantHostController {
       if (!active) return;
       await active.session.end();
       await active.shutdown();
+      this.#unsubscribeSession?.();
+      this.#unsubscribeSession = null;
       if (this.#active === active) this.#active = null;
     });
     this.#transition = next.then(() => undefined, () => undefined);
@@ -55,9 +115,12 @@ export class VoiceAssistantHostController {
   }
 
   shutdown(): Promise<void> {
+    this.#stopped = true;
     const next = this.#transition.then(async () => {
       const active = this.#active;
       this.#active = null;
+      this.#unsubscribeSession?.();
+      this.#unsubscribeSession = null;
       await active?.shutdown();
     });
     this.#transition = next.then(() => undefined, () => undefined);
@@ -121,8 +184,8 @@ export class PetAssistantVoiceAdapter implements VoiceAssistantTurnAdapter {
     this.#assistant = assistant;
   }
 
-  startTurn(conversationId: string, text: string, signal: AbortSignal): Promise<VoiceAssistantTurnResult> {
-    return this.#assistant.startTurn(conversationId, text, signal).then((result) => ({ status: result.status, ...(result.response === undefined ? {} : { response: result.response }), ...(result.error === undefined ? {} : { error: result.error }) }));
+  startTurn(conversationId: string, text: string, signal: AbortSignal, turnId?: string): Promise<VoiceAssistantTurnResult> {
+    return this.#assistant.startTurn(conversationId, text, signal, turnId === undefined ? {} : { turnId }).then((result) => ({ status: result.status, turnId: result.turnId, ...(result.response === undefined ? {} : { response: result.response }), ...(result.error === undefined ? {} : { error: result.error }) }));
   }
 
   subscribe(listener: (event: { readonly conversationId: string; readonly turnId: string; readonly activity: "thinking" | "acting" | "responding" }) => void): () => void {
@@ -132,9 +195,6 @@ export class PetAssistantVoiceAdapter implements VoiceAssistantTurnAdapter {
     });
   }
 
-  clearConversation(conversationId: string): void {
-    this.#assistant.clearConversation(conversationId);
-  }
 }
 
 export function reactionForVoiceActivity(activity: "listening" | "thinking" | "acting" | "speaking"): "waiting" | "thinking" | "working" | "running" {

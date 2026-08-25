@@ -25,10 +25,10 @@ surface; chat and voice product surfaces consume those integrations.
 
 ## The product experience
 
-The intended voice product experience is described here for v4 planning, but
-the current #147 delivery deliberately adds no Talk control or keyboard
-shortcut. Those activation surfaces are deferred to #150. The host contract
-already supports the eventual flow: one activation owns one bounded session,
+The intended voice product experience is described here for v4 planning. The
+#150 delivery adds the pet-owned Talk control, Control Center/tray controls, and
+a conservative keyboard shortcut. The host contract supports the flow: one
+activation owns one bounded session,
 the pet enters listening, the person speaks, the canonical assistant may invoke
 an enabled capability, and authoritative output is spoken before the session
 can accept another turn.
@@ -38,8 +38,9 @@ uses the same conversation, capabilities, execution results, and pet behavior;
 it only changes the input and output modality.
 
 The generic #147 session emits final user and assistant transcript events only;
-it does not expose a conversation UI or retain transcript/history. Chat UI and
-bounded recent-history management remain deferred to #148 and #149. The
+#150 adapts those events into the shared current-session Conversation surface;
+it does not retain transcript/history. Bounded recent-history management remains
+deferred to #149. The
 provider-neutral host contract does not infer or retain long-term semantic
 memory.
 
@@ -80,8 +81,9 @@ accepts, and the result it returns.
 ## Directional boundaries
 
 - The **host** owns the conversation lifecycle, voice/chat surfaces, provider
-  integration, microphone state, capability discovery, execution routing, and
-  user-facing conversation feedback.
+  integration, microphone reservation lifecycle, capability discovery, execution
+  routing, and user-facing conversation feedback. It reports only microphone or
+  session facts it can observe; it does not invent device metadata.
 - A **plugin** owns its bounded domain operations and declares the capabilities
   it chooses to make available to the Pet Assistant.
 - The AI may request a declared capability; it must not receive unrestricted
@@ -95,7 +97,7 @@ The current #138/#146/#145/#148 implementation has a typed current-session
 Conversation surface but no transcript/history persistence or editable
 sensitive-action confirmation surface. The Control Center already provides
 editable provider profiles and communication preferences on the host. Later v4
-issues add retained history and voice controls on top of the host contract
+issues add retained history on top of the host contract
 rather than moving provider or capability authority into plugins.
 ### #147 generic voice contract
 
@@ -113,8 +115,9 @@ An activation owns one session and its microphone reservation. Ending releases
 that reservation; a later activation creates a fresh session. Assistant,
 plugin one-shot, and private Realtime lanes release only their own work. A
 shared host resource owner destroys the privacy indicator only after all lanes
-have stopped. #147 adds no Talk controls/shortcut, chat UI, retained history, or
-Realtime protocol behavior; #150, #148, #149, and #139 remain deferred.
+have stopped. #150 adds activation controls and the shared Conversation
+projection hookup without adding provider protocol, retained history, or
+Realtime behavior; those remain separate work.
 
 The current #138/#146/#145 implementation has no chat surface,
 transcript/history persistence, or editable sensitive-action confirmation
@@ -136,7 +139,10 @@ v4 is complete only when:
 4. Voice conversations start from both the pet control and a keyboard shortcut,
    and show live transcription.
 5. The pet visibly communicates listening, processing, action success, action
-   failure, and requests for missing information in voice and chat.
+   failure, and requests for missing information in voice and chat. Unavailable,
+   rejected, and indeterminate outcomes are not called missing information
+   unless the canonical outcome explicitly marks that condition; cancellation is
+   not failure.
 6. New plugins can add assistant capabilities through the defined plugin
    contract rather than changes to a central list of supported spoken phrases.
 
@@ -161,15 +167,16 @@ verifiable delivery work:
   speech-to-text → Pet Assistant → text-to-speech conversations.
 - [#139](https://github.com/alvinunreal/openpets/issues/139) — optional OpenAI
   Realtime adapter for the same assistant contract.
-- [#148](https://github.com/alvinunreal/openpets/issues/148),
-  [#149](https://github.com/alvinunreal/openpets/issues/149), and
-  [#150](https://github.com/alvinunreal/openpets/issues/150) — shared
-  chat/transcript UI, recent-history management, and pet Talk controls.
+- [#148](https://github.com/alvinunreal/openpets/issues/148) — shared
+  chat/transcript UI (current-session projection delivered).
+- [#149](https://github.com/alvinunreal/openpets/issues/149) — recent-history
+  management.
+- [#150](https://github.com/alvinunreal/openpets/issues/150) — pet Talk controls,
+  shortcut lifecycle, and voice projection hookup.
 
-With #137, #138, #143, and #144 complete, the next work is #145 and #146;
-then the voice adapters and chat UI; finally history management and the
-pet-owned Talk controls. OpenAI Realtime is an optimized optional adapter, not
-the provider-neutral basis for voice.
+With #137, #138, #143, #144, and the current host/UI work complete, remaining
+v4 work includes provider adapters and retained history. OpenAI Realtime is an
+optimized optional adapter, not the provider-neutral basis for voice.
 
 ## Two-developer GitHub workflow
 

@@ -119,7 +119,7 @@ of those canonical events. It is presentation state only: persisted/recent
 history remains separate v4 work; provider-profile management is implemented
 through the host-owned Control Center bridge.
 
-### Generic host voice session (#147)
+### Generic host voice session and Talk controls (#147, #150)
 
 The desktop owns a host controller/factory for one bounded generic session at a
 time. Activation creates a fresh `VoiceAssistantSession`; ending it releases its
@@ -128,9 +128,24 @@ reusing the terminal object. The session composes final-only bounded STT input,
 the canonical Pet Assistant capability loop, and authoritative response TTS.
 The text, STT, and TTS profiles are snapshotted independently; the STT snapshot is
 captured before microphone acquisition and remains fixed through transcription.
-There is no Talk control, shortcut, chat surface, retained transcript/history, or
-Realtime protocol integration in #147; those remain deferred to #150, #148, #149,
-and #139 respectively.
+#150 adds pet-owned Talk, tray/Control Center controls, and a conservative global
+shortcut without changing the provider-neutral voice contract. The host supplies
+one Talk snapshot/event contract over IPC: host-observed session state is paired
+with shortcut status and its failure reason directly from the shortcut manager;
+the contract does not fabricate microphone device metadata. Voice turns pass a
+host-owned turn id into the canonical assistant service, so canonical events and
+voice transcript projection use explicit correlation rather than matching text.
+Ending voice releases voice-only resources without clearing the shared assistant
+conversation. Retained transcript/history and Realtime protocol behavior remain
+separate work.
+Typed chat and Talk acquire the same host-owned modality lease before model or
+microphone work for this conversation; competing starts fail with an actionable
+busy error and cleanup releases the lease on terminal, end, or shutdown. Pet
+terminal feedback is driven only by canonical terminal events, remains visible
+above resumed listening for a bounded lifetime, and recognizes missing
+information only from an explicit structured capability outcome discriminator;
+the host input validator marks missing required capability fields with that
+discriminator before the result reaches canonical feedback.
 
 Pet-window TTS is request-scoped. Audio and system speech retain a request id and
 kind in the renderer, settle replacement/stop/error/close/renderer-loss/navigation

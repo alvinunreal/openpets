@@ -21,6 +21,7 @@ import { installPet, installPetFromFolder, installPetFromZipFile, removePet, set
 import { assertSafePetId, getInstalledPetDir } from "./pet-paths.js";
 import { debug, error as logError, warn } from "./logger.js";
 import { getPluginService, type PluginConfigSoundPickResult, type PluginServiceResult } from "./plugin-service.js";
+import { endVoiceAssistant, getVoiceAssistantSnapshot, interruptVoiceAssistant, muteVoiceAssistant, onVoiceAssistantEvent, startVoiceAssistant, unmuteVoiceAssistant } from "./voice-assistant-host.js";
 import { getPetAssistantConversationController, onPetAssistantConversationControllerReady } from "./pet-assistant-host.js";
 import { createEmptyPetAssistantConversationSnapshot, validateConversationMessageInput } from "./pet-assistant-conversation.js";
 import { defaultPetSprite, getConfiguredSpriteStates, reactionAnimationMetadata, selectableAnimationMetadata, waitingAnimationDurationOptions } from "./reaction-animation-mapping.js";
@@ -31,6 +32,7 @@ import { getRemoteControlService } from "./remote-control-service.js";
 import { getPluginHostCapabilitiesForUi, type ElectronPluginHostCapabilities } from "./plugin-host-capabilities.js";
 import { hostSecretsOwner, providerSecretKey } from "./provider-service.js";
 import { validateRemoteScopeList, type RemoteControlScope } from "./remote-control-protocol.js";
+import { configureVoiceAssistantShortcut, getVoiceAssistantShortcutSnapshot, resolveVoiceAssistantShortcutPreference } from "./voice-assistant-shortcut.js";
 import {
   buildProviderControlCenterSnapshot,
   createProviderProfile,
@@ -65,6 +67,7 @@ const controlCenterRoutes = new Set<ControlCenterRoute>(["dashboard", "conversat
 let controlCenterWindow: BrowserWindow | null = null;
 let internalUiHandlersInstalled = false;
 const conversationSubscriptions = new Map<number, { readonly token: string; readonly cleanup: () => void }>();
+const voiceAssistantSubscriptions = new Map<number, { readonly token: string; readonly cleanup: () => void }>();
 let pendingControlCenterRoute: ControlCenterRoute | null = null;
 let pendingDockTimer: NodeJS.Timeout | null = null;
 let lastDockHideAt = 0;
@@ -105,10 +108,11 @@ function getPetsStateSnapshot(): { preferences: { defaultPetId: string }; pets: 
 }
 
 function getSettingsStateSnapshot(): {
-  preferences: Pick<ReturnType<typeof getAppStateSnapshot>["preferences"], "openDefaultPetOnLaunch" | "appearanceTheme" | "petScale" | "waitingAnimationDurationMs" | "reactionAnimationOverrides" | "petPoolOrder" | "petPoolEnabled" | "petConfinementEnabled" | "petCrossDisplayEnabled" | "petGravityEnabled" | "personality">;
+  preferences: Pick<ReturnType<typeof getAppStateSnapshot>["preferences"], "openDefaultPetOnLaunch" | "appearanceTheme" | "petScale" | "waitingAnimationDurationMs" | "reactionAnimationOverrides" | "petPoolOrder" | "petPoolEnabled" | "petConfinementEnabled" | "petCrossDisplayEnabled" | "petGravityEnabled" | "personality" | "voiceAssistantShortcut">;
   petScaleOptions: typeof petScaleOptions;
   /** Non-broken, non-built-in installed pets available for pool selection. */
   petPoolCandidates: ReadonlyArray<{ readonly id: string; readonly displayName: string }>;
+  voiceAssistantShortcutStatus: ReturnType<typeof getVoiceAssistantShortcutSnapshot>;
 } {
   const state = getAppStateSnapshot();
   return {
@@ -124,11 +128,13 @@ function getSettingsStateSnapshot(): {
       petCrossDisplayEnabled: state.preferences.petCrossDisplayEnabled,
       petGravityEnabled: state.preferences.petGravityEnabled,
       personality: state.preferences.personality,
+      voiceAssistantShortcut: state.preferences.voiceAssistantShortcut,
     },
     petScaleOptions,
     petPoolCandidates: state.pets.installed
       .filter((p) => !p.builtIn && !p.broken && p.id !== state.preferences.defaultPetId)
       .map(({ id, displayName }) => ({ id, displayName })),
+    voiceAssistantShortcutStatus: getVoiceAssistantShortcutSnapshot(),
   };
 }
 
@@ -244,6 +250,60 @@ export function installInternalUiHandlers(): void {
   ipcMain.handle("openpets:conversation-cancel-turn", (event) => {
     assertAllowedSender(event, ["control-center"]);
     return { cancelled: getPetAssistantConversationController()?.cancelTypedTurn() ?? false };
+  });
+
+  ipcMain.handle("openpets:get-voice-assistant-snapshot", (event) => {
+    assertAllowedSender(event, ["control-center"]);
+    return getVoiceAssistantSnapshot();
+  });
+
+  ipcMain.handle("openpets:voice-assistant-start", async (event) => {
+    assertAllowedSender(event, ["control-center"]);
+    return startVoiceAssistant();
+  });
+  ipcMain.handle("openpets:voice-assistant-mute", async (event) => {
+    assertAllowedSender(event, ["control-center"]);
+    return muteVoiceAssistant();
+  });
+  ipcMain.handle("openpets:voice-assistant-unmute", async (event) => {
+    assertAllowedSender(event, ["control-center"]);
+    return unmuteVoiceAssistant();
+  });
+  ipcMain.handle("openpets:voice-assistant-interrupt", async (event) => {
+    assertAllowedSender(event, ["control-center"]);
+    return interruptVoiceAssistant();
+  });
+  ipcMain.handle("openpets:voice-assistant-end", async (event) => {
+    assertAllowedSender(event, ["control-center"]);
+    return endVoiceAssistant();
+  });
+
+  ipcMain.on("openpets:voice-assistant-subscribe", (event, token: unknown) => {
+    try { assertAllowedSender(event, ["control-center"]); } catch { return; }
+    if (typeof token !== "string" || token.length === 0 || token.length > 128) return;
+    clearVoiceAssistantSubscription(event.sender.id);
+    const sender = event.sender;
+    let cleanedUp = false;
+    let cleanup = () => {};
+    const unsubscribe = onVoiceAssistantEvent((voiceEvent) => {
+      if (sender.isDestroyed()) { cleanup(); return; }
+      try { sender.send("openpets:voice-assistant-event", voiceEvent); } catch { cleanup(); }
+    });
+    const onDestroyed = () => clearVoiceAssistantSubscription(sender.id);
+    cleanup = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      unsubscribe();
+      sender.removeListener("destroyed", onDestroyed);
+      if (voiceAssistantSubscriptions.get(sender.id)?.cleanup === cleanup) voiceAssistantSubscriptions.delete(sender.id);
+    };
+    voiceAssistantSubscriptions.set(sender.id, { token, cleanup });
+    sender.once("destroyed", onDestroyed);
+  });
+
+  ipcMain.on("openpets:voice-assistant-unsubscribe", (event, token: unknown) => {
+    try { assertAllowedSender(event, ["control-center"]); } catch { return; }
+    if (typeof token === "string") clearVoiceAssistantSubscription(event.sender.id, token);
   });
 
   ipcMain.on("openpets:conversation-subscribe", (event, token: unknown) => {
@@ -491,7 +551,14 @@ export function installInternalUiHandlers(): void {
     const previousLocale = getActiveLocale();
     const previousPoolEnabled = getAppStateSnapshot().preferences.petPoolEnabled;
     const validatedPatch = validatePreferencePatch(patch);
-    const state = updatePreferences(validatedPatch);
+    const currentShortcut = getAppStateSnapshot().preferences.voiceAssistantShortcut;
+    const shortcutSnapshot = validatedPatch.voiceAssistantShortcut
+      ? configureVoiceAssistantShortcut(validatedPatch.voiceAssistantShortcut)
+      : null;
+    const effectivePatch = shortcutSnapshot && validatedPatch.voiceAssistantShortcut
+      ? { ...validatedPatch, voiceAssistantShortcut: resolveVoiceAssistantShortcutPreference(currentShortcut, validatedPatch.voiceAssistantShortcut, shortcutSnapshot) }
+      : validatedPatch;
+    const state = updatePreferences(effectivePatch);
     if (validatedPatch.personality) debug("ui", "Pet Assistant personality preferences updated", { fields: Object.keys(validatedPatch.personality) });
     const nextOverrides = JSON.stringify(state.preferences.reactionAnimationOverrides ?? {});
     if (state.preferences.petScale !== previousScale || state.preferences.waitingAnimationDurationMs !== previousWaitingAnimationDurationMs || nextOverrides !== previousOverrides) {
@@ -857,10 +924,11 @@ export function openControlCenterWindow(route: ControlCenterRoute = "dashboard")
   });
   window.webContents.on("render-process-gone", (_event, details) => {
     clearConversationSubscription(window.webContents.id);
+    clearVoiceAssistantSubscription(window.webContents.id);
     console.error("Control Center renderer process gone.", details);
     logError("ui", "control center renderer gone", details);
   });
-  window.on("closed", () => { clearConversationSubscription(window.webContents.id); controlCenterWindow = null; syncDockVisibilityForInternalUi(); });
+  window.on("closed", () => { clearConversationSubscription(window.webContents.id); clearVoiceAssistantSubscription(window.webContents.id); controlCenterWindow = null; syncDockVisibilityForInternalUi(); });
   window.once("ready-to-show", () => { window.show(); window.focus(); });
   pendingControlCenterRoute = safeRoute;
   window.webContents.on("did-finish-load", () => flushPendingControlCenterRoute(window));
@@ -973,6 +1041,12 @@ function assertAllowedSender(event: IpcMainInvokeEvent, allowedKinds: readonly I
 
 function clearConversationSubscription(webContentsId: number, token?: string): void {
   const subscription = conversationSubscriptions.get(webContentsId);
+  if (!subscription || token !== undefined && subscription.token !== token) return;
+  subscription.cleanup();
+}
+
+function clearVoiceAssistantSubscription(webContentsId: number, token?: string): void {
+  const subscription = voiceAssistantSubscriptions.get(webContentsId);
   if (!subscription || token !== undefined && subscription.token !== token) return;
   subscription.cleanup();
 }

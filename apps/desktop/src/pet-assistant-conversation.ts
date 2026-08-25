@@ -4,6 +4,7 @@ import type {
   PetAssistantTurnResult,
 } from "./pet-assistant-types.js";
 import type { PetAssistantService } from "./pet-assistant-service.js";
+import { PetAssistantModalityCoordinator } from "./pet-assistant-modality.js";
 
 export const PET_ASSISTANT_CONVERSATION_ID = "openpets-control-center-current";
 export const MAX_CONVERSATION_MESSAGE_BYTES = 64 * 1024;
@@ -186,7 +187,7 @@ export class PetAssistantConversationProjection {
     if (!isNormalizedVoiceEvent(event) || event.conversationId !== PET_ASSISTANT_CONVERSATION_ID || event.sequence <= this.#lastVoiceSequence) return false;
     this.#lastVoiceSequence = event.sequence;
     const role = event.speaker;
-    const matchingIndex = this.#snapshot.items.findIndex((item) => item.kind === "message" && item.turnId === event.turnId && item.role === role && (item.source === "voice" || role === "user"));
+    const matchingIndex = findVoiceTranscriptIndex(this.#snapshot.items, event.turnId, role);
     const nextMessage: ConversationMessageItem = {
       kind: "message",
       id: `voice:${event.entryId}`,
@@ -220,11 +221,13 @@ export class PetAssistantConversationController {
   readonly #service: PetAssistantService;
   readonly #projection: PetAssistantConversationProjection;
   readonly #unsubscribeService: () => void;
+  readonly #modality: PetAssistantModalityCoordinator;
   #activeTypedTurn: AbortController | null = null;
 
-  constructor(service: PetAssistantService, projection = new PetAssistantConversationProjection()) {
+  constructor(service: PetAssistantService, projection = new PetAssistantConversationProjection(), modality = new PetAssistantModalityCoordinator()) {
     this.#service = service;
     this.#projection = projection;
+    this.#modality = modality;
     this.#unsubscribeService = service.subscribe((event) => { this.#projection.applyAssistantEvent(event); });
   }
 
@@ -235,11 +238,13 @@ export class PetAssistantConversationController {
   async sendTypedMessage(text: unknown): Promise<PetAssistantConversationTurnResult> {
     const message = validateConversationMessageInput(text);
     if (this.#activeTypedTurn) throw new Error("A typed conversation turn is already active.");
+    const lease = this.#modality.acquire("typed");
     const controller = new AbortController();
     this.#activeTypedTurn = controller;
     try {
       return sanitizeTurnResult(await this.#service.startTurn(PET_ASSISTANT_CONVERSATION_ID, message, controller.signal));
     } finally {
+      lease.release();
       if (this.#activeTypedTurn === controller) this.#activeTypedTurn = null;
     }
   }
@@ -273,7 +278,7 @@ function projectTranscript(
   const items = [...currentItems];
   if (message.role === "user" || message.role === "assistant") {
     if (typeof message.content === "string" && message.content.trim() !== "") {
-      const existingVoice = items.findIndex((item) => item.kind === "message" && item.turnId === turnId && item.role === message.role && item.source === "voice");
+      const existingVoice = findVoiceTranscriptIndex(items, turnId, message.role);
       const nextMessage: ConversationMessageItem = {
         kind: "message",
         id: `message:${turnId}:${sequence}`,
@@ -306,6 +311,10 @@ function findActionIndex(items: readonly ConversationItem[], turnId: string, too
     if (item?.kind === "action" && item.turnId === turnId && item.toolName === toolName && (item.status === "pending" || item.status === "running")) return index;
   }
   return -1;
+}
+
+function findVoiceTranscriptIndex(items: readonly ConversationItem[], turnId: string, role: "user" | "assistant"): number {
+  return items.findIndex((item) => item.kind === "message" && item.turnId === turnId && item.role === role);
 }
 
 function isAssistantEventForConversation(event: PetAssistantEvent): boolean {

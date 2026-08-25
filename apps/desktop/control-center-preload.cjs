@@ -10,6 +10,22 @@ const api = {
   getConversationSnapshot: () => ipcRenderer.invoke("openpets:get-conversation-snapshot"),
   sendConversationMessage: (text) => ipcRenderer.invoke("openpets:conversation-send-message", text),
   cancelConversationTurn: () => ipcRenderer.invoke("openpets:conversation-cancel-turn"),
+  getVoiceAssistantSnapshot: () => ipcRenderer.invoke("openpets:get-voice-assistant-snapshot"),
+  startVoiceAssistant: () => ipcRenderer.invoke("openpets:voice-assistant-start"),
+  muteVoiceAssistant: () => ipcRenderer.invoke("openpets:voice-assistant-mute"),
+  unmuteVoiceAssistant: () => ipcRenderer.invoke("openpets:voice-assistant-unmute"),
+  interruptVoiceAssistant: () => ipcRenderer.invoke("openpets:voice-assistant-interrupt"),
+  endVoiceAssistant: () => ipcRenderer.invoke("openpets:voice-assistant-end"),
+  onVoiceAssistantEvent: (callback) => {
+    const listener = (_event, voiceEvent) => callback(voiceEvent);
+    const subscriptionToken = `${Date.now()}-voice-${conversationSubscriptionNonce++}`;
+    ipcRenderer.on("openpets:voice-assistant-event", listener);
+    ipcRenderer.send("openpets:voice-assistant-subscribe", subscriptionToken);
+    return () => {
+      ipcRenderer.removeListener("openpets:voice-assistant-event", listener);
+      ipcRenderer.send("openpets:voice-assistant-unsubscribe", subscriptionToken);
+    };
+  },
   onConversationEvent: (callback) => {
     const listener = (_event, conversationEvent) => callback(conversationEvent);
     const subscriptionToken = `${Date.now()}-${conversationSubscriptionNonce++}`;

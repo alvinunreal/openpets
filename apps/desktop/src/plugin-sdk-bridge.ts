@@ -832,6 +832,7 @@ export class PluginSdkBridge {
     try {
       normalizedInput = validateAssistantInput(registration.schema, input);
     } catch (error) {
+      if (error instanceof PluginAssistantCapabilityError) throw error;
       throw new PluginAssistantCapabilityError("input", "invalid_input", error instanceof Error ? error.message : "Assistant capability input is invalid.", { cause: error });
     }
 
