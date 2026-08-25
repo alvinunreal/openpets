@@ -1689,7 +1689,7 @@ function ProvidersSettingsPanel({
                           disabled={!!busy}
                           onClick={() => handleDeleteCredential(profile.id)}
                         >
-                          Remove credential for all profiles using this reference
+                          Remove credential
                         </Button>
                       )}
                     </div>

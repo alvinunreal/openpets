@@ -48,8 +48,15 @@ import {
 type InternalUiWindowKind = "control-center";
 export type ControlCenterRoute = "dashboard" | "pets" | "settings" | "plugins" | "integrations";
 
-export async function deleteProviderCredentialForProfile(secretsStore: { delete(owner: string, key: string): Promise<void> }, profile: { readonly secretRef?: string }): Promise<void> {
-  if (profile.secretRef) await secretsStore.delete(hostSecretsOwner, providerSecretKey(profile.secretRef));
+export async function deleteProviderCredentialForProfile(
+  secretsStore: { delete(owner: string, key: string): Promise<void> },
+  profile: { readonly id?: string; readonly secretRef?: string },
+  profiles: readonly { readonly id?: string; readonly secretRef?: string }[],
+): Promise<void> {
+  if (!profile.secretRef) return;
+  const otherProfile = profiles.find((candidate) => candidate !== profile && candidate.secretRef === profile.secretRef);
+  if (otherProfile) throw new Error(`Cannot remove this credential because profile "${otherProfile.id ?? "another profile"}" still references it. Replace or remove the other profile's secret reference first.`);
+  await secretsStore.delete(hostSecretsOwner, providerSecretKey(profile.secretRef));
 }
 
 const controlCenterRoutes = new Set<ControlCenterRoute>(["dashboard", "pets", "settings", "plugins", "integrations"]);
@@ -376,7 +383,7 @@ export function installInternalUiHandlers(): void {
     assertAllowedSender(event, ["control-center"]);
     if (typeof id !== "string") throw new Error("Invalid provider profile id.");
     const profile = getPluginPlatformSettings().profiles[id];
-    if (profile) await deleteProviderCredentialForProfile(getProviderCapabilities().secretsStore, profile);
+    if (profile) await deleteProviderCredentialForProfile(getProviderCapabilities().secretsStore, profile, Object.values(getPluginPlatformSettings().profiles));
     return getProviderControlCenterSnapshot();
   });
 
