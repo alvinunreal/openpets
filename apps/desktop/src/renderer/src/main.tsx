@@ -263,7 +263,7 @@ type ControlCenterApi = {
 };
 
 
-type AgentSetupAction = "configure" | "replace" | "remove" | "install-memory" | "doctor-hooks" | "install-hooks" | "uninstall-hooks" | "opencode-install" | "opencode-remove" | "cursor-install" | "cursor-replace" | "cursor-remove";
+type AgentSetupAction = "configure" | "replace" | "remove" | "install-memory" | "doctor-hooks" | "install-hooks" | "uninstall-hooks" | "opencode-install" | "opencode-remove" | "cursor-install" | "cursor-replace" | "cursor-remove" | "openclaw-install" | "openclaw-update" | "openclaw-remove";
 type AgentSetupPetOption = { id: string; displayName: string; default: boolean };
 type ClaudeCodeStatus = { state: "detected" | "not_detected" | "configured" | "needs_setup" | "error"; label: string; details: string; claudeCommand?: string; version?: string; mcpListWorks: boolean; openPetsEntry: { present: boolean; verified: boolean; matchesExpected: boolean }; canConfigure: boolean; canReplace: boolean; canRemove: boolean };
 type ClaudeHookDoctorResult = { status: "installed" | "needs_setup" | "error" | "custom" | "conflict"; settingsPath: string; exists: boolean; valid: boolean; message: string; preview: Record<string, unknown>; asyncSupported: boolean; backupPath?: string };
@@ -272,9 +272,12 @@ type OpenCodeSetupStatus = { state: "configured" | "needs_setup" | "not_detected
 type OpenCodeSetupPreview = { global: true; configDir: string; configPath: string; cleanupConfigPaths: string[]; mcpCommand: string[]; plugin: unknown[] | string; instructionPath: string; configPreview: Record<string, unknown> };
 type CursorSetupStatus = { state: "configured" | "needs_setup" | "not_detected" | "error" | "conflict" | "needs_update"; label: string; details: string; configPath: string; canInstall: boolean; canReplace: boolean; canRemove: boolean };
 type CursorSetupPreview = { global: true; configPath: string; mcpEntry: Record<string, unknown>; rulesPath: string; rulesContent: string; commandMode: "published" | "local" | "bundled" };
-type AgentSetupCommandPaths = { claude: string; node: string; opencode: string };
+type OpenClawSetupState = "unavailable" | "unsupported-host" | "management-disabled" | "not-installed" | "installed-disabled" | "installed-enabled" | "invalid" | "conflict" | "indeterminate";
+type OpenClawPluginStatus = { state: OpenClawSetupState; label: string; details: string; version?: string; installedVersion?: string; trackedSource?: "official-package" | "custom-source" | "untracked"; canInstall: boolean; canUpdate: boolean; canEnable: boolean; canRemove: boolean };
+type OpenClawSetupPreview = { command: string; install: readonly string[]; enable: readonly string[]; update: readonly string[]; remove: readonly string[]; targetVersion: string };
+type AgentSetupCommandPaths = { claude: string; node: string; opencode: string; openclaw: string };
 type AgentSetupActionResult = { ok: boolean; action: AgentSetupAction; message: string; changed: boolean };
-type AgentSetupSnapshot = { selectedPetId?: string; commandMode: "published" | "local" | "bundled"; localDevAvailable: boolean; petOptions: AgentSetupPetOption[]; preview: { displayCommand: string; mcpJson: Record<string, unknown> }; status: ClaudeCodeStatus; hookStatus: ClaudeHookDoctorResult; memoryStatus: ClaudeOpenPetsMemoryStatus; opencodeStatus: OpenCodeSetupStatus; opencodePreview: OpenCodeSetupPreview; cursorStatus: CursorSetupStatus; cursorPreview: CursorSetupPreview; commandPaths: AgentSetupCommandPaths; busy: boolean; lastAction?: AgentSetupActionResult };
+type AgentSetupSnapshot = { selectedPetId?: string; commandMode: "published" | "local" | "bundled"; localDevAvailable: boolean; petOptions: AgentSetupPetOption[]; preview: { displayCommand: string; mcpJson: Record<string, unknown> }; status: ClaudeCodeStatus; hookStatus: ClaudeHookDoctorResult; memoryStatus: ClaudeOpenPetsMemoryStatus; opencodeStatus: OpenCodeSetupStatus; opencodePreview: OpenCodeSetupPreview; cursorStatus: CursorSetupStatus; cursorPreview: CursorSetupPreview; openclawStatus: OpenClawPluginStatus; openclawPreview: OpenClawSetupPreview; commandPaths: AgentSetupCommandPaths; busy: boolean; lastAction?: AgentSetupActionResult };
 type StatusTone = keyof typeof statusPillToneClass;
 
 const api = (window as unknown as { openPetsControlCenter: ControlCenterApi }).openPetsControlCenter;
@@ -4140,10 +4143,28 @@ function cursorStatusTone(state: CursorSetupStatus["state"]): StatusTone {
   return "slate";
 }
 
+function openclawStatusTone(state: OpenClawSetupState): StatusTone {
+  if (state === "installed-enabled") return "green";
+  if (state === "installed-disabled") return "yellow";
+  if (state === "not-installed") return "blue";
+  if (state === "invalid" || state === "conflict") return "red";
+  if (state === "indeterminate") return "orange";
+  return "slate";
+}
+
+function openclawStatusLabel(state: OpenClawSetupState, t: (key: string) => string): string {
+  return t(`integrations.openclaw.state.${state}`);
+}
+
+function openclawSourceLabel(source: OpenClawPluginStatus["trackedSource"], t: (key: string) => string): string {
+  return source ? t(`integrations.openclaw.source.${source}`) : t("integrations.openclaw.source.none");
+}
+
 function IntegrationsView() {
   const { t } = useI18n();
   const [snapshot, setSnapshot] = useState<AgentSetupSnapshot | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [confirmingAction, setConfirmingAction] = useState<"remove" | "update" | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -4219,6 +4240,7 @@ function IntegrationsView() {
     { id: "claude", name: t("integrations.claude.name"), icon: "claude", status: snapshot.status.label, tone: claudeStatusTone(snapshot.status.state), description: t("integrations.claude.description") },
     { id: "opencode", name: t("integrations.opencode.name"), icon: "opencode", status: snapshot.opencodeStatus.label, tone: opencodeStatusTone(snapshot.opencodeStatus.state), description: t("integrations.opencode.description") },
     { id: "cursor", name: t("integrations.cursor.name"), icon: "cursor", status: snapshot.cursorStatus.label, tone: cursorStatusTone(snapshot.cursorStatus.state), description: t("integrations.cursor.description") },
+    { id: "openclaw", name: t("integrations.openclaw.name"), icon: "openclaw", status: snapshot.openclawStatus.label, tone: openclawStatusTone(snapshot.openclawStatus.state), description: t("integrations.openclaw.description") },
     { id: "pi", name: t("integrations.pi.name"), icon: "pi", status: t("integrations.pi.status"), tone: "blue" satisfies StatusTone, description: t("integrations.pi.description") },
   ] as const;
 
@@ -4255,7 +4277,12 @@ function IntegrationsView() {
                 {item.id === "claude" && snapshot.status.canConfigure && <Button variant="primary" size="compact" icon={<InstallIcon />} disabled={isBusy} onClick={() => run(t("integrations.busy.installing"), "configure")}>{t("integrations.install")}</Button>}
                 {item.id === "opencode" && snapshot.opencodeStatus.canInstall && <Button variant="primary" size="compact" icon={<InstallIcon />} disabled={isBusy} onClick={() => run(t("integrations.busy.installing"), "opencode-install")}>{t("integrations.install")}</Button>}
                 {item.id === "cursor" && snapshot.cursorStatus.canInstall && <Button variant="primary" size="compact" icon={<InstallIcon />} disabled={isBusy} onClick={() => run(t("integrations.busy.installing"), "cursor-install")}>{t("integrations.install")}</Button>}
-                <Button variant="secondary" size="compact" icon={<ConfigureIcon />} fullWidth={item.id === "pi"} onClick={() => setSelectedId(item.id)}>{item.id === "pi" ? t("integrations.viewSetup") : t("integrations.configure")}</Button>
+                {item.id === "openclaw" && (snapshot.openclawStatus.canInstall || snapshot.openclawStatus.canEnable) && (
+                  <Button variant="primary" size="compact" icon={<InstallIcon />} disabled={isBusy} onClick={() => run(snapshot.openclawStatus.canEnable && !snapshot.openclawStatus.canInstall ? "Enabling" : t("integrations.busy.installing"), "openclaw-install")}>
+                    {snapshot.openclawStatus.canEnable && !snapshot.openclawStatus.canInstall ? "Enable" : t("integrations.install")}
+                  </Button>
+                )}
+                <Button variant="secondary" size="compact" icon={<ConfigureIcon />} fullWidth={item.id === "pi"} onClick={() => { setSelectedId(item.id); setConfirmingAction(null); }}>{item.id === "pi" ? t("integrations.viewSetup") : t("integrations.configure")}</Button>
               </div>
             </div>
           </article>
@@ -4283,7 +4310,7 @@ function IntegrationsView() {
 
       {selectedId && (
         <div className="plugin-config-overlay" role="dialog" aria-modal="true" aria-labelledby={integrationDialogTitleId}>
-          <button className="plugin-config-backdrop" type="button" aria-label={t("integrations.closeAria")} onClick={() => setSelectedId(null)} />
+          <button className="plugin-config-backdrop" type="button" aria-label={t("integrations.closeAria")} onClick={() => { setSelectedId(null); setConfirmingAction(null); }} />
           <GlassCard className="plugin-inspector">
             <div className="plugin-inspector-head">
               <div className="plugin-inspector-icon">
@@ -4293,11 +4320,11 @@ function IntegrationsView() {
                 <p className="eyebrow">{t("integrations.detail")}</p>
                 <h2 id={integrationDialogTitleId}>{selectedIntegrationName}</h2>
               </div>
-              <Button variant="secondary" size="compact" icon={<CloseIcon />} onClick={() => setSelectedId(null)}>{t("integrations.close")}</Button>
+              <Button variant="secondary" size="compact" icon={<CloseIcon />} onClick={() => { setSelectedId(null); setConfirmingAction(null); }}>{t("integrations.close")}</Button>
             </div>
 
             <div className="flex flex-col gap-5 mt-4">
-              {selectedId !== "pi" && (
+              {selectedId !== "pi" && selectedId !== "openclaw" && (
                 <section className="plugin-section">
                   <div className="plugin-section-title"><small>{t("integrations.commandSource")}</small><strong>{t("integrations.cliMode")}</strong></div>
                   <select className="settings-select w-full" value={snapshot.commandMode} disabled={isBusy} onChange={(event) => changeCommandMode(event.target.value as AgentSetupSnapshot["commandMode"])}>
@@ -4491,10 +4518,175 @@ function IntegrationsView() {
                       <div className="plugin-section-title"><small>{t("integrations.advanced")}</small><strong>{t("integrations.rulesPreview")}</strong></div>
                       <span className="text-brand group-open:rotate-180 transition-transform"><NextIcon /></span>
                     </summary>
-                    <p className="mt-3 text-xs text-slatecopy">{snapshot.cursorPreview.rulesPath}</p>
+                      <p className="mt-3 text-xs text-slatecopy">{snapshot.cursorPreview.rulesPath}</p>
                     <pre className="mt-3 p-3 rounded-xl bg-navy/5 text-[10px] font-mono overflow-x-auto border border-navy/5">
                       {snapshot.cursorPreview.rulesContent}
                     </pre>
+                  </details>
+                </>
+              )}
+
+              {selectedId === "openclaw" && (
+                <>
+                  <div className="p-3.5 rounded-2xl bg-blue-50/60 border border-blue-100/70 text-xs text-slatecopy leading-relaxed">
+                    <strong className="text-navy font-semibold block mb-1">{t("integrations.openclaw.localTitle")}</strong>
+                    {t("integrations.openclaw.localDescription")}
+                  </div>
+
+                  <section className="plugin-section">
+                    <div className="plugin-section-title"><small>{t("integrations.connection")}</small><strong>{t("integrations.statusRouting")}</strong></div>
+                    <div className="flex items-center justify-between p-3 rounded-2xl bg-blue-50/50 border border-blue-100/50">
+                      <div className="flex flex-col">
+                        <strong className="text-sm text-navy">{snapshot.openclawStatus.label}</strong>
+                        <small className="text-xs text-slatecopy">{snapshot.openclawStatus.details}</small>
+                      </div>
+                      <StatusPill tone={openclawStatusTone(snapshot.openclawStatus.state)}>{openclawStatusLabel(snapshot.openclawStatus.state, t)}</StatusPill>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                      <div className="p-2.5 rounded-xl bg-navy/5 border border-navy/5 flex flex-col">
+                        <span className="text-[10px] font-bold text-slatecopy uppercase tracking-wider">{t("integrations.openclaw.hostVersion")}</span>
+                        <span className="font-mono text-navy font-semibold">{snapshot.openclawStatus.version || t("integrations.openclaw.notDetected")}</span>
+                      </div>
+                      <div className="p-2.5 rounded-xl bg-navy/5 border border-navy/5 flex flex-col">
+                        <span className="text-[10px] font-bold text-slatecopy uppercase tracking-wider">{t("integrations.openclaw.installedPlugin")}</span>
+                        <span className="font-mono text-navy font-semibold">{snapshot.openclawStatus.installedVersion || t("integrations.openclaw.notInstalled")}</span>
+                      </div>
+                      <div className="p-2.5 rounded-xl bg-navy/5 border border-navy/5 flex flex-col">
+                        <span className="text-[10px] font-bold text-slatecopy uppercase tracking-wider">{t("integrations.openclaw.installationSource")}</span>
+                        <span className="font-mono text-navy font-semibold">{openclawSourceLabel(snapshot.openclawStatus.trackedSource, t)}</span>
+                      </div>
+                      <div className="p-2.5 rounded-xl bg-navy/5 border border-navy/5 flex flex-col">
+                        <span className="text-[10px] font-bold text-slatecopy uppercase tracking-wider">{t("integrations.openclaw.targetVersion")}</span>
+                        <span className="font-mono text-navy font-semibold">v{snapshot.openclawPreview.targetVersion}</span>
+                      </div>
+                    </div>
+                  </section>
+
+                  {snapshot.openclawStatus.state === "management-disabled" && (
+                    <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
+                      <strong>{t("integrations.openclaw.nixTitle")}</strong> {t("integrations.openclaw.nixDescription")}
+                    </div>
+                  )}
+
+                  {snapshot.openclawStatus.state === "conflict" && (
+                    <div className="p-3 rounded-2xl bg-red-50 border border-red-200 text-xs text-red-900">
+                      <strong>{t("integrations.openclaw.conflictTitle")}</strong> {t("integrations.openclaw.conflictDescription")}
+                    </div>
+                  )}
+
+                  {(snapshot.openclawStatus.state === "indeterminate" || snapshot.openclawStatus.state === "invalid") && (
+                    <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
+                      <strong>{t("integrations.openclaw.unverifiedTitle")}</strong> {snapshot.openclawStatus.details} {t("integrations.openclaw.unverifiedDescription")}
+                    </div>
+                  )}
+
+                  <section className="plugin-section">
+                    <div className="plugin-section-title"><small>{t("integrations.configuration")}</small><strong>{t("integrations.commandPaths")}</strong></div>
+                    <div className="flex flex-col gap-3">
+                      <PathField label={t("integrations.openclaw.command")} value={snapshot.commandPaths.openclaw} placeholder="openclaw" onSave={(v) => updatePath("openclaw", v)} disabled={isBusy} />
+                    </div>
+                  </section>
+
+                  <section className="plugin-section">
+                    <div className="plugin-section-title"><small>{t("integrations.actions")}</small><strong>{t("integrations.management")}</strong></div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(snapshot.openclawStatus.canInstall || snapshot.openclawStatus.canEnable) && (
+                        <Button
+                          variant="primary"
+                          icon={<InstallIcon />}
+                          disabled={isBusy}
+                          onClick={() => run(snapshot.openclawStatus.canEnable && !snapshot.openclawStatus.canInstall ? t("integrations.openclaw.busy.enabling") : t("integrations.openclaw.busy.installing"), "openclaw-install")}
+                        >
+                          {snapshot.openclawStatus.canEnable && !snapshot.openclawStatus.canInstall ? t("integrations.openclaw.enable") : t("integrations.openclaw.install")}
+                        </Button>
+                      )}
+
+                      {snapshot.openclawStatus.canUpdate && !snapshot.openclawStatus.canInstall && (
+                        confirmingAction === "update" ? (
+                          <Button
+                            variant="warning"
+                            icon={<ReplaceIcon />}
+                            disabled={isBusy}
+                            onClick={() => {
+                              setConfirmingAction(null);
+                              void run(t("integrations.openclaw.busy.updating"), "openclaw-update");
+                            }}
+                          >
+                            {t("integrations.openclaw.confirmUpdate")}
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="warning"
+                            icon={<ReplaceIcon />}
+                            disabled={isBusy}
+                            onClick={() => setConfirmingAction("update")}
+                          >
+                            {t("integrations.openclaw.update")}
+                          </Button>
+                        )
+                      )}
+
+                      {snapshot.openclawStatus.canRemove && (
+                        confirmingAction === "remove" ? (
+                          <Button
+                            variant="danger"
+                            icon={<RemoveIcon />}
+                            disabled={isBusy}
+                            onClick={() => {
+                              setConfirmingAction(null);
+                              void run(t("integrations.openclaw.busy.removing"), "openclaw-remove");
+                            }}
+                          >
+                            {t("integrations.openclaw.confirmRemove")}
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="danger"
+                            icon={<RemoveIcon />}
+                            disabled={isBusy}
+                            onClick={() => setConfirmingAction("remove")}
+                          >
+                            {t("integrations.openclaw.remove")}
+                          </Button>
+                        )
+                      )}
+
+                      {confirmingAction && (
+                        <Button variant="secondary" disabled={isBusy} onClick={() => setConfirmingAction(null)}>
+                          {t("common.cancel")}
+                        </Button>
+                      )}
+
+                      <Button variant="secondary" icon={<RefreshIcon />} disabled={isBusy} onClick={() => { setConfirmingAction(null); void load(); }}>
+                        {t("integrations.refreshStatus")}
+                      </Button>
+                    </div>
+                  </section>
+
+                  <details className="plugin-section group">
+                    <summary className="cursor-pointer list-none flex items-center justify-between">
+                      <div className="plugin-section-title"><small>{t("integrations.advanced")}</small><strong>{t("integrations.openclaw.commandPreviews")}</strong></div>
+                      <span className="text-brand group-open:rotate-180 transition-transform"><NextIcon /></span>
+                    </summary>
+                    <div className="mt-3 flex flex-col gap-2 text-xs font-mono">
+                      <div className="p-2.5 rounded-xl bg-navy/5 border border-navy/5 flex flex-col gap-1">
+                        <span className="text-[10px] font-sans font-bold text-slatecopy uppercase tracking-wider">{t("integrations.install")}</span>
+                        <code className="text-brand overflow-x-auto whitespace-pre">{snapshot.openclawPreview.command} {snapshot.openclawPreview.install.join(" ")}</code>
+                      </div>
+                      <div className="p-2.5 rounded-xl bg-navy/5 border border-navy/5 flex flex-col gap-1">
+                        <span className="text-[10px] font-sans font-bold text-slatecopy uppercase tracking-wider">{t("integrations.openclaw.enable")}</span>
+                        <code className="text-brand overflow-x-auto whitespace-pre">{snapshot.openclawPreview.command} {snapshot.openclawPreview.enable.join(" ")}</code>
+                      </div>
+                      <div className="p-2.5 rounded-xl bg-navy/5 border border-navy/5 flex flex-col gap-1">
+                        <span className="text-[10px] font-sans font-bold text-slatecopy uppercase tracking-wider">{t("integrations.openclaw.update")}</span>
+                        <code className="text-brand overflow-x-auto whitespace-pre">{snapshot.openclawPreview.command} {snapshot.openclawPreview.update.join(" ")}</code>
+                      </div>
+                      <div className="p-2.5 rounded-xl bg-navy/5 border border-navy/5 flex flex-col gap-1">
+                        <span className="text-[10px] font-sans font-bold text-slatecopy uppercase tracking-wider">{t("integrations.openclaw.remove")}</span>
+                        <code className="text-brand overflow-x-auto whitespace-pre">{snapshot.openclawPreview.command} {snapshot.openclawPreview.remove.join(" ")}</code>
+                      </div>
+                    </div>
                   </details>
                 </>
               )}

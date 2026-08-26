@@ -7,13 +7,14 @@ import { app } from "electron";
 import { buildClaudeMcpGetCommand, buildClaudeMcpPreview, classifyClaudeMcpStatus, createOpenPetsHookSettingsPreview, doctorClaudeHooks, installClaudeHooks, mapAsarPathToUnpacked, uninstallClaudeHooks, type ClaudeCommandSpec, type ClaudeHookDoctorResult, type ClaudeMcpPreview, type OpenPetsCommandMode, type ParsedClaudeMcpEntry } from "@open-pets/claude";
 import { buildCursorRulesPreview, classifyCursorMcpStatus, executeCursorMcpWrite, getCursorGlobalMcpPath, planCursorMcpInstall, planCursorMcpRemove, planCursorMcpReplace, readCursorMcpConfig, type CursorMcpStatusResult } from "@open-pets/cursor";
 import { buildOpenPetsOnlyPreview, type RedactedPreview } from "@open-pets/cursor";
+import { buildOpenClawCommand, classifyOpenClawStatus, openClawMaxStructuredOutputBytes, parseOpenClawVersion, planOpenClawMutation, type OpenClawCommandAction, type OpenClawPluginStatus } from "@open-pets/openclaw/management";
 import { doctorOpenCodeGlobalSetup, getGlobalOpenCodeConfigDir, parseOpenCodeConfig, prepareOpenCodeGlobalRemove, prepareOpenCodeGlobalSetup, writePreparedOpenCodeGlobalRemove, writePreparedOpenCodeGlobalSetup } from "@open-pets/opencode";
 
 import { getAppStateSnapshot, updatePreferences, type InstalledPetState, type OpenPetsStateV1 } from "./app-state.js";
 import { doctorClaudeOpenPetsMemory, installClaudeOpenPetsMemory, uninstallClaudeOpenPetsMemory, type ClaudeOpenPetsMemoryStatus } from "./claude-memory.js";
 import { getDefaultOpenCodeCommand, getOpenCodeCommandCandidates } from "./opencode-command.js";
 
-export type AgentSetupAction = "configure" | "replace" | "remove" | "install-memory" | "doctor-hooks" | "install-hooks" | "uninstall-hooks" | "opencode-install" | "opencode-remove" | "cursor-install" | "cursor-replace" | "cursor-remove";
+export type AgentSetupAction = "configure" | "replace" | "remove" | "install-memory" | "doctor-hooks" | "install-hooks" | "uninstall-hooks" | "opencode-install" | "opencode-remove" | "cursor-install" | "cursor-replace" | "cursor-remove" | "openclaw-install" | "openclaw-update" | "openclaw-remove";
 export type JournalAction = "configure" | "update" | "replace" | "remove";
 
 export interface AgentSetupPetOption {
@@ -48,6 +49,8 @@ export interface AgentSetupSnapshot {
   readonly opencodePreview: OpenCodeSetupPreview;
   readonly cursorStatus: CursorSetupStatus;
   readonly cursorPreview: CursorSetupPreview;
+  readonly openclawStatus: OpenClawPluginStatus;
+  readonly openclawPreview: OpenClawSetupPreview;
   readonly commandPaths: AgentSetupCommandPaths;
   readonly busy: boolean;
   readonly lastAction?: AgentSetupActionResult;
@@ -57,6 +60,7 @@ export interface AgentSetupCommandPaths {
   readonly claude: string;
   readonly node: string;
   readonly opencode: string;
+  readonly openclaw: string;
 }
 
 export interface OpenCodeSetupStatus {
@@ -98,6 +102,15 @@ export interface CursorSetupPreview {
   readonly commandMode: "published" | "local" | "bundled";
 }
 
+export interface OpenClawSetupPreview {
+  readonly command: string;
+  readonly install: readonly string[];
+  readonly enable: readonly string[];
+  readonly update: readonly string[];
+  readonly remove: readonly string[];
+  readonly targetVersion: string;
+}
+
 export interface AgentSetupActionResult {
   readonly ok: boolean;
   readonly action: AgentSetupAction;
@@ -122,9 +135,16 @@ interface CommandResult {
   readonly stdout: string;
   readonly stderr: string;
   readonly error?: string;
+  readonly overflow?: boolean;
+}
+
+interface BoundedOutput {
+  readonly value: string;
+  readonly overflow: boolean;
 }
 
 const commandTimeoutMs = 6_000;
+const managementCommandTimeoutMs = 60_000;
 const maxOutputBytes = 16_384;
 const require = createRequire(import.meta.url);
 let operationRunning = false;
@@ -141,6 +161,7 @@ export async function getAgentSetupSnapshot(selectedPetId?: unknown, commandMode
   const memoryStatus = { ...rawMemoryStatus, claudeMdPath: formatUserPath(rawMemoryStatus.claudeMdPath) ?? rawMemoryStatus.claudeMdPath, openPetsMemoryPath: formatUserPath(rawMemoryStatus.openPetsMemoryPath) ?? rawMemoryStatus.openPetsMemoryPath };
   const opencode = await getOpenCodeSetup(commandMode, petId);
   const cursor = await getCursorSetup(commandMode, petId);
+  const openclaw = await getOpenClawSetup();
 
   return {
     selectedPetId: petId,
@@ -155,6 +176,8 @@ export async function getAgentSetupSnapshot(selectedPetId?: unknown, commandMode
     opencodePreview: opencode.preview,
     cursorStatus: cursor.status,
     cursorPreview: cursor.preview,
+    openclawStatus: openclaw.status,
+    openclawPreview: openclaw.preview,
     commandPaths: getAgentSetupCommandPaths(),
     busy: operationRunning,
     lastAction,
@@ -164,12 +187,13 @@ export async function getAgentSetupSnapshot(selectedPetId?: unknown, commandMode
 export function updateAgentSetupCommandPaths(patch: unknown): AgentSetupCommandPaths {
   if (!isRecord(patch)) throw new Error("Invalid command path settings.");
   for (const key of Object.keys(patch)) {
-    if (key !== "claude" && key !== "node" && key !== "opencode") throw new Error("Invalid command path setting.");
+    if (key !== "claude" && key !== "node" && key !== "opencode" && key !== "openclaw") throw new Error("Invalid command path setting.");
   }
   const updates: Writable<Partial<OpenPetsStateV1["preferences"]>> = {};
   if ("claude" in patch) updates.claudeCommandPath = normalizeOptionalCommandPath(patch.claude, "Claude");
   if ("node" in patch) updates.nodeCommandPath = normalizeOptionalCommandPath(patch.node, "Node.js");
   if ("opencode" in patch) updates.opencodeCommandPath = normalizeOptionalCommandPath(patch.opencode, "OpenCode");
+  if ("openclaw" in patch) updates.openclawCommandPath = normalizeOptionalCommandPath(patch.openclaw, "OpenClaw");
   updatePreferences(updates);
   return getAgentSetupCommandPaths();
 }
@@ -252,6 +276,9 @@ function createHookErrorStatus(message: string): ClaudeHookDoctorResult {
 async function runAction(action: AgentSetupAction, selectedPetId: string | undefined, commandMode: OpenPetsCommandMode): Promise<AgentSetupActionResult> {
   if (action === "opencode-install") return installOpenCodeGlobal(selectedPetId, commandMode);
   if (action === "opencode-remove") return removeOpenCodeGlobal();
+  if (action === "openclaw-install") return mutateOpenClaw("configure");
+  if (action === "openclaw-update") return mutateOpenClaw("update");
+  if (action === "openclaw-remove") return mutateOpenClaw("remove");
   if (action === "cursor-install") return installCursorGlobal(selectedPetId, commandMode);
   if (action === "cursor-replace") return replaceCursorGlobal(selectedPetId, commandMode);
   if (action === "cursor-remove") return removeCursorGlobal();
@@ -402,6 +429,62 @@ async function getCursorSetup(commandMode: OpenPetsCommandMode, selectedPetId: s
   };
 }
 
+async function getOpenClawSetup(): Promise<{ readonly status: OpenClawPluginStatus; readonly preview: OpenClawSetupPreview }> {
+  const command = getPreferredOpenClawCommand();
+  const targetVersion = getOpenClawPackageVersion();
+  const paths = { openclaw: command };
+  const preview: OpenClawSetupPreview = {
+    command,
+    install: buildOpenClawCommand("install", targetVersion, paths).args,
+    enable: buildOpenClawCommand("enable", targetVersion, paths).args,
+    update: buildOpenClawCommand("update", targetVersion, paths).args,
+    remove: buildOpenClawCommand("remove", targetVersion, paths).args,
+    targetVersion,
+  };
+  if (process.env.OPENCLAW_NIX_MODE === "1") return { status: { state: "management-disabled", label: "Managed externally", details: "OpenClaw is running in Nix mode; plugin management is disabled in OpenPets.", canInstall: false, canUpdate: false, canEnable: false, canRemove: false }, preview };
+  if (!["darwin", "linux", "win32"].includes(process.platform)) return { status: classifyOpenClawStatus({ version: targetVersion, list: {}, inspect: {}, hostSupported: false }), preview };
+  const versionResult = await runOpenClawCommand("version");
+  const version = parseOpenClawVersion(`${versionResult.stdout}\n${versionResult.stderr}`);
+  if (!versionResult.ok || !version) return { status: classifyOpenClawStatus({ version: undefined, list: {}, inspect: {}, hostSupported: true }), preview };
+  const list = await runOpenClawCommand("list");
+  if (!list.ok || list.overflow) return { status: { state: "indeterminate", label: "Status unavailable", details: "OpenClaw was detected, but plugin status could not be read.", version, canInstall: false, canUpdate: false, canEnable: false, canRemove: false }, preview };
+  const listPayload = parseJsonOutput(list.stdout);
+  const inspect = await runOpenClawCommand("inspect");
+  if (inspect.overflow) return { status: { state: "indeterminate", label: "Status unavailable", details: "OpenClaw returned more plugin status data than OpenPets can safely inspect.", version, canInstall: false, canUpdate: false, canEnable: false, canRemove: false }, preview };
+  if (!inspect.ok) {
+    const status = classifyOpenClawStatus({ version, list: listPayload, inspect: undefined, inspectMissing: true, hostSupported: true });
+    if (status.state === "not-installed") return { status, preview };
+    return { status: { state: "indeterminate", label: "Status unavailable", details: "OpenClaw was detected, but plugin status could not be read.", version, canInstall: false, canUpdate: false, canEnable: false, canRemove: false }, preview };
+  }
+  const inspectPayload = parseJsonOutput(inspect.stdout);
+  if (inspectPayload === undefined) return { status: { state: "indeterminate", label: "Status unavailable", details: "OpenClaw returned malformed plugin status.", version, canInstall: false, canUpdate: false, canEnable: false, canRemove: false }, preview };
+  return { status: classifyOpenClawStatus({ version, list: listPayload, inspect: inspectPayload, hostSupported: true }), preview };
+}
+
+async function mutateOpenClaw(mutation: "configure" | "update" | "remove"): Promise<AgentSetupActionResult> {
+  const action = mutation === "configure" ? "openclaw-install" : mutation === "update" ? "openclaw-update" : "openclaw-remove";
+  const setup = await getOpenClawSetup();
+  const actions = planOpenClawMutation(setup.status, mutation, setup.preview.targetVersion);
+  if (actions.length === 0) {
+    const noOp = (mutation === "remove" && setup.status.state === "not-installed") || (mutation !== "remove" && setup.status.state === "installed-enabled" && setup.status.installedVersion === setup.preview.targetVersion);
+    return { ok: noOp, action, message: noOp ? "OpenClaw OpenPets setup is already in the requested state." : setup.status.details, changed: false };
+  }
+  for (const commandAction of actions) {
+    const result = await runOpenClawCommand(commandAction, setup.preview.targetVersion);
+    const refreshed = await getOpenClawSetup();
+    if (refreshed.status.state === "indeterminate") return { ok: false, action, message: "OpenClaw management completed without a verifiable status refresh; the outcome is indeterminate. Refresh status before retrying.", changed: false };
+    const commandReached = commandAction === "remove"
+      ? refreshed.status.state === "not-installed"
+      : commandAction === "enable"
+        ? refreshed.status.state === "installed-enabled" && refreshed.status.installedVersion === setup.preview.targetVersion
+        : (refreshed.status.state === "installed-disabled" || refreshed.status.state === "installed-enabled") && refreshed.status.installedVersion === setup.preview.targetVersion;
+    if (!result.ok && !commandReached) return { ok: false, action, message: result.timedOut ? "OpenClaw management timed out; the final state is indeterminate. Refresh status before retrying." : `OpenClaw ${commandAction} failed.`, changed: false };
+    if (mutation === "remove" && commandReached) return { ok: true, action, message: "Removed OpenPets from OpenClaw.", changed: true };
+    if (mutation !== "remove" && commandAction === "enable" && commandReached) return { ok: true, action, message: "OpenPets is installed and enabled in OpenClaw.", changed: true };
+  }
+  return { ok: false, action, message: "OpenClaw management did not establish its target postcondition.", changed: false };
+}
+
 function mapCursorStatusToState(status: CursorMcpStatusResult["status"]): CursorSetupStatus["state"] {
   switch (status) {
     case "installed":
@@ -444,6 +527,7 @@ function getAgentSetupCommandPaths(): AgentSetupCommandPaths {
     claude: preferences.claudeCommandPath ?? "",
     node: preferences.nodeCommandPath ?? "",
     opencode: preferences.opencodeCommandPath ?? "",
+    openclaw: preferences.openclawCommandPath ?? "",
   };
 }
 
@@ -457,6 +541,10 @@ function getPreferredNodeCommand(): string {
 
 function getPreferredOpenCodeCommand(): string {
   return getAppStateSnapshot().preferences.opencodeCommandPath || getDefaultOpenCodeCommand();
+}
+
+function getPreferredOpenClawCommand(): string {
+  return getAppStateSnapshot().preferences.openclawCommandPath || "openclaw";
 }
 
 function normalizeOptionalCommandPath(value: unknown, label: string): string | undefined {
@@ -591,6 +679,10 @@ function getCliPackageVersion(): string {
 
 function getOpenCodePackageVersion(): string {
   return getWorkspacePackageVersion("@open-pets/opencode");
+}
+
+function getOpenClawPackageVersion(): string {
+  return getWorkspacePackageVersion("@open-pets/openclaw");
 }
 
 function getWorkspacePackageVersion(packageName: string): string {
@@ -753,7 +845,17 @@ async function runOpenCodeCommand(args: readonly string[]): Promise<CommandResul
   return { ok: false, timedOut: false, exitCode: null, stdout: "", stderr: "", error: "OpenCode command was not found." };
 }
 
-function runCommand(spec: ClaudeCommandSpec): Promise<CommandResult> {
+async function runOpenClawCommand(action: OpenClawCommandAction, targetVersion?: string): Promise<CommandResult> {
+  const configured = getAppStateSnapshot().preferences.openclawCommandPath;
+  const commands = configured ? [configured] : process.platform === "win32" ? ["openclaw", "openclaw.cmd"] : ["openclaw"];
+  for (const command of commands) {
+    const result = await runCommand(buildOpenClawCommand(action, targetVersion, { openclaw: command }), managementCommandTimeoutMs, false, openClawMaxStructuredOutputBytes, true);
+    if (result.ok || !isCommandNotFound(result)) return result;
+  }
+  return { ok: false, timedOut: false, exitCode: null, stdout: "", stderr: "", error: "OpenClaw command was not found." };
+}
+
+function runCommand(spec: ClaudeCommandSpec, timeoutMs = commandTimeoutMs, sanitizeOutput = true, outputLimitBytes = maxOutputBytes, structuredOutput = false): Promise<CommandResult> {
   return new Promise((resolve) => {
     const command = process.platform === "win32" && spec.command.toLowerCase().endsWith(".cmd") ? "cmd.exe" : spec.command;
     const args = process.platform === "win32" && spec.command.toLowerCase().endsWith(".cmd") ? ["/d", "/s", "/c", spec.command, ...spec.args] : spec.args;
@@ -761,34 +863,61 @@ function runCommand(spec: ClaudeCommandSpec): Promise<CommandResult> {
     try {
       child = spawn(command, args, { cwd: app.getPath("home"), env: createCommandEnv(), windowsHide: true, shell: false });
     } catch (error) {
-      resolve({ ok: false, timedOut: false, exitCode: null, stdout: "", stderr: "", error: error instanceof Error ? error.message : "Command failed to start." });
+      resolve({ ok: false, timedOut: false, exitCode: null, stdout: "", stderr: "", error: error instanceof Error ? error.message : "Command failed to start.", overflow: false });
       return;
     }
     let stdout = "";
     let stderr = "";
     let settled = false;
+    let overflow = false;
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
       child.kill();
-      resolve({ ok: false, timedOut: true, exitCode: null, stdout: sanitizeAgentSetupOutput(stdout), stderr: sanitizeAgentSetupOutput(stderr), error: "Command timed out." });
-    }, commandTimeoutMs);
+      resolve({ ok: false, timedOut: true, exitCode: null, stdout: formatCommandOutput(stdout, sanitizeOutput, outputLimitBytes), stderr: formatCommandOutput(stderr, sanitizeOutput, outputLimitBytes), error: "Command timed out.", overflow });
+    }, timeoutMs);
 
-    child.stdout?.on("data", (chunk: Buffer) => { stdout = appendBounded(stdout, chunk.toString("utf8")); });
-    child.stderr?.on("data", (chunk: Buffer) => { stderr = appendBounded(stderr, chunk.toString("utf8")); });
+    child.stdout?.on("data", (chunk: Buffer) => {
+      if (overflow) return;
+      if (!structuredOutput) {
+        stdout = appendTailBounded(stdout, chunk.toString("utf8"), outputLimitBytes);
+        return;
+      }
+      const captured = appendBounded(stdout, chunk.toString("utf8"), outputLimitBytes);
+      stdout = captured.value;
+      overflow ||= captured.overflow;
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      if (overflow) return;
+      if (!structuredOutput) {
+        stderr = appendTailBounded(stderr, chunk.toString("utf8"), outputLimitBytes);
+        return;
+      }
+      const captured = appendBounded(stderr, chunk.toString("utf8"), outputLimitBytes);
+      stderr = captured.value;
+      overflow ||= captured.overflow;
+    });
     child.on("error", (error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ ok: false, timedOut: false, exitCode: null, stdout: sanitizeAgentSetupOutput(stdout), stderr: sanitizeAgentSetupOutput(stderr), error: error.message });
+      resolve({ ok: false, timedOut: false, exitCode: null, stdout: formatCommandOutput(stdout, sanitizeOutput, outputLimitBytes), stderr: formatCommandOutput(stderr, sanitizeOutput, outputLimitBytes), error: error.message, overflow });
     });
     child.on("close", (code) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ ok: code === 0, timedOut: false, exitCode: code, stdout: sanitizeAgentSetupOutput(stdout), stderr: sanitizeAgentSetupOutput(stderr), error: undefined });
+      resolve({ ok: code === 0, timedOut: false, exitCode: code, stdout: formatCommandOutput(stdout, sanitizeOutput, outputLimitBytes), stderr: formatCommandOutput(stderr, sanitizeOutput, outputLimitBytes), error: undefined, overflow });
     });
   });
+}
+
+function formatCommandOutput(value: string, sanitize: boolean, outputLimitBytes: number): string {
+  return sanitize ? sanitizeAgentSetupOutput(value) : value.slice(0, outputLimitBytes);
+}
+
+function parseJsonOutput(value: string): unknown {
+  try { return JSON.parse(value) as unknown; } catch { return undefined; }
 }
 
 function delay(ms: number): Promise<void> {
@@ -870,9 +999,17 @@ function formatUserPath(path: string | undefined): string | undefined {
   return path.replace(app.getPath("home"), "~");
 }
 
-function appendBounded(existing: string, next: string): string {
+function appendBounded(existing: string, next: string, maxBytes: number): BoundedOutput {
+  const existingBytes = Buffer.byteLength(existing, "utf8");
+  const nextBytes = Buffer.byteLength(next, "utf8");
+  if (existingBytes + nextBytes <= maxBytes) return { value: existing + next, overflow: false };
+  const availableBytes = Math.max(0, maxBytes - existingBytes);
+  return { value: existing + Buffer.from(next, "utf8").subarray(0, availableBytes).toString("utf8"), overflow: true };
+}
+
+function appendTailBounded(existing: string, next: string, maxChars: number): string {
   const combined = existing + next;
-  return combined.length > maxOutputBytes ? combined.slice(combined.length - maxOutputBytes) : combined;
+  return combined.length > maxChars ? combined.slice(combined.length - maxChars) : combined;
 }
 
 function writeActionJournal(entry: Omit<AgentSetupJournalEntry, "timestamp"> & { readonly timestamp?: string }): void {

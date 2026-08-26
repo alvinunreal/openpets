@@ -55,6 +55,7 @@
     "@open-pets/cli": "workspace:*",
     "@open-pets/cursor": "workspace:*",
     "@open-pets/mcp": "workspace:*",
+    "@open-pets/openclaw": "workspace:*",
     "@open-pets/opencode": "workspace:*",
     "get-windows": "^9.3.0",
     "react": "^19.2.6",

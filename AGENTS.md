@@ -144,3 +144,4 @@ Read-only dependency source repositories are available under
 
 - `.slim/clonedeps/repos/electron__electron/` — `electron/electron` at `v42.0.0`; inspect Electron BrowserWindow, Linux, and Wayland geometry behavior used by OpenPets drag handling.
 - `.slim/clonedeps/repos/KDE__kwin/` — `KDE/kwin` at `master` (`10273ea5f8c43f9a17825e9560f9616b23cef1ba`); inspect KDE Wayland compositor handling of xdg toplevel movement, activation, and geometry constraints.
+- `.slim/clonedeps/repos/openclaw__openclaw/` — `openclaw/openclaw` at `v2026.7.1-2` (`0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c`); inspect the source-supported extension, lifecycle hook, and configuration contracts for the OpenPets OpenClaw integration.

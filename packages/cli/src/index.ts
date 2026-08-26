@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { createRequire } from "node:module";
@@ -11,6 +11,7 @@ import { allowedReactions, createOpenPetsClient, OpenPetsClientError, type OpenP
 import { claudeHookEvents, doctorClaudeHooks, openPetsHookMarker, removeOpenPetsHooks, runClaudeHookFromStdin, validateOpenPetsPetArg } from "@open-pets/claude";
 import { buildCursorRulesPreview, buildOpenPetsOnlyPreview, classifyCursorMcpStatus, classifyCursorRulesStatus, executeCursorMcpWrite, executeCursorRulesWrite, getCursorProjectMcpPath, getCursorProjectRulesPath, planCursorMcpInstall, planCursorMcpReplace, planCursorRulesInstall, planCursorRulesRemove, planCursorRulesReplace, readCursorMcpConfig, readCursorOpenPetsRules } from "@open-pets/cursor";
 import { prepareOpenCodeProjectSetup, writePreparedOpenCodeProjectSetup } from "@open-pets/opencode";
+import { buildOpenClawCommand, classifyOpenClawStatus, openClawMaxStructuredOutputBytes, parseOpenClawVersion, planOpenClawMutation, type OpenClawCommandAction, type OpenClawPluginStatus } from "@open-pets/openclaw/management";
 
 import { pluginTemplateNames, pluginTemplates, type PluginTemplateName } from "./plugin-templates.js";
 import { validatePluginFolder } from "./plugin-validate.js";
@@ -18,7 +19,7 @@ import { validatePluginFolder } from "./plugin-validate.js";
 export const cliPackageName = "@open-pets/cli";
 
 interface ConfigureOptions {
-  readonly agent: "claude" | "opencode" | "cursor";
+  readonly agent: "claude" | "opencode" | "cursor" | "openclaw";
   readonly petId?: string;
   readonly cwd: string;
   readonly yes: boolean;
@@ -50,6 +51,19 @@ interface DoctorOptions {
 interface CommandSpec {
   readonly command: string;
   readonly args: readonly string[];
+}
+
+interface BoundedProcessResult {
+  readonly ok: boolean;
+  readonly timedOut: boolean;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly overflow: boolean;
+}
+
+interface BoundedOutput {
+  readonly value: string;
+  readonly overflow: boolean;
 }
 
 interface PluginNewOptions {
@@ -268,6 +282,10 @@ async function sendMessage(options: SayOptions): Promise<void> {
 }
 
 export async function configureProject(options: ConfigureOptions): Promise<void> {
+  if (options.agent === "openclaw") {
+    await configureOpenClawGlobal();
+    return;
+  }
   const projectDir = resolveProjectDir(options.cwd);
   if (options.agent === "cursor") {
     await configureCursorProject(options, projectDir);
@@ -391,6 +409,117 @@ async function configureOpenCodeProject(options: ConfigureOptions, projectDir: s
   process.stdout.write(`OpenPets configured for OpenCode in ${projectDir}.\nPet: ${sanitizeTerminalText(selectedPet.displayName)} (${selectedPet.id})\nConfig: ${prepared.configPath}\nInstructions: ${prepared.instructionPath}\nWarning: .opencode config/instructions can be committed and include the selected pet id.\nRestart OpenCode in this project to load OpenPets.\n`);
 }
 
+async function configureOpenClawGlobal(): Promise<void> {
+  if (process.env.OPENCLAW_NIX_MODE === "1") throw new CliError("OpenClaw management is disabled in Nix mode; install @open-pets/openclaw through Nix and enable it there.");
+  const targetVersion = getWorkspacePackageVersion("@open-pets/openclaw");
+  const discovered = await discoverOpenClaw();
+  if (discovered.state === "installed-enabled" && discovered.installedVersion === targetVersion) {
+    process.stdout.write("OpenPets is already installed and enabled in OpenClaw.\n");
+    return;
+  }
+  const actions = planOpenClawMutation(discovered, "configure", targetVersion);
+  if (actions.length === 0) throw new CliError(discovered.details);
+  let current = discovered;
+  for (const action of actions) {
+    const result = await runOpenClawProcess(action, targetVersion);
+    const refreshed = await discoverOpenClaw(true);
+    if (refreshed.state === "indeterminate") throw new CliError("OpenClaw setup is indeterminate because its post-operation status could not be refreshed; inspect OpenClaw status before retrying.");
+    if (!result.ok && !isOpenClawCommandAchieved(action, refreshed, targetVersion)) {
+      throw new CliError(result.timedOut ? "OpenClaw setup is indeterminate because the management command timed out; inspect OpenClaw status before retrying." : `OpenClaw setup failed (${action}).`);
+    }
+    current = refreshed;
+  }
+  if (!isOpenClawEnsureComplete(current, targetVersion)) throw new CliError(`OpenClaw setup did not reach its target state: ${current.details}`);
+  process.stdout.write("OpenPets is installed and enabled in OpenClaw.\n");
+}
+
+async function discoverOpenClaw(indeterminateOnFailure = false): Promise<OpenClawPluginStatus> {
+  const versionResult = await runOpenClawProcess("version");
+  const version = parseOpenClawVersion(`${versionResult.stdout}\n${versionResult.stderr}`);
+  if (!versionResult.ok || !version) {
+    if (indeterminateOnFailure) return { state: "indeterminate", label: "Status indeterminate", details: "OpenClaw status could not be refreshed after a management operation.", canInstall: false, canUpdate: false, canEnable: false, canRemove: false };
+    throw new CliError("OpenClaw was not found or did not report a supported version.");
+  }
+  const list = await runOpenClawProcess("list");
+  if (!list.ok || list.overflow) {
+    return { state: "indeterminate", label: "Status indeterminate", details: indeterminateOnFailure ? "OpenClaw plugin status could not be refreshed." : "OpenClaw plugin status could not be read.", version, canInstall: false, canUpdate: false, canEnable: false, canRemove: false };
+  }
+  const listPayload = parseJson(list.stdout);
+  const inspect = await runOpenClawProcess("inspect");
+  if (inspect.overflow) return { state: "indeterminate", label: "Status indeterminate", details: "OpenClaw returned more plugin status data than OpenPets can safely inspect.", version, canInstall: false, canUpdate: false, canEnable: false, canRemove: false };
+  if (!inspect.ok) {
+    const status = classifyOpenClawStatus({ version, list: listPayload, inspect: undefined, inspectMissing: true, hostSupported: true });
+    if (status.state === "not-installed") return status;
+    return { state: "indeterminate", label: "Status indeterminate", details: indeterminateOnFailure ? "OpenClaw plugin status could not be refreshed." : "OpenClaw plugin status could not be read.", version, canInstall: false, canUpdate: false, canEnable: false, canRemove: false };
+  }
+  const inspectPayload = parseJson(inspect.stdout);
+  if (inspectPayload === undefined) return { state: "indeterminate", label: "Status indeterminate", details: "OpenClaw returned malformed plugin status.", version, canInstall: false, canUpdate: false, canEnable: false, canRemove: false };
+  return classifyOpenClawStatus({ version, list: listPayload, inspect: inspectPayload, hostSupported: true });
+}
+
+async function runOpenClawProcess(action: OpenClawCommandAction, targetVersion?: string): Promise<BoundedProcessResult> {
+  const spec = buildOpenClawCommand(action, targetVersion);
+  const command = process.platform === "win32" && spec.command.toLowerCase().endsWith(".cmd") ? "cmd.exe" : spec.command;
+  const args = process.platform === "win32" && spec.command.toLowerCase().endsWith(".cmd") ? ["/d", "/s", "/c", spec.command, ...spec.args] : [...spec.args];
+  return new Promise((resolvePromise) => {
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let child: ChildProcess;
+    try {
+      child = spawn(command, args, { cwd: process.cwd(), env: process.env, shell: false, windowsHide: true });
+    } catch {
+      resolvePromise({ ok: false, timedOut: false, stdout, stderr, overflow: false });
+      return;
+    }
+    let overflow = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill();
+      resolvePromise({ ok: false, timedOut: true, stdout, stderr, overflow });
+    }, 60_000);
+    child.stdout?.on("data", (chunk: Buffer) => {
+      if (overflow) return;
+      const captured = appendBounded(stdout, chunk.toString("utf8"), openClawMaxStructuredOutputBytes);
+      stdout = captured.value;
+      overflow ||= captured.overflow;
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      if (overflow) return;
+      const captured = appendBounded(stderr, chunk.toString("utf8"), openClawMaxStructuredOutputBytes);
+      stderr = captured.value;
+      overflow ||= captured.overflow;
+    });
+    child.on("error", () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolvePromise({ ok: false, timedOut: false, stdout, stderr, overflow });
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolvePromise({ ok: code === 0, timedOut: false, stdout, stderr, overflow });
+    });
+  });
+}
+
+function parseJson(value: string): unknown {
+  try { return JSON.parse(value) as unknown; } catch { return undefined; }
+}
+
+function isOpenClawEnsureComplete(status: OpenClawPluginStatus, targetVersion: string): boolean {
+  return status.state === "installed-enabled" && status.installedVersion === targetVersion;
+}
+
+function isOpenClawCommandAchieved(action: OpenClawCommandAction, status: OpenClawPluginStatus, targetVersion: string): boolean {
+  if (action === "remove") return status.state === "not-installed";
+  if (action === "enable") return isOpenClawEnsureComplete(status, targetVersion);
+  return (status.state === "installed-disabled" || status.state === "installed-enabled") && status.installedVersion === targetVersion;
+}
+
 export async function resolveConfiguredPet(client: Pick<ReturnType<typeof createOpenPetsClient>, "listPets">, petId?: string): Promise<ConfiguredPet> {
   if (petId) {
     const id = validateOpenPetsPetArg(petId);
@@ -408,6 +537,7 @@ export function parseConfigureArgs(args: readonly string[]): ConfigureOptions {
   let agent = "claude";
   let petId: string | undefined;
   let cwd = process.cwd();
+  let cwdProvided = false;
   let yes = false;
   let force = false;
   let localDev = false;
@@ -424,12 +554,13 @@ export function parseConfigureArgs(args: readonly string[]): ConfigureOptions {
     else if (arg.startsWith("--agent=")) agent = arg.slice("--agent=".length);
     else if (arg === "--pet") { petId = validateOpenPetsPetArg(readRequiredArg(args, index, "--pet")); index += 1; }
     else if (arg.startsWith("--pet=")) petId = validateOpenPetsPetArg(arg.slice("--pet=".length));
-    else if (arg === "--cwd") { cwd = readRequiredArg(args, index, "--cwd"); index += 1; }
-    else if (arg.startsWith("--cwd=")) cwd = arg.slice("--cwd=".length);
+    else if (arg === "--cwd") { cwd = readRequiredArg(args, index, "--cwd"); cwdProvided = true; index += 1; }
+    else if (arg.startsWith("--cwd=")) { cwd = arg.slice("--cwd=".length); cwdProvided = true; }
     else throw new CliError(`Unknown configure option: ${arg}`);
   }
-  if (agent !== "claude" && agent !== "opencode" && agent !== "cursor") throw new CliError(`Unsupported agent: ${agent}. Supported agents: claude, opencode, cursor.`);
+  if (agent !== "claude" && agent !== "opencode" && agent !== "cursor" && agent !== "openclaw") throw new CliError(`Unsupported agent: ${agent}. Supported agents: claude, opencode, cursor, openclaw.`);
   if (cursorRulesMode && agent !== "cursor") throw new CliError("Cursor rules flags require --agent cursor.");
+  if (agent === "openclaw" && (petId !== undefined || cwdProvided || force || localDev || cursorRulesMode)) throw new CliError("OpenClaw setup is global and does not accept --cwd, --pet, --force, --local-dev, or Cursor rules flags.");
   return { agent, petId, cwd, yes, force, localDev, cursorRulesMode };
 }
 
@@ -756,6 +887,14 @@ function sanitizeTerminalText(value: string): string {
   return value.replace(/[\x00-\x1F\x7F]/g, "").slice(0, 100);
 }
 
+function appendBounded(existing: string, next: string, maxBytes: number): BoundedOutput {
+  const existingBytes = Buffer.byteLength(existing, "utf8");
+  const nextBytes = Buffer.byteLength(next, "utf8");
+  if (existingBytes + nextBytes <= maxBytes) return { value: existing + next, overflow: false };
+  const availableBytes = Math.max(0, maxBytes - existingBytes);
+  return { value: existing + Buffer.from(next, "utf8").subarray(0, availableBytes).toString("utf8"), overflow: true };
+}
+
 function resolveProjectDir(cwd: string): string {
   const resolved = resolve(cwd);
   const stats = lstatSync(resolved);
@@ -846,8 +985,20 @@ function getPackageVersion(): string {
   return parsed.version;
 }
 
+function getWorkspacePackageVersion(packageName: string): string {
+  try {
+    const entryPath = require.resolve(packageName);
+    const packageJsonPath = join(dirname(dirname(entryPath)), "package.json");
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as { readonly version?: unknown };
+    if (typeof packageJson.version !== "string" || !packageJson.version) throw new Error("Package version is missing.");
+    return packageJson.version;
+  } catch {
+    throw new CliError(`Cannot read ${packageName} package version.`);
+  }
+}
+
 function printUsage(): void {
-  process.stdout.write("Usage:\n  openpets status\n  openpets doctor [--cwd <path>] [--json]\n  openpets pets\n  openpets react <reaction>\n  openpets say <message> [--reaction <reaction>]\n  openpets install <pet-id> | --from-zip <path> | --from-folder <path>\n  openpets configure [--agent claude|opencode|cursor] [--pet <id>] [--cwd <path>] [--yes] [--force] [--with-rules|--rules-only|--remove-rules]\n  openpets plugin new <name> [--id <id>] [--dir <path>] [--author <name>]\n  openpets mcp [--pet <id>]\n  openpets hook --openpets-managed [--pet <id>]\n\nRun `openpets <command> --help` for command options.\n");
+  process.stdout.write("Usage:\n  openpets status\n  openpets doctor [--cwd <path>] [--json]\n  openpets pets\n  openpets react <reaction>\n  openpets say <message> [--reaction <reaction>]\n  openpets install <pet-id> | --from-zip <path> | --from-folder <path>\n  openpets configure [--agent claude|opencode|cursor|openclaw] [--pet <id>] [--cwd <path>] [--yes] [--force] [--with-rules|--rules-only|--remove-rules]\n  openpets plugin new <name> [--id <id>] [--dir <path>] [--author <name>]\n  openpets mcp [--pet <id>]\n  openpets hook --openpets-managed [--pet <id>]\n\nRun `openpets <command> --help` for command options.\n");
 }
 
 function printPluginUsage(): void {
@@ -893,7 +1044,7 @@ function printSayUsage(): void {
 }
 
 function printConfigureUsage(): void {
-  process.stdout.write("Usage:\n  openpets configure [--agent claude|opencode|cursor] [--pet <id>] [--cwd <path>] [--yes] [--force] [--with-rules|--rules-only|--remove-rules]\n\nOptions:\n  --pet <id>           Pet id to use for this project. If omitted, prompts with installed pets. Cursor --rules-only/--remove-rules do not need a pet.\n  --agent <agent>      Agent to configure: claude, opencode, or cursor. Defaults to claude.\n  --cwd <path>         Project directory to configure. Defaults to current directory. Cursor uses <cwd>/.cursor/mcp.json and <cwd>/.cursor/rules/openpets.mdc; global Cursor setup is not enabled here.\n  --with-rules         For Cursor, install MCP config and project rules after preflighting both writes.\n  --rules-only         For Cursor, install/update only .cursor/rules/openpets.mdc.\n  --remove-rules       For Cursor, remove only managed .cursor/rules/openpets.mdc.\n  --yes, -y            Accepted for scripts; no confirmation prompt is shown.\n  --force              Replace supported managed entries where applicable. Required for conflicting Cursor rules.\n  --replace            Alias for --force.\n  --local-dev          Use local development command paths where supported.\n  -h, --help           Show this help.\n");
+  process.stdout.write("Usage:\n  openpets configure [--agent claude|opencode|cursor|openclaw] [--pet <id>] [--cwd <path>] [--yes] [--force] [--with-rules|--rules-only|--remove-rules]\n\nOptions:\n  --pet <id>           Pet id to use for this project. If omitted, prompts with installed pets. Cursor --rules-only/--remove-rules do not need a pet.\n  --agent <agent>      Agent to configure: claude, opencode, cursor, or global openclaw. Defaults to claude.\n  --cwd <path>         Project directory to configure. Defaults to current directory. Cursor uses <cwd>/.cursor/mcp.json and <cwd>/.cursor/rules/openpets.mdc; global Cursor setup is not enabled here.\n  --with-rules         For Cursor, install MCP config and project rules after preflighting both writes.\n  --rules-only         For Cursor, install/update only .cursor/rules/openpets.mdc.\n  --remove-rules       For Cursor, remove only managed .cursor/rules/openpets.mdc.\n  --yes, -y            Accepted for scripts; no confirmation prompt is shown.\n  --force              Replace supported managed entries where applicable. Required for conflicting Cursor rules.\n  --replace            Alias for --force.\n  --local-dev          Use local development command paths where supported.\n  -h, --help           Show this help.\n\nOpenClaw setup is global and accepts only --agent openclaw and optional --yes.\n");
 }
 
 function printMcpUsage(): void {

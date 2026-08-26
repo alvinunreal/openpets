@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "updatedAt": "2026-06-13T00:00:00.000Z",
+  "updatedAt": "2026-08-25T00:00:00.000Z",
   "dependencies": [
     {
       "name": "electron",
@@ -21,6 +21,16 @@
       "path": ".slim/clonedeps/repos/KDE__kwin",
       "packagePath": null,
       "reason": "Inspect KDE Wayland compositor handling of xdg toplevel movement, activation, and window geometry constraints."
+    },
+    {
+      "name": "openclaw",
+      "resolvedVersion": "2026.7.1-2",
+      "repoUrl": "https://github.com/openclaw/openclaw",
+      "ref": "v2026.7.1-2",
+      "commit": "0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c",
+      "path": ".slim/clonedeps/repos/openclaw__openclaw",
+      "packagePath": null,
+      "reason": "Inspect the source-supported extension, lifecycle hook, and configuration contracts for the OpenPets OpenClaw integration."
     }
   ]
 }

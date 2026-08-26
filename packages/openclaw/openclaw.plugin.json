@@ -1,0 +1,13 @@
+{
+  "id": "openpets",
+  "name": "OpenPets",
+  "description": "Shows safe, categorical OpenClaw activity in the OpenPets companion.",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

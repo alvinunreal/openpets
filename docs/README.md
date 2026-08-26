@@ -42,8 +42,8 @@ Docs here are the *narrative* layer on top of those maps.
 ## Agent integrations
 
 - **[agent-integrations.md](agent-integrations.md)** - how Claude Code, MCP,
-  OpenCode, Cursor, and Pi are configured and how each turns agent activity into
-  pet reactions, plus the CLI that ties them together.
+  OpenCode, Cursor, Pi, and OpenClaw are configured and how each turns agent
+  activity into pet reactions, plus the CLI that ties them together.
 
 ## Plugins & SDK
 

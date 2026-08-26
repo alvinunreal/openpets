@@ -2,7 +2,7 @@
 
 ## Responsibility
 
-OpenPets desktop companion application. Tray-first Electron app providing animated desktop pets that react to coding agent events. Manages pet installations, the React/Tailwind Control Center, plugin automation/runtime, agent integrations (Claude Code, OpenCode, Cursor, Pi guidance), and local IPC for CLI communication.
+OpenPets desktop companion application. Tray-first Electron app providing animated desktop pets that react to coding agent events. Manages pet installations, the React/Tailwind Control Center, plugin automation/runtime, agent integrations (Claude Code, OpenCode, Cursor, Pi guidance, and OpenClaw management), and local IPC for CLI communication.
 
 ## Design
 
@@ -33,7 +33,7 @@ OpenPets desktop companion application. Tray-first Electron app providing animat
 
 **Installation**: Catalog fetch (V3 with pagination fallback to V2) → ZIP download → `yauzl` extraction → validation → state update → tray refresh
 
-**Agent Setup**: UI → `agent-setup.ts` → Claude/OpenCode/Cursor CLI detection → MCP config modification → hooks installation → memory file management
+**Agent Setup**: UI → `agent-setup.ts` → Claude/OpenCode/Cursor setup or OpenClaw version/list/inspect discovery → MCP/config/hooks changes or native OpenClaw install/update/enable/remove → post-action status refresh
 
 **Control Center**: Tray route → `openControlCenterWindow(route)` → `windows.ts` loads Vite renderer and sends route events → `control-center-preload.cjs` exposes narrow page APIs → React Dashboard/Pets/Integrations/Plugins/Settings routes render snapshots and invoke actions, including host-owned personality preferences.
 
@@ -41,7 +41,7 @@ OpenPets desktop companion application. Tray-first Electron app providing animat
 
 ## Integration Points
 
-- **Workspace Packages**: `@open-pets/agent-events`, `@open-pets/claude`, `@open-pets/cli`, `@open-pets/cursor`, `@open-pets/mcp`, `@open-pets/opencode`
+- **Workspace Packages**: `@open-pets/agent-events`, `@open-pets/claude`, `@open-pets/cli`, `@open-pets/cursor`, `@open-pets/mcp`, `@open-pets/opencode`, `@open-pets/openclaw`
 - **External Services**: 
   - `https://openpets.dev/pets/catalog.v2.json` (pet catalog V2)
   - `https://openpets.dev/pets/catalog.v3.json` (pet catalog V3 with pagination)
@@ -53,6 +53,7 @@ OpenPets desktop companion application. Tray-first Electron app providing animat
   - Claude Code: `~/.claude/CLAUDE.md`, `~/.claude/settings.json`, `claude mcp` commands
   - OpenCode: `~/.opencode/config.json`
   - Cursor: `~/.cursor/mcp.json`, `.cursor/rules/openpets.mdc`
+  - OpenClaw: `openclaw plugins` registry and Gateway lifecycle
   - Codex: `~/.codex/pets/` (local pet development)
   - IPC: Discovery file at platform-specific path, Unix socket/Windows named pipe/TCP
   - Logs: `userData/logs/openpets.log`
@@ -74,7 +75,7 @@ OpenPets desktop companion application. Tray-first Electron app providing animat
 - `app-state.ts`: Persistent state management (JSON file)
 - `pet-assistant-host.ts`/`pet-assistant-service.ts`: Host-owned provider-neutral assistant lifecycle, bounded active context, and canonical terminal-text archive integration
 - `pet-assistant-archive.ts`: Atomic local archive with 200-message/30-day/512KiB retention, 64KiB entry cap, quarantine recovery, and bounded prompt-window support
-- `agent-setup.ts`: Claude/OpenCode/Cursor integration logic
+- `agent-setup.ts`: Claude/OpenCode/Cursor integration logic plus OpenClaw management/status actions
 - `plugin-service.ts`: Plugin orchestration for snapshots, enable/config/reload, command execution, catalog install/update/uninstall, local loading, permission approval, JavaScript host wiring, and runtime reloads
 - `plugin-manifest.ts`: `openpets.plugin.json` v1/v2 schema/types/validator for declarative timer plugins and JavaScript SDK plugins, config fields, permissions, commands/status/network, and actions
 - `plugin-runtime.ts`: Runtime that compiles enabled declarative timers and starts JavaScript plugin hosts for approved pet/schedule/storage/command/status/network actions

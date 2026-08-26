@@ -14,6 +14,7 @@ Provides modular, reusable components for the OpenPets ecosystem:
 - **claude**: Claude Code integration (hook execution, config management)
 - **cursor**: Cursor editor integration (MCP configuration, project rules)
 - **pi**: Pi coding-agent extension integration (event handling, slash commands)
+- **openclaw**: Native OpenClaw plugin integration, lifecycle management, and local-only reaction runtime
 - **install-pet**: Standalone pet installer from gallery catalog
 - **sdk**: Public SDK v3 type definitions and deterministic testing harness for plugin authors (SuperPlugins)
 
@@ -38,6 +39,7 @@ CLI Entry (packages/cli/src/index.ts)
     ├── Configures Claude → @open-pets/claude
     ├── Configures OpenCode → @open-pets/opencode
     ├── Configures Cursor → @open-pets/cursor
+    ├── Configures OpenClaw → @open-pets/openclaw management
     ├── Spawns MCP server → @open-pets/mcp
     └── Uses IPC client → @open-pets/client
 
@@ -57,6 +59,10 @@ Cursor Setup (packages/cursor/src/cursor-project-setup.ts)
 Pi Extension (packages/pi/src/extension.ts)
     └── Registers Pi extension hooks/commands → @open-pets/client
 
+OpenClaw Native Plugin (packages/openclaw/src/index.ts)
+    ├── Registers model_call_started / before_tool_call hooks
+    └── Dispatches local-only, payload-free reactions → @open-pets/client
+
 SDK Type definitions & Test Harness (packages/sdk/)
     ├── Defines OpenPetsContext, permissions, assets, bubbles, alerts, panels, audio, events, bus, storage, AI, secrets, voice, files, system, commands
     └── createTestHarness() runs plugins against fake time/events/storage/network without Electron
@@ -71,6 +77,7 @@ SDK Type definitions & Test Harness (packages/sdk/)
 - `opencode` depends on: `client`, `agent-events`
 - `cursor` depends on: `client`
 - `pi` depends on: `client`, `agent-events`
+- `openclaw` depends on: `client`, `agent-events`; it declares `openclaw` as an optional peer dependency for the native plugin SDK
 - `install-pet` depends on: `client`
 - `sdk` (type-only and test harness) is consumed by template code scaffolded by `cli`
 - `desktop` mirrors `sdk` through `apps/desktop/src/plugin-sdk-bridge.ts` and conformance checks
@@ -98,4 +105,6 @@ All packages ultimately communicate with the OpenPets desktop app via the IPC pr
 | `opencode/` | OpenCode plugin/config integration package. | [View Map](opencode/codemap.md) |
 | `pet-format/` | Pet package identity marker package. | [View Map](pet-format/codemap.md) |
 | `pi/` | Pi coding-agent extension integration package. | [View Map](pi/codemap.md) |
+| `openclaw/` | Native OpenClaw plugin, lifecycle management, and contract checks. | [View Map](openclaw/codemap.md) |
+| `openclaw/src/` | OpenClaw entry/runtime and management implementation. | [View Map](openclaw/src/codemap.md) |
 | `sdk/` | Public plugin SDK v3 type surface and test harness. | [View Map](sdk/codemap.md) |

@@ -26,6 +26,11 @@ assert.equal(parseConfigureArgs(["--agent", "cursor", "--pet", "fixer"]).cwd, pr
 assert.equal(parseConfigureArgs(["--agent", "cursor", "--rules-only"]).cursorRulesMode, "only");
 assert.equal(parseConfigureArgs(["--agent", "cursor", "--remove-rules"]).cursorRulesMode, "remove");
 assert.equal(parseConfigureArgs(["--agent", "cursor", "--with-rules"]).cursorRulesMode, "with");
+assert.equal(parseConfigureArgs(["--agent", "openclaw", "--yes"]).agent, "openclaw");
+assert.throws(() => parseConfigureArgs(["--agent", "openclaw", "--cwd", process.cwd()]));
+assert.throws(() => parseConfigureArgs(["--agent", "openclaw", `--cwd=${process.cwd()}`]));
+assert.throws(() => parseConfigureArgs(["--agent", "openclaw", "--pet", "fixer"]));
+assert.throws(() => parseConfigureArgs(["--agent", "openclaw", "--local-dev"]));
 assert.throws(() => parseConfigureArgs(["--agent", "cursor", "--with-rules", "--rules-only"]));
 assert.throws(() => parseConfigureArgs(["--agent", "claude", "--rules-only"]));
 assert.throws(() => parseConfigureArgs(["--pet", "bad/pet"]));
@@ -191,6 +196,36 @@ try {
   assert.deepEqual(loggedMcpJson.env, {});
   assert.equal(claudeLog.at(-1)?.argv.at(-2), "--scope");
   assert.equal(claudeLog.at(-1)?.argv.at(-1), "local");
+
+  const openClawInventoryPath = join(dir, "openclaw-inventory.json");
+  const openClawStatePath = join(dir, "openclaw-state.json");
+  const openClawInventory = { plugins: Array.from({ length: 3_000 }, (_, index) => ({ id: `other-plugin-${index}`, enabled: false })) };
+  writeFileSync(openClawInventoryPath, JSON.stringify(openClawInventory), "utf8");
+  assert.ok(Buffer.byteLength(readFileSync(openClawInventoryPath), "utf8") > 16 * 1024, "OpenClaw inventory fixture must exceed the old output cap");
+  writeFileSync(openClawStatePath, JSON.stringify({ installed: false, enabled: false }), "utf8");
+  const fakeOpenClaw = join(binDir, "openclaw");
+  writeFileSync(fakeOpenClaw, `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const inventoryPath = ${JSON.stringify(openClawInventoryPath)};
+const statePath = ${JSON.stringify(openClawStatePath)};
+const state = () => JSON.parse(fs.readFileSync(statePath, "utf8"));
+const save = (next) => fs.writeFileSync(statePath, JSON.stringify(next));
+if (args[0] === "--version") { process.stdout.write("OpenClaw 2026.7.1\\n"); process.exit(0); }
+if (args[0] === "plugins" && args[1] === "list") { const payload = JSON.parse(fs.readFileSync(inventoryPath, "utf8")); const current = state(); if (current.installed) payload.plugins.unshift({ id: "openpets", enabled: current.enabled }); process.stdout.write(JSON.stringify(payload)); process.exit(0); }
+if (args[0] === "plugins" && args[1] === "inspect") { const current = state(); if (!current.installed) { process.stderr.write("plugin not found\\n"); process.exit(1); } process.stdout.write(JSON.stringify({ plugin: { id: "openpets", enabled: current.enabled, status: current.enabled ? "loaded" : "disabled", dependencyStatus: { requiredInstalled: true } }, install: { source: "npm", spec: "@open-pets/openclaw@3.3.0" } })); process.exit(0); }
+if (args[0] === "plugins" && args[1] === "install") { save({ installed: true, enabled: false }); process.exit(0); }
+if (args[0] === "plugins" && args[1] === "enable") { save({ installed: true, enabled: true }); process.exit(0); }
+process.exit(0);
+`, "utf8");
+  chmodSync(fakeOpenClaw, 0o700);
+  process.env.PATH = `${binDir}:${oldPath ?? ""}`;
+  try {
+    await configureProject({ agent: "openclaw", cwd: process.cwd(), yes: true, force: false, localDev: false });
+  } finally {
+    process.env.PATH = oldPath;
+  }
+  assert.deepEqual(JSON.parse(readFileSync(openClawStatePath, "utf8")), { installed: true, enabled: true });
 
   const cliBinLink = join(binDir, "openpets");
   symlinkSync(new URL("./index.js", import.meta.url).pathname, cliBinLink);
