@@ -1,17 +1,25 @@
 import type { VoiceMicrophoneArbiter, VoiceMicrophoneLease } from "./voice-microphone-arbiter.js";
 import type { VoicePrivacyIndicator } from "./voice-privacy-indicator.js";
+import type { PetAssistantToolResult } from "./pet-assistant-types.js";
 
 export const VOICE_REALTIME_MODEL = "gpt-realtime-2.1";
 
 export type VoiceRealtimeSessionConfig = Readonly<Record<string, unknown>>;
 
-export function createDefaultVoiceRealtimeSessionConfig(): VoiceRealtimeSessionConfig {
+export type VoiceRealtimeToolResultCommand = {
+  readonly callId: string;
+  readonly result: PetAssistantToolResult;
+};
+
+export function createDefaultVoiceRealtimeSessionConfig(model = VOICE_REALTIME_MODEL): VoiceRealtimeSessionConfig {
   return {
     type: "realtime",
-    model: VOICE_REALTIME_MODEL,
+    model,
+    instructions: "You are the OpenPets Pet Assistant.",
     output_modalities: ["audio"],
     audio: {
       input: {
+        transcription: { model: "gpt-realtime-whisper" },
         turn_detection: {
           type: "server_vad",
           create_response: true,
@@ -39,6 +47,8 @@ export type VoiceConversationEvent =
   | { readonly type: "response-audio-started" }
   | { readonly type: "response-audio-stopped" }
   | { readonly type: "response-completed" }
+  | { readonly type: "transcript"; readonly entryId: string; readonly speaker: "user" | "assistant"; readonly status: "partial" | "final"; readonly text: string }
+  | { readonly type: "tool-call"; readonly callId: string; readonly name: string; readonly arguments: string }
   | { readonly type: "interrupted" }
   | { readonly type: "error"; readonly error: unknown }
   | { readonly type: "closed"; readonly reason?: string };
@@ -55,6 +65,7 @@ export type VoiceConversationSnapshot = {
 
 export type VoiceConversationTransportContext = {
   readonly sessionId: string;
+  readonly generation: number;
   readonly session: VoiceRealtimeSessionConfig;
   readonly signal: AbortSignal;
   readonly emit: (event: VoiceConversationEvent) => void;
@@ -64,6 +75,7 @@ export interface VoiceConversationTransport {
   start(): Promise<void>;
   setMuted(muted: boolean): void | Promise<void>;
   close(): Promise<void>;
+  sendToolResult?(command: VoiceRealtimeToolResultCommand): void | Promise<void>;
 }
 
 export type VoiceConversationTransportFactory = (context: VoiceConversationTransportContext) => VoiceConversationTransport;
@@ -73,6 +85,7 @@ export type VoiceConversationServiceOptions = {
   readonly privacyIndicator: VoicePrivacyIndicator;
   readonly transportFactory: VoiceConversationTransportFactory;
   readonly sessionFactory?: () => VoiceRealtimeSessionConfig;
+  readonly onEvent?: (event: VoiceConversationEvent) => void;
 };
 
 export class VoiceConversationCancelledError extends Error {
@@ -111,6 +124,7 @@ export class VoiceConversationService {
   readonly #privacyIndicator: VoicePrivacyIndicator;
   readonly #transportFactory: VoiceConversationTransportFactory;
   readonly #sessionFactory: () => VoiceRealtimeSessionConfig;
+  readonly #onEvent?: (event: VoiceConversationEvent) => void;
   #active: ActiveConversation | null = null;
   #nextGeneration = 0;
   #lastError: Error | null = null;
@@ -122,6 +136,7 @@ export class VoiceConversationService {
     this.#privacyIndicator = options.privacyIndicator;
     this.#transportFactory = options.transportFactory;
     this.#sessionFactory = options.sessionFactory ?? createDefaultVoiceRealtimeSessionConfig;
+    this.#onEvent = options.onEvent;
   }
 
   snapshot(): VoiceConversationSnapshot {
@@ -161,6 +176,7 @@ export class VoiceConversationService {
     try {
       active.transport = this.#transportFactory({
         sessionId: active.sessionId,
+        generation: active.generation,
         session: this.#sessionFactory(),
         signal: active.controller.signal,
         emit: (event) => this.#handleEvent(active, event),
@@ -202,6 +218,13 @@ export class VoiceConversationService {
 
   async unmute(): Promise<void> {
     await this.#setMuted(false);
+  }
+
+  async sendToolResult(command: VoiceRealtimeToolResultCommand): Promise<boolean> {
+    const active = this.#active;
+    if (!active || active.closing || !active.transport?.sendToolResult || !this.#isCurrent(active)) return false;
+    await active.transport.sendToolResult(command);
+    return this.#isCurrent(active) && !active.closing;
   }
 
   async shutdown(): Promise<void> {
@@ -247,6 +270,7 @@ export class VoiceConversationService {
 
   #handleEvent(active: ActiveConversation, event: VoiceConversationEvent): void {
     if (!this.#isCurrent(active) || active.closing) return;
+    try { this.#onEvent?.(event); } catch (error) { this.#lastError = normalizeError(error); }
     switch (event.type) {
       case "microphone-acquired":
         if (!active.indicatorLive) {

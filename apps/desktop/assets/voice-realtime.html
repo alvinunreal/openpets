@@ -8,6 +8,7 @@
 
   const MAX_SIGNAL_BYTES = 256 * 1024;
   let sessionId = "";
+  let generation = 0;
   let stream = null;
   let peer = null;
   let channel = null;
@@ -16,6 +17,8 @@
   let closing = false;
   let assistantSpeaking = false;
   let responseInProgress = false;
+  const transcriptBuffers = new Map();
+  const emittedToolCalls = new Set();
 
   const emit = (event) => {
     try { bridge.emit({ sessionId, ...event }); } catch { /* host teardown may race renderer cleanup */ }
@@ -68,7 +71,7 @@
     } else if (type === "response.created") {
       responseInProgress = true;
       emit({ type: "response-started" });
-    } else if (type === "response.output_audio.delta" || type === "response.output_audio_transcript.delta") {
+    } else if (type === "response.output_audio.delta") {
       if (!assistantSpeaking) emit({ type: "response-audio-started" });
       assistantSpeaking = true;
       responseInProgress = true;
@@ -80,10 +83,51 @@
       assistantSpeaking = false;
       responseInProgress = false;
       emit({ type: "response-completed" });
+    } else if (type === "conversation.item.input_audio_transcription.delta") {
+      appendTranscript(message.item_id, "user", "partial", message.delta);
+    } else if (type === "conversation.item.input_audio_transcription.completed") {
+      appendTranscript(message.item_id, "user", "final", message.transcript);
+    } else if (type === "response.output_audio_transcript.delta") {
+      if (!assistantSpeaking) emit({ type: "response-audio-started" });
+      assistantSpeaking = true;
+      responseInProgress = true;
+      appendTranscript(message.item_id, "assistant", "partial", message.delta);
+    } else if (type === "response.output_audio_transcript.done") {
+      appendTranscript(message.item_id, "assistant", "final", message.transcript);
+    } else if (type === "response.function_call_arguments.done") {
+      emitToolCall(message.call_id, message.name, message.arguments);
+    } else if (type === "response.output_item.done") {
+      const item = message.item;
+      if (item && typeof item === "object" && !Array.isArray(item) && item.type === "function_call") {
+        emitToolCall(item.call_id, item.name, item.arguments);
+      }
     } else if (type === "error") {
       const error = message.error && typeof message.error === "object" && !Array.isArray(message.error) ? message.error : {};
       fail(typeof error.message === "string" ? error.message : "Realtime voice provider reported an error.");
     }
+  };
+
+  const appendTranscript = (entryId, speaker, status, text) => {
+    if (typeof entryId !== "string" || !entryId || typeof text !== "string" || !text) return;
+    const previous = transcriptBuffers.get(entryId) || "";
+    const value = status === "partial" ? previous + text : text;
+    if (new TextEncoder().encode(value).byteLength > MAX_SIGNAL_BYTES) return;
+    transcriptBuffers.set(entryId, value);
+    emit({ type: "transcript", entryId, speaker, status, text: value });
+    if (status === "final") transcriptBuffers.delete(entryId);
+  };
+
+  const emitToolCall = (callId, name, args) => {
+    if (typeof callId !== "string" || !callId || typeof name !== "string" || !name || typeof args !== "string" || !args || emittedToolCalls.has(callId)) return;
+    if (new TextEncoder().encode(args).byteLength > MAX_SIGNAL_BYTES) return;
+    try {
+      const parsed = JSON.parse(args);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+    } catch {
+      // Keep the malformed representation visible to the host validator; never execute it as {}.
+    }
+    emittedToolCalls.add(callId);
+    emit({ type: "tool-call", callId, name, arguments: args });
   };
 
   const start = async () => {
@@ -127,14 +171,22 @@
 
   bridge.onCommand((command) => {
     if (!command || typeof command !== "object") return;
-    if (command.type !== "start" && command.sessionId !== sessionId) return;
+    if (command.type !== "start" && (command.sessionId !== sessionId || command.generation !== generation)) return;
     if (command.type === "start") {
       sessionId = typeof command.sessionId === "string" ? command.sessionId : "";
+      generation = Number.isSafeInteger(command.generation) ? command.generation : 0;
       void start();
     } else if (command.type === "answer" && typeof command.sdp === "string" && command.sdp.length <= MAX_SIGNAL_BYTES && peer) {
       void peer.setRemoteDescription({ type: "answer", sdp: command.sdp }).catch(fail);
     } else if (command.type === "mute") {
       for (const track of stream?.getAudioTracks?.() ?? []) track.enabled = command.muted !== true;
+    } else if (command.type === "provider-event" && typeof command.message === "string" && channel) {
+      if (new TextEncoder().encode(command.message).byteLength > MAX_SIGNAL_BYTES) return;
+      try {
+        const providerEvent = JSON.parse(command.message);
+        if (!providerEvent || typeof providerEvent !== "object" || Array.isArray(providerEvent)) return;
+        channel.send(command.message);
+      } catch { /* malformed host output is ignored by the sandbox */ }
     } else if (command.type === "close") {
       closeResources(true);
     }

@@ -1,8 +1,6 @@
 import { getDefaultPetWindowForPlugins } from "./default-pet-controller.js";
 import { playPetWindowTtsAudio, speakPetWindowTts, stopPetWindowTts, stopPetWindowTtsAudio } from "./pet-window.js";
 import type { PluginAiGateway } from "./plugin-ai-gateway.js";
-import { VoiceConversationService, type VoiceConversationSnapshot, type VoiceRealtimeSessionConfig } from "./voice-conversation.js";
-import { createElectronVoiceRealtimeTransportFactory } from "./voice-realtime-electron.js";
 import { createElectronVoiceCaptureFactory } from "./voice-capture-electron.js";
 import { createElectronVoicePrivacyIndicator } from "./voice-privacy-indicator-electron.js";
 import type { VoiceCaptureService } from "./voice-capture.js";
@@ -48,8 +46,6 @@ export function pluginVoiceStop(): void {
 
 let activeListeningService: VoiceListeningService | null = null;
 let activePluginId: string | undefined;
-let conversationService: VoiceConversationService | null = null;
-let conversationStartReservation: symbol | null = null;
 const voiceResources = new VoiceResourceOwner({ captureFactory: createElectronVoiceCaptureFactory(), privacyIndicatorFactory: createElectronVoicePrivacyIndicator });
 const voiceOperationState = new VoiceOperationState();
 let pluginVoiceShutdownPromise: Promise<void> | null = null;
@@ -69,6 +65,10 @@ export function getSharedVoiceMicrophoneArbiter(): VoiceMicrophoneArbiter {
 
 export function getSharedVoiceCaptureService(): VoiceCaptureService {
   return voiceResources.capture();
+}
+
+export function getSharedVoicePrivacyIndicator() {
+  return voiceResources.privacyIndicator;
 }
 
 export async function pluginVoiceListen(gateway: PluginAiGateway, opts: { timeoutMs: number; pluginId?: string }): Promise<{ text: string }> {
@@ -103,57 +103,14 @@ export async function cancelPluginVoiceListen(pluginId?: string, reason = "Voice
   await activeListeningService.cancel(reason).catch(() => undefined);
 }
 
-/** Host-private realtime foundation; intentionally not wired into the plugin SDK. */
-export async function startPluginVoiceConversation(gateway: PluginAiGateway): Promise<VoiceConversationSnapshot> {
-  if (conversationStartReservation || conversationService?.snapshot().phase !== "idle") throw new Error("A realtime voice conversation is already in progress.");
-  const reservation = Symbol("plugin-voice-conversation");
-  conversationStartReservation = reservation;
-  try {
-    const negotiator = await gateway.beginRealtimeOperation();
-    if (conversationStartReservation !== reservation) throw new Error("Voice conversation startup was cancelled.");
-    const service = createConversationService(negotiator);
-    conversationService = service;
-    return await service.start();
-  } finally {
-    if (conversationStartReservation === reservation) conversationStartReservation = null;
-  }
-}
-
-export function getPluginVoiceConversationSnapshot(): VoiceConversationSnapshot | null {
-  return conversationService?.snapshot() ?? null;
-}
-
-export async function closePluginVoiceConversation(): Promise<void> {
-  await conversationService?.close();
-}
-
-export async function mutePluginVoiceConversation(): Promise<void> {
-  await conversationService?.mute();
-}
-
-export async function unmutePluginVoiceConversation(): Promise<void> {
-  await conversationService?.unmute();
-}
-
 export function shutdownPluginVoice(): Promise<void> {
   if (pluginVoiceShutdownPromise) return pluginVoiceShutdownPromise;
   pluginVoiceShutdownPromise = (async () => {
-    conversationStartReservation = null;
     voiceOperationState.cancelReservation();
-    if (conversationService) await conversationService.shutdown().catch(() => undefined);
     if (activeListeningService) await activeListeningService.shutdown().catch(() => undefined);
     await voiceResources.shutdown();
-    conversationService = null;
     activeListeningService = null;
     activePluginId = undefined;
   })();
   return pluginVoiceShutdownPromise;
-}
-
-function createConversationService(negotiator: (sdp: string, session: VoiceRealtimeSessionConfig, signal?: AbortSignal) => Promise<string>): VoiceConversationService {
-  return new VoiceConversationService({
-    microphoneArbiter: voiceResources.microphoneArbiter,
-    privacyIndicator: voiceResources.privacyIndicator,
-    transportFactory: createElectronVoiceRealtimeTransportFactory({ negotiate: negotiator }),
-  });
 }

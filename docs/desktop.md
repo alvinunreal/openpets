@@ -300,14 +300,18 @@ transcription** while provider transcription is pending; the control disappears
 when the operation settles.
 
 The private `VoiceConversationService` and hidden, sandboxed realtime renderer
-remain infrastructure only. The service owns one realtime lane, shares the
-microphone lease with one-shot listening, tracks interruptions and mute state,
-rejects stale events, and releases only its own track/lease on close. It never
-destroys the shared privacy indicator; `voice-resource-owner.ts` performs that
-final teardown after the assistant, plugin one-shot, and realtime lanes stop.
-The renderer owns `getUserMedia`, WebRTC, the data channel, and remote audio; the
-host keeps the OpenAI credential and performs bounded SDP negotiation. Realtime
-protocol work remains deferred to #139.
+remain host infrastructure. When the explicitly selected text profile uses the
+native `openai-realtime` adapter, the Talk surface creates the optional
+`OpenAIRealtimeVoiceAssistantSession`; other text profiles keep the generic
+STT -> Pet Assistant -> TTS path. The realtime lane shares the microphone and
+modality leases, tracks interruptions and mute state, rejects stale events, and
+releases only its own resources on close. It never destroys the shared privacy
+indicator; `voice-resource-owner.ts` performs final teardown after every lane
+stops. The renderer owns `getUserMedia`, WebRTC, the data channel, and remote
+audio. It emits only bounded normalized transcripts and tool-call requests; the
+host keeps credentials, builds canonical tools, executes capabilities through
+the Pet Assistant service, and encodes provider-specific results back to
+Realtime. No plugin SDK route or plugin permission exposes this adapter.
 
 #### Generic host voice session and Talk controls (#147, #150)
 
@@ -317,8 +321,8 @@ releases the microphone reservation and the next activation creates a fresh
 session. The composition is bounded final-only capture/transcription → canonical
 Pet Assistant → authoritative TTS. Text, STT, and TTS provider profiles are
 independent, with the STT profile snapshotted before capture begins. #150 adds
-bounded host controls and a pet-owned Talk entry, but no provider protocol or
-Realtime behavior. Session transcript events are normalized
+bounded host controls and a pet-owned Talk entry. Generic session transcript
+events and the optional Realtime adapter are normalized
 into the #148 current-session Conversation projection; terminal text is also
 eligible for the #149 host archive, while voice lifecycle itself remains
 host-owned. A single app-lifetime feedback reducer consumes typed and

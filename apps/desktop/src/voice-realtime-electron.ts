@@ -9,12 +9,15 @@ import type {
   VoiceConversationTransportContext,
   VoiceConversationTransportFactory,
   VoiceRealtimeSessionConfig,
+  VoiceRealtimeToolResultCommand,
 } from "./voice-conversation.js";
+import { createOpenAIRealtimeToolResultEvents, parseStrictJsonObject, VOICE_REALTIME_MAX_CALL_ID_BYTES, VOICE_REALTIME_MAX_EVENT_BYTES, VOICE_REALTIME_MAX_TOOL_NAME_BYTES } from "./voice-realtime-protocol.js";
 
 const VOICE_REALTIME_PARTITION_PREFIX = "openpets-voice-realtime-";
 const VOICE_REALTIME_COMMAND_CHANNEL = "openpets:voice-realtime-command";
 const VOICE_REALTIME_EVENT_CHANNEL = "openpets:voice-realtime-event";
 const VOICE_REALTIME_MAX_SDP_BYTES = 256 * 1024;
+export { VOICE_REALTIME_MAX_CALL_ID_BYTES, VOICE_REALTIME_MAX_EVENT_BYTES, VOICE_REALTIME_MAX_TOOL_NAME_BYTES } from "./voice-realtime-protocol.js";
 
 export const VOICE_REALTIME_RENDERER_CLOSE_TIMEOUT_MS = 500;
 
@@ -48,6 +51,8 @@ class ElectronVoiceRealtimeTransport implements VoiceConversationTransport {
   #desiredMuted = false;
   #closing = false;
   #closePromise: Promise<void> | null = null;
+  readonly #acceptedToolCalls = new Set<string>();
+  readonly #sentToolResults = new Set<string>();
 
   constructor(context: VoiceConversationTransportContext, options: ElectronVoiceRealtimeTransportOptions) {
     this.#context = context;
@@ -139,7 +144,7 @@ class ElectronVoiceRealtimeTransport implements VoiceConversationTransport {
     this.#closePromise = (async () => {
       try {
         if (this.#loaded && !this.#window.isDestroyed()) {
-          try { this.#window.webContents.send(VOICE_REALTIME_COMMAND_CHANNEL, { type: "close", sessionId: this.#context.sessionId }); } catch { /* renderer may already be gone */ }
+          try { this.#window.webContents.send(VOICE_REALTIME_COMMAND_CHANNEL, { type: "close", sessionId: this.#context.sessionId, generation: this.#context.generation }); } catch { /* renderer may already be gone */ }
           await Promise.race([this.#rendererClosed, delay(this.#options.rendererCloseTimeoutMs ?? VOICE_REALTIME_RENDERER_CLOSE_TIMEOUT_MS)]);
         }
       } finally {
@@ -151,12 +156,19 @@ class ElectronVoiceRealtimeTransport implements VoiceConversationTransport {
     await this.#closePromise;
   }
 
+  async sendToolResult(command: VoiceRealtimeToolResultCommand): Promise<void> {
+    if (this.#closing || this.#window.isDestroyed() || !this.#acceptedToolCalls.has(command.callId) || this.#sentToolResults.has(command.callId)) return;
+    const messages = createOpenAIRealtimeToolResultEvents(command.callId, command.result);
+    this.#sentToolResults.add(command.callId);
+    for (const message of messages) this.#window.webContents.send(VOICE_REALTIME_COMMAND_CHANNEL, { type: "provider-event", sessionId: this.#context.sessionId, generation: this.#context.generation, message });
+  }
+
   async #startInternal(): Promise<void> {
     try {
       await this.#window.loadFile(join(app.getAppPath(), "assets", "voice-realtime.html"));
       if (this.#closing || this.#context.signal.aborted) throw new Error("Voice realtime transport was cancelled.");
       this.#loaded = true;
-      this.#window.webContents.send(VOICE_REALTIME_COMMAND_CHANNEL, { type: "start", sessionId: this.#context.sessionId });
+       this.#window.webContents.send(VOICE_REALTIME_COMMAND_CHANNEL, { type: "start", sessionId: this.#context.sessionId, generation: this.#context.generation });
       await this.#startCompletion;
     } catch (error) {
       throw normalizeError(error);
@@ -164,7 +176,7 @@ class ElectronVoiceRealtimeTransport implements VoiceConversationTransport {
   }
 
   #handleRendererEvent(event: IpcMainEvent, payload: unknown): void {
-    if (event.sender !== this.#window.webContents || !isRecord(payload) || payload.sessionId !== this.#context.sessionId || this.#closing) return;
+    if (event.sender !== this.#window.webContents || !isValidRendererEnvelope(payload, this.#context.sessionId, this.#context.generation) || this.#closing) return;
     const type = payload.type;
     if (type === "microphone-acquired") {
       this.#microphoneReady = true;
@@ -182,6 +194,19 @@ class ElectronVoiceRealtimeTransport implements VoiceConversationTransport {
         return;
       }
       void this.#negotiate(payload.sdp);
+      return;
+    }
+    if (type === "tool-call") {
+      const call = normalizeToolCall(payload);
+      if (!call || this.#acceptedToolCalls.has(call.callId)) return;
+      this.#acceptedToolCalls.add(call.callId);
+      this.#context.emit({ type: "tool-call", ...call });
+      return;
+    }
+    if (type === "transcript") {
+      const transcript = normalizeTranscript(payload);
+      if (!transcript) return;
+      this.#context.emit({ type: "transcript", ...transcript });
       return;
     }
     if (type === "connected") {
@@ -212,7 +237,7 @@ class ElectronVoiceRealtimeTransport implements VoiceConversationTransport {
       const answer = await this.#options.negotiate(offer, this.#context.session, this.#context.signal);
       if (this.#closing || this.#context.signal.aborted) return;
       if (!isValidSdp(answer)) throw new Error("OpenAI realtime negotiation returned an invalid session description.");
-      this.#window.webContents.send(VOICE_REALTIME_COMMAND_CHANNEL, { type: "answer", sessionId: this.#context.sessionId, sdp: answer });
+       this.#window.webContents.send(VOICE_REALTIME_COMMAND_CHANNEL, { type: "answer", sessionId: this.#context.sessionId, generation: this.#context.generation, sdp: answer });
     } catch (error) {
       this.#fail(error);
     }
@@ -239,7 +264,7 @@ class ElectronVoiceRealtimeTransport implements VoiceConversationTransport {
 
   #sendMuteIfReady(): void {
     if (!this.#microphoneReady || this.#closing || this.#window.isDestroyed()) return;
-    this.#window.webContents.send(VOICE_REALTIME_COMMAND_CHANNEL, { type: "mute", sessionId: this.#context.sessionId, muted: this.#desiredMuted });
+    this.#window.webContents.send(VOICE_REALTIME_COMMAND_CHANNEL, { type: "mute", sessionId: this.#context.sessionId, generation: this.#context.generation, muted: this.#desiredMuted });
   }
 }
 
@@ -251,6 +276,27 @@ function isConversationEvent(value: unknown): value is Exclude<VoiceConversation
     || value === "response-audio-stopped"
     || value === "response-completed"
     || value === "interrupted";
+}
+
+function isValidRendererEnvelope(value: unknown, sessionId: string, generation: number): value is Record<string, unknown> {
+  if (!isRecord(value) || value.sessionId !== sessionId || value.generation !== generation || typeof value.type !== "string") return false;
+  try { return Buffer.byteLength(JSON.stringify(value), "utf8") <= VOICE_REALTIME_MAX_EVENT_BYTES; } catch { return false; }
+}
+
+function normalizeToolCall(value: Record<string, unknown>): { readonly callId: string; readonly name: string; readonly arguments: string } | null {
+  if (typeof value.callId !== "string" || value.callId.trim() === "" || Buffer.byteLength(value.callId, "utf8") > VOICE_REALTIME_MAX_CALL_ID_BYTES || !/^[A-Za-z0-9_-]+$/.test(value.callId)) return null;
+  if (typeof value.name !== "string" || value.name.trim() === "" || Buffer.byteLength(value.name, "utf8") > VOICE_REALTIME_MAX_TOOL_NAME_BYTES || !/^[A-Za-z0-9_-]+$/.test(value.name)) return null;
+  if (typeof value.arguments !== "string" || Buffer.byteLength(value.arguments, "utf8") > VOICE_REALTIME_MAX_EVENT_BYTES) return null;
+  if (!parseStrictJsonObject(value.arguments)) return null;
+  return { callId: value.callId, name: value.name, arguments: value.arguments };
+}
+
+function normalizeTranscript(value: Record<string, unknown>): { readonly entryId: string; readonly speaker: "user" | "assistant"; readonly status: "partial" | "final"; readonly text: string } | null {
+  if (typeof value.entryId !== "string" || value.entryId.trim() === "" || Buffer.byteLength(value.entryId, "utf8") > VOICE_REALTIME_MAX_CALL_ID_BYTES) return null;
+  if (value.speaker !== "user" && value.speaker !== "assistant") return null;
+  if (value.status !== "partial" && value.status !== "final") return null;
+  if (typeof value.text !== "string" || value.text.trim() === "" || Buffer.byteLength(value.text, "utf8") > VOICE_REALTIME_MAX_EVENT_BYTES) return null;
+  return { entryId: value.entryId, speaker: value.speaker, status: value.status, text: value.text };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

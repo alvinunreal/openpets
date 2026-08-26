@@ -199,7 +199,7 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `pet-assistant-host.ts` / `pet-assistant-service.ts`: Host-owned provider-neutral assistant lifecycle, per-turn prompt composition, bounded active/archive context, archive query/erase seam, and generation-pinned capability routing
 - `pet-assistant-archive.ts`: Host-owned local terminal-text archive with atomic writes, retention/quarantine, and bounded prompt-window support
 - `pet-assistant-history-ipc.ts`: Pure narrow history list/delete/clear handler helpers, including startup and identifier validation
-- `pet-assistant-conversation.ts`: Host-owned current-session presentation projection, stable typed-chat controller, cancellation seam, and future normalized voice-transcript seam
+- `pet-assistant-conversation.ts`: Host-owned current-session presentation projection, stable typed-chat controller, cancellation seam, and normalized voice-transcript seam
 - `pet-assistant-personality.ts`: Pure personality defaults, bounds, patch validation, and safe deterministic serialization
 - `logger.ts`: Structured logging with scopes (app, ipc, lease, pet.default, pet.agent, pet.window, state, tray, ui), log rotation, redaction
 

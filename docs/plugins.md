@@ -178,10 +178,10 @@ conversation/tool loop, provider adapter, generation-pinned routing adapter,
 and bounded lifecycle. Issue #146 adds a host-owned persisted personality
 profile, but it does not move personality or authority into plugins. Assistant
 requests do not route through `ctx.ai` or gain unrestricted plugin authority.
-The current integration has no chat/voice UI, transcript or conversation
-persistence, or sensitive-action confirmation UX; later issues add those
-product surfaces. Provider-profile management is implemented in the Control
-Center and uses the host-owned bridge described below.
+The current integration has shared chat/voice Conversation projection and
+host-owned local history, while sensitive-action confirmation remains separate.
+Provider-profile management is implemented in the Control Center and uses the
+host-owned bridge described below.
 
 Network access is gated per call by the **intersection** of manifest-declared
 permissions and the user's persisted approvals. A stale approval never grants a
@@ -233,11 +233,12 @@ state. Plugins do not own the microphone, privacy surface, renderer playback
 lifecycle, or generic assistant session.
 
 `voice-resource-owner.ts` is the sole owner of the shared microphone arbiter,
-capture service, and privacy indicator. Plugin one-shot listening, the private
+capture service, and privacy indicator. Plugin one-shot listening, the native
 Realtime lane, and the generic assistant lane release only their own tracks and
 leases. The shared owner destroys the privacy surface once, after every lane has
-stopped during app teardown. This does not add a public voice conversation API or
-make Realtime part of the plugin contract; #139 remains deferred.
+stopped during app teardown. The optional Realtime adapter remains host-private;
+it does not add a public voice conversation API or make Realtime part of the
+plugin contract.
 
 Generic `openai-compatible-text` is the codec for OpenAI, Ollama, LM Studio,
 vLLM, MiniMax chat, and cloud gateways. Anthropic remains native because its
@@ -247,10 +248,13 @@ audio. TTS is explicit system voice, MiniMax hex audio, ElevenLabs audio, or a
 bounded OpenAI-compatible speech profile. An external TTS error is surfaced and
 does not silently fall back to system speech.
 
-Realtime is host-private and derives only from the selected text profile. It
-requires an explicitly native `openai-realtime` profile,
-reuses that profile's base URL, credential, and allowed headers, and fails with
-`provider.realtime.unsupported` without fetching for other profiles.
+Realtime is an optional host-private optimized adapter and derives only from
+the selected text profile. It requires an explicitly native
+`openai-realtime` profile, reuses that profile's model, base URL, credential,
+and allowed headers, and fails with `provider.realtime.unsupported` without
+fetching for other profiles. The selected profile is pinned for the active
+session; generic STT -> Pet Assistant -> TTS remains the path for other text
+profiles.
 
 The public plugin-facing `voice.listen` capability remains one-shot push-to-talk,
 never ambient. The host captures in a hidden, isolated microphone window and displays
@@ -266,15 +270,19 @@ The host-owned tray menu provides **Stop microphone listening** during
 acquisition/recording and **Cancel transcription** while transcription is
 pending; cancellation is not a public plugin SDK method.
 
-Separately, the desktop has a Phase 1 host-private realtime conversation
-foundation. It is not exposed through Plugin SDK v3, has no plugin permission,
-and plugins cannot start it. Realtime uses a dedicated hidden sandboxed Electron
-WebRTC renderer and host-side OpenAI negotiation. One-shot capture and realtime
-conversation share an exclusive host microphone lease, so they cannot run at the
-same time; both use the host-owned microphone privacy indicator and lifecycle.
-Realtime cleanup also participates in the shared plugin voice shutdown path. UI,
-Talk-to-Pet, public SDK exposure, plugin permissions, tools, memory, transcripts,
-and wake words remain deferred.
+Separately, the desktop provides the optional host-private OpenAI Realtime
+adapter through the existing Talk surface. It is not exposed through Plugin SDK
+v3, has no plugin permission, and plugins cannot start it. A dedicated hidden
+sandboxed Electron WebRTC renderer performs provider-wire decoding and emits
+only normalized transcripts and completed tool-call requests. The main process
+validates those events again, while the host Pet Assistant service owns current
+capability discovery, canonical provider-safe tool names, generation-pinned
+execution, structured results, and Conversation projection. One-shot capture,
+generic voice, and Realtime share exclusive microphone/modality ownership and
+the host privacy indicator. Realtime cleanup participates in the shared
+shutdown path; provider failures and stale generations cannot become successful
+capability outcomes. There is no public SDK Realtime API, unrestricted machine
+access, semantic memory, or wake-word behavior.
 
 ### Display deliveries
 
