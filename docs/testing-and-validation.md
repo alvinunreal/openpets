@@ -78,6 +78,9 @@ Each package runs its own `check`/`test`. Notable contract/boundary coverage:
   representative plugin against the test harness to detect drift between the
   published types (`index.ts`), the harness (`testing.ts`), and the desktop
   bridge. Changing the SDK without updating all three fails here. See [Plugin SDK v3](/sdk).
+- `packages/openclaw/src/check-openclaw.ts` - native OpenClaw package contract:
+  exact management command shapes, supported status/conflict classification,
+  post-install planning, and payload-free non-blocking lifecycle dispatch.
 - `@open-pets/dsh` - package artifact/load smoke: confirm the built or published
   artifact loads as the DSH Cordis bundle and its automatic dispatch wiring is
   available without model tools or MCP setup. See [Agent integrations](/agent-integrations).

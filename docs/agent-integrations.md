@@ -1,5 +1,5 @@
 ---
-description: Connect Claude Code, OpenCode, Cursor, Pi, and MCP-capable assistants to OpenPets through local companion events.
+description: Connect Claude Code, OpenCode, Cursor, Pi, OpenClaw, and MCP-capable assistants to OpenPets through local companion events.
 ---
 
 # Agent integrations
@@ -7,8 +7,8 @@ description: Connect Claude Code, OpenCode, Cursor, Pi, and MCP-capable assistan
 OpenPets reacts to coding agents. Each supported agent has an integration
 package that does two jobs: **configure** the agent to talk to OpenPets, and at
 runtime **translate** the agent's activity into safe pet reactions sent over
-local IPC or an explicitly configured remote client. This doc covers all five
-integrations (Claude Code, MCP, OpenCode, Cursor, Pi), the shared speech-safety
+local IPC or an explicitly configured remote client. This doc covers Claude
+Code, MCP, OpenCode, Cursor, Pi, OpenClaw, and DSH, the shared speech-safety
 layer, and the CLI commands that orchestrate them.
 
 For the local and remote wire protocols, see [IPC and remote control](/ipc). Source maps live
@@ -31,6 +31,10 @@ Every integration follows the same contract, which is worth internalizing once:
   below), never from raw prompt/output text.
 - **Leases route the pet.** Integrations acquire a lease on first activity,
   heartbeat it, and release on shutdown. See the lease model in [IPC and remote control](/ipc).
+
+OpenClaw is the deliberate exception to this shared runtime shape. Its native
+plugin is local-only, targets the default pet through the local client, does not
+acquire a lease, and observes hook invocation without reading event arguments.
 
 Remote mode is the explicit exception to the lease rule: it is default-pet-only
 and does not acquire, heartbeat, or release leases. It is selected only through
@@ -194,6 +198,105 @@ registers a `/openpets` slash command namespace (`status`, `test`,
 non-blocking; it registers **no** model-callable tools, and never forwards
 prompt/assistant/tool/command text, paths, URLs, or secrets.
 
+## OpenClaw - `@open-pets/openclaw`
+
+OpenClaw is a native OpenClaw plugin, not an OpenPets SDK v3 catalog plugin and
+not an MCP configuration. The published package contains the compiled runtime
+and the native `openclaw.plugin.json` manifest. Its package metadata points
+OpenClaw at `dist/index.js` through `openclaw.extensions`; the default export is
+the `openpets` plugin entry created with OpenClaw's `definePluginEntry()`.
+The manifest declares startup activation and an empty inline configuration
+schema, so OpenClaw can inventory the plugin before loading its runtime.
+
+### Exact runtime contract
+
+The plugin registers only these OpenClaw lifecycle hooks. Both handlers are
+argument-free by contract; the integration never reads model, tool, prompt,
+result, path, or other hook payloads.
+
+| OpenClaw hook | OpenPets effect |
+|---------------|-----------------|
+| `model_call_started` | `thinking`: a curated thinking speech may be sent, subject to the speech cooldown; otherwise the thinking reaction is sent. |
+| `before_tool_call` | `working` reaction. |
+
+Dispatch is scheduled and non-blocking. It uses a local-only OpenPets client
+with bounded connection/response timeouts, and automatic failures do not reach
+OpenClaw. There are **no terminal success or error hooks**: the integration does
+not emit success/error feedback when a model or tool call finishes. It also does
+not forward arbitrary OpenClaw text to the pet.
+
+### Native package and lifecycle commands
+
+OpenPets manages the owned package at the exact workspace package version. The
+underlying OpenClaw commands are:
+
+```sh
+openclaw plugins install npm:@open-pets/openclaw@<version>
+openclaw plugins enable openpets
+openclaw plugins update @open-pets/openclaw@<version>
+openclaw plugins uninstall openpets --force
+```
+
+The install must remain an npm-tracked `@open-pets/openclaw` installation. A
+different source using the `openpets` id is a conflict rather than something
+OpenPets silently replaces.
+
+Use OpenClaw's inventory commands when inspecting the installation directly:
+
+```sh
+openclaw plugins list --json
+openclaw plugins inspect openpets --json
+openclaw plugins inspect openpets --runtime --json
+```
+
+`list` and ordinary `inspect` are cold inventory reads. They can establish what
+OpenClaw's persisted registry and manifest metadata say, but **cold inventory
+cannot prove that a running Gateway loaded the plugin**. `inspect --runtime`
+performs a separate runtime inspection pass; after install, update, enablement,
+or entry/config changes, restart the Gateway and verify the actual Gateway
+process separately.
+
+### Status states and ownership
+
+The desktop and CLI classify the same OpenClaw observations into these states:
+
+An OpenClaw executable installed in a nonstandard location is supported when
+the user supplies its absolute executable path in the Control Center. That is
+different from a nonstandard plugin source: the `openpets` id remains owned
+only when its tracked install is the `@open-pets/openclaw` npm package.
+
+| State | Meaning |
+|-------|---------|
+| `installed-enabled` / `installed-disabled` | The owned npm installation is present and OpenClaw reports its enablement. |
+| `not-installed` | OpenClaw is supported and the owned plugin is absent. |
+| `unavailable` | The configured OpenClaw executable is missing or does not report a version. |
+| `unsupported-host` | The host is outside the supported desktop platforms, or OpenClaw is older than the supported `2026.7.1` minimum. |
+| `management-disabled` | OpenPets itself sees `OPENCLAW_NIX_MODE=1`; Nix owns the plugin files/configuration, so OpenPets does not mutate them. OpenClaw currently exposes no machine-readable Nix-mode status to a separate parent process. |
+| `conflict` | Plugin id `openpets` is present but its source is not the tracked npm `@open-pets/openclaw` package. |
+| `invalid` | OpenClaw returned incomplete plugin metadata or reports a load/dependency problem for the owned installation. |
+| `indeterminate` | A list/inspect or post-action status refresh failed or returned malformed data; no mutation should be retried based on this state alone. |
+
+The **Control Center** is the desktop-owned setup surface. The main process
+resolves the configured `openclaw` executable, reads version/list/inspect
+status, presents command previews, and owns install, update, enable-as-part-of-
+setup, and remove actions through the agent-setup IPC boundary. It reports known Nix,
+unsupported, conflict, invalid, and indeterminate states instead of treating
+them as installable.
+
+The **OpenPets CLI** exposes the global ensure flow as:
+
+```sh
+openpets configure --agent openclaw
+```
+
+Only `--yes` is meaningful for this target. OpenClaw setup does not accept
+`--cwd`, `--pet`, `--force`, `--local-dev`, or Cursor rules flags. The CLI
+discovers version/list/inspect, plans install-or-update followed by enable, and
+refreshes status after each command before declaring success. It has no separate
+OpenPets `list`, `inspect`, or `remove` subcommand for OpenClaw; use the native
+OpenClaw commands above for direct inventory or lower-level lifecycle control.
+OpenClaw remains the owner of its plugin registry and Gateway restart lifecycle.
+
 ## DSH - `@open-pets/dsh`
 
 Install the strict local-only v1 DSH plugin for a DSH profile:
@@ -230,7 +333,7 @@ others. Commands:
 
 | Command | Does |
 |---------|------|
-| `configure` | Configure Claude / OpenCode / Cursor for a project (atomic, safe-path) |
+| `configure` | Configure Claude / OpenCode / Cursor for a project, or ensure the global OpenClaw plugin is installed and enabled |
 | `install <pet-id>` | Install a pet via the client |
 | `status` | Print app/pet status JSON over IPC |
 | `pets` | List installed pets |
@@ -260,3 +363,4 @@ discovery-based behavior unchanged.
 | OpenCode | `.opencode/` or `~/.config/opencode/` | plugin event hooks |
 | Cursor | `.cursor/mcp.json` + rules | MCP tools |
 | Pi | `pi.extensions` | extension events + `/openpets` |
+| OpenClaw | OpenClaw plugin registry | native plugin hooks; local-only default-pet reactions |

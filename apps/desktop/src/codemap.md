@@ -90,7 +90,8 @@ windows.ts (IPC handlers)
     │   ├── install-memory (claude-memory.ts)
     │   └── install-hooks/uninstall-hooks/doctor-hooks (@open-pets/claude)
     ├── OpenCode global config management (@open-pets/opencode)
-    └── Cursor global MCP config management (@open-pets/cursor)
+    ├── Cursor global MCP config management (@open-pets/cursor)
+    └── OpenClaw version/list/inspect + install/update/enable/remove management (@open-pets/openclaw/management)
 ```
 
 **Pet Installation Flow**:
@@ -178,13 +179,14 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
   - `@open-pets/claude`: `buildClaudeMcpPreview`, `installClaudeHooks`, `doctorClaudeHooks`, etc.
   - `@open-pets/opencode`: `prepareOpenCodeGlobalSetup`, `doctorOpenCodeGlobalSetup`
   - `@open-pets/cursor`: `planCursorMcpInstall`, `executeCursorMcpWrite`, `buildCursorRulesPreview`, etc.
+  - `@open-pets/openclaw`: `buildOpenClawCommand`, `classifyOpenClawStatus`, and `planOpenClawMutation` for native plugin management
   - `@open-pets/cli`: Version lookup for bundled mode
   - `@open-pets/plugin-sdk`: Published SDK contract mirrored by the desktop bridge and conformance checks
 
 - **To System**:
   - File system: `app.getPath("userData")`, `userData/plugins/`, `userData/plugins-dev/`, plugin storage JSON, `~/.codex/pets/`, `~/.claude/`, `~/.opencode/`
   - Network: `fetch()` to openpets.dev, GitHub API, plugin catalog at `https://openpets.dev/plugins/catalog.v1.json`, plugin ZIPs restricted to `https://zip.openpets.dev/plugins/`
-  - Processes: `spawn()` for `claude`, `opencode`, `node`
+  - Processes: `spawn()` for `claude`, `opencode`, `openclaw`, `node`
 
 ## Key Modules
 
@@ -284,7 +286,7 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `voice-privacy-indicator.ts` / `voice-privacy-indicator-electron.ts`: Track-driven host privacy indicator, hidden until acquisition succeeds.
 
 **Agent Integration**:
-- `agent-setup.ts`: Claude/OpenCode/Cursor detection, MCP configuration, hooks management, action journaling
+- `agent-setup.ts`: Claude/OpenCode/Cursor detection, OpenClaw native plugin discovery/mutation, MCP configuration, hooks management, action journaling
 - `claude-memory.ts`: Claude instructions file management (`~/.claude/openpets.md`)
 - `update-checker.ts`: GitHub release polling, update status
 - `update-version.ts`: Version parsing and comparison

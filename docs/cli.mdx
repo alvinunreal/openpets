@@ -19,7 +19,7 @@ npx @open-pets/cli --help
 
 | Command | Purpose |
 | --- | --- |
-| `openpets configure` | Configure Claude Code, OpenCode, or Cursor for a project. |
+| `openpets configure` | Configure Claude Code, OpenCode, or Cursor for a project, or ensure the global OpenClaw plugin is installed and enabled. |
 | `openpets status` | Check whether the desktop app is reachable. |
 | `openpets pets` | List installed pets from the desktop app. |
 | `openpets react <reaction>` | Send a reaction to the current pet. |
@@ -35,8 +35,19 @@ npx @open-pets/cli configure
 ```
 
 The configure command can set up Claude Code hooks/MCP, OpenCode project or
-global config, and Cursor MCP/rules depending on the selected target. The
-integration behavior is documented in [Agent integrations](/agent-integrations).
+global config, Cursor MCP/rules, or the global OpenClaw native plugin depending
+on the selected target. For OpenClaw, use:
+
+```bash
+npx @open-pets/cli configure --agent openclaw --yes
+```
+
+OpenClaw setup is global and accepts no project directory, pet, force, local-dev,
+or Cursor-rules options. The CLI checks OpenClaw version/list/inspect state,
+applies the required install or update and enable commands, then refreshes the
+status before reporting success. Direct OpenClaw inventory and removal remain
+owned by the native CLI (`openclaw plugins list`, `openclaw plugins inspect`,
+and `openclaw plugins uninstall`). See [Agent integrations](/agent-integrations).
 
 ## Run MCP directly
 

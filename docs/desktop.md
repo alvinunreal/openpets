@@ -401,8 +401,16 @@ the plugin is installed.
 
 `agent-setup.ts` detects installed agents and runs configuration actions (MCP
 add/replace/remove, hooks install/uninstall/doctor, memory file install),
-delegating to the integration packages. `claude-memory.ts` manages the Claude
-instructions file. See [Agent integrations](/agent-integrations).
+delegating to the integration packages. It also owns the OpenClaw setup
+boundary: the configured `openclaw` executable is used for version, list, and
+inspect discovery, while install/update/enable/remove actions are run only for
+the owned npm package and are verified by a post-action refresh. Nix mode,
+unsupported hosts/versions, nonstandard plugin ownership, invalid metadata, and
+failed refreshes remain explicit status states rather than being auto-mutated.
+`claude-memory.ts` manages the Claude instructions file. The Control Center
+consumes the setup snapshot and actions through `windows.ts`; the CLI's global
+`configure --agent openclaw` flow uses the same OpenClaw management contract but
+does not use a project path or pet selection. See [Agent integrations](/agent-integrations).
 
 ### Catalog & installation
 

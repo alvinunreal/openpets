@@ -52,6 +52,7 @@ export interface OpenPetsStateV1 {
     readonly claudeCommandPath?: string;
     readonly nodeCommandPath?: string;
     readonly opencodeCommandPath?: string;
+    readonly openclawCommandPath?: string;
     /** Ordered pool of pet IDs for sequential session assignment. Slot 0 is the primary pet.
      * When set (non-empty), no-pet sessions claim the next available slot before falling back to random.
      * Undefined / empty = legacy shared-default behaviour unchanged. */
@@ -545,6 +546,7 @@ function normalizePreferences(value: Partial<OpenPetsStateV1["preferences"]>): O
     claudeCommandPath: normalizeCommandPath(value.claudeCommandPath),
     nodeCommandPath: normalizeCommandPath(value.nodeCommandPath),
     opencodeCommandPath: normalizeCommandPath(value.opencodeCommandPath),
+    openclawCommandPath: normalizeCommandPath(value.openclawCommandPath),
     petPoolOrder: normalizePetPoolOrder(value.petPoolOrder),
     petPoolEnabled: typeof value.petPoolEnabled === "boolean"
       ? value.petPoolEnabled
@@ -629,6 +631,7 @@ function createDefaultState(): OpenPetsStateV1 {
       claudeCommandPath: undefined,
       nodeCommandPath: undefined,
       opencodeCommandPath: undefined,
+      openclawCommandPath: undefined,
       petPoolOrder: undefined,
       petPoolEnabled: true,
       petConfinementEnabled: true,
