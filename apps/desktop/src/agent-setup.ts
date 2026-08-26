@@ -443,13 +443,13 @@ async function getOpenClawSetup(): Promise<{ readonly status: OpenClawPluginStat
   };
   if (process.env.OPENCLAW_NIX_MODE === "1") return { status: { state: "management-disabled", label: "Managed externally", details: "OpenClaw is running in Nix mode; plugin management is disabled in OpenPets.", canInstall: false, canUpdate: false, canEnable: false, canRemove: false }, preview };
   if (!["darwin", "linux", "win32"].includes(process.platform)) return { status: classifyOpenClawStatus({ version: targetVersion, list: {}, inspect: {}, hostSupported: false }), preview };
-  const versionResult = await runOpenClawCommand("version");
+  const versionResult = await runOpenClawCommand("version", undefined, commandTimeoutMs);
   const version = parseOpenClawVersion(`${versionResult.stdout}\n${versionResult.stderr}`);
   if (!versionResult.ok || !version) return { status: classifyOpenClawStatus({ version: undefined, list: {}, inspect: {}, hostSupported: true }), preview };
-  const list = await runOpenClawCommand("list");
+  const list = await runOpenClawCommand("list", undefined, commandTimeoutMs);
   if (!list.ok || list.overflow) return { status: { state: "indeterminate", label: "Status unavailable", details: "OpenClaw was detected, but plugin status could not be read.", version, canInstall: false, canUpdate: false, canEnable: false, canRemove: false }, preview };
   const listPayload = parseJsonOutput(list.stdout);
-  const inspect = await runOpenClawCommand("inspect");
+  const inspect = await runOpenClawCommand("inspect", undefined, commandTimeoutMs);
   if (inspect.overflow) return { status: { state: "indeterminate", label: "Status unavailable", details: "OpenClaw returned more plugin status data than OpenPets can safely inspect.", version, canInstall: false, canUpdate: false, canEnable: false, canRemove: false }, preview };
   if (!inspect.ok) {
     const status = classifyOpenClawStatus({ version, list: listPayload, inspect: undefined, inspectMissing: true, hostSupported: true });
@@ -845,11 +845,11 @@ async function runOpenCodeCommand(args: readonly string[]): Promise<CommandResul
   return { ok: false, timedOut: false, exitCode: null, stdout: "", stderr: "", error: "OpenCode command was not found." };
 }
 
-async function runOpenClawCommand(action: OpenClawCommandAction, targetVersion?: string): Promise<CommandResult> {
+async function runOpenClawCommand(action: OpenClawCommandAction, targetVersion?: string, timeoutMs = managementCommandTimeoutMs): Promise<CommandResult> {
   const configured = getAppStateSnapshot().preferences.openclawCommandPath;
   const commands = configured ? [configured] : process.platform === "win32" ? ["openclaw", "openclaw.cmd"] : ["openclaw"];
   for (const command of commands) {
-    const result = await runCommand(buildOpenClawCommand(action, targetVersion, { openclaw: command }), managementCommandTimeoutMs, false, openClawMaxStructuredOutputBytes, true);
+    const result = await runCommand(buildOpenClawCommand(action, targetVersion, { openclaw: command }), timeoutMs, false, openClawMaxStructuredOutputBytes, true);
     if (result.ok || !isCommandNotFound(result)) return result;
   }
   return { ok: false, timedOut: false, exitCode: null, stdout: "", stderr: "", error: "OpenClaw command was not found." };
