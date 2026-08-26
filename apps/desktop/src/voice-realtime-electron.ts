@@ -228,6 +228,23 @@ class ElectronVoiceRealtimeTransport implements VoiceConversationTransport {
       this.#context.emit({ type: "microphone-released" });
       return;
     }
+    if (type === "speech-started" || type === "speech-stopped") {
+      const itemId = normalizeProviderId(payload.itemId);
+      if (itemId) this.#context.emit({ type, itemId });
+      return;
+    }
+    if (type === "response-started" || type === "response-audio-started" || type === "response-audio-stopped" || type === "response-completed") {
+      const responseId = normalizeProviderId(payload.responseId);
+      if (responseId) this.#context.emit({ type, responseId });
+      return;
+    }
+    if (type === "interrupted") {
+      const responseId = payload.responseId === undefined ? undefined : normalizeProviderId(payload.responseId);
+      const itemId = payload.itemId === undefined ? undefined : normalizeProviderId(payload.itemId);
+      if ((payload.responseId !== undefined && !responseId) || (payload.itemId !== undefined && !itemId)) return;
+      this.#context.emit({ type, ...(responseId ? { responseId } : {}), ...(itemId ? { itemId } : {}) });
+      return;
+    }
     if (isConversationEvent(type)) this.#context.emit({ type } as VoiceConversationEvent);
   }
 
@@ -283,20 +300,33 @@ function isValidRendererEnvelope(value: unknown, sessionId: string, generation: 
   try { return Buffer.byteLength(JSON.stringify(value), "utf8") <= VOICE_REALTIME_MAX_EVENT_BYTES; } catch { return false; }
 }
 
-function normalizeToolCall(value: Record<string, unknown>): { readonly callId: string; readonly name: string; readonly arguments: string } | null {
+function normalizeToolCall(value: Record<string, unknown>): { readonly callId: string; readonly itemId: string; readonly responseId: string; readonly name: string; readonly arguments: string } | null {
+  const responseId = normalizeProviderId(value.responseId);
+  const itemId = normalizeProviderId(value.itemId);
+  if (!responseId || !itemId) return null;
   if (typeof value.callId !== "string" || value.callId.trim() === "" || Buffer.byteLength(value.callId, "utf8") > VOICE_REALTIME_MAX_CALL_ID_BYTES || !/^[A-Za-z0-9_-]+$/.test(value.callId)) return null;
   if (typeof value.name !== "string" || value.name.trim() === "" || Buffer.byteLength(value.name, "utf8") > VOICE_REALTIME_MAX_TOOL_NAME_BYTES || !/^[A-Za-z0-9_-]+$/.test(value.name)) return null;
   if (typeof value.arguments !== "string" || Buffer.byteLength(value.arguments, "utf8") > VOICE_REALTIME_MAX_EVENT_BYTES) return null;
   if (!parseStrictJsonObject(value.arguments)) return null;
-  return { callId: value.callId, name: value.name, arguments: value.arguments };
+  return { callId: value.callId, itemId, responseId, name: value.name, arguments: value.arguments };
 }
 
-function normalizeTranscript(value: Record<string, unknown>): { readonly entryId: string; readonly speaker: "user" | "assistant"; readonly status: "partial" | "final"; readonly text: string } | null {
+function normalizeTranscript(value: Record<string, unknown>): { readonly entryId: string; readonly itemId: string; readonly responseId?: string; readonly speaker: "user" | "assistant"; readonly status: "partial" | "final"; readonly text: string } | null {
   if (typeof value.entryId !== "string" || value.entryId.trim() === "" || Buffer.byteLength(value.entryId, "utf8") > VOICE_REALTIME_MAX_CALL_ID_BYTES) return null;
+  const itemId = normalizeProviderId(value.itemId);
+  if (!itemId) return null;
+  const responseId = value.responseId === undefined ? undefined : normalizeProviderId(value.responseId);
+  if (value.responseId !== undefined && !responseId) return null;
   if (value.speaker !== "user" && value.speaker !== "assistant") return null;
   if (value.status !== "partial" && value.status !== "final") return null;
   if (typeof value.text !== "string" || value.text.trim() === "" || Buffer.byteLength(value.text, "utf8") > VOICE_REALTIME_MAX_EVENT_BYTES) return null;
-  return { entryId: value.entryId, speaker: value.speaker, status: value.status, text: value.text };
+  if (value.speaker === "assistant" && !responseId) return null;
+  return { entryId: value.entryId, itemId, ...(responseId ? { responseId } : {}), speaker: value.speaker, status: value.status, text: value.text };
+}
+
+function normalizeProviderId(value: unknown): string | null {
+  if (typeof value !== "string" || value.trim() === "" || Buffer.byteLength(value, "utf8") > VOICE_REALTIME_MAX_CALL_ID_BYTES || !/^[A-Za-z0-9_-]+$/.test(value)) return null;
+  return value;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

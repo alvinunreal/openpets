@@ -206,10 +206,12 @@ flows worth holding in memory. Each links to the doc that details it.
   them again and routes bounded tool calls through the generation-pinned
   PetAssistantService seam. Canonical capability outcomes are returned as
   structured `function_call_output` items followed by `response.create`.
-  Normalized transcripts and canonical activity/action events project into the
-  shared Conversation surface. Provider wire events stop at this adapter;
-  Realtime is not exposed to plugins and does not add memory or local-machine
-  authority.
+  Provider response IDs and input item IDs are carried through normalization and
+  bound to the active canonical turn; retired response/item identities are
+  dropped deterministically. Normalized transcripts and canonical activity/action
+  events project into the shared Conversation surface. Provider wire events stop
+  at this adapter; Realtime is not exposed to plugins and does not add memory or
+  local-machine authority.
 - **Configuring an agent.** The CLI or Control Center detects the agent, writes
   MCP config + hooks/rules atomically, and installs a memory/instructions file.
   OpenClaw is the separate native-plugin path: its status is read from the

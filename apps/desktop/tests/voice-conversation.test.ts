@@ -253,14 +253,14 @@ for (const failure of [
   const current = fixture({ autoConnect: true });
   await current.service.start();
   const transport = current.transports[0]!;
-  transport.emit({ type: "response-started" });
-  transport.emit({ type: "response-audio-started" });
-  transport.emit({ type: "speech-started" });
+  transport.emit({ type: "response-started", responseId: "response-1" });
+  transport.emit({ type: "response-audio-started", responseId: "response-1" });
+  transport.emit({ type: "speech-started", itemId: "item-1" });
   assert.equal(current.service.snapshot().activity, "user-speaking");
   assert.equal(current.service.snapshot().interruptionCount, 1);
-  transport.emit({ type: "speech-stopped" });
+  transport.emit({ type: "speech-stopped", itemId: "item-1" });
   assert.equal(current.service.snapshot().activity, "thinking");
-  transport.emit({ type: "response-completed" });
+  transport.emit({ type: "response-completed", responseId: "response-1" });
   assert.equal(current.service.snapshot().activity, "idle");
   await current.service.close();
 }
@@ -274,7 +274,7 @@ for (const failure of [
   assert.equal(transport.closeCount, 1);
   assert.equal(current.microphoneArbiter.activeOwner, null);
   assert.match(current.service.snapshot().error ?? "", /renderer crashed/);
-  transport.emit({ type: "response-audio-started" });
+  transport.emit({ type: "response-audio-started", responseId: "response-1" });
   assert.equal(current.service.snapshot().activity, "idle");
 }
 
@@ -288,7 +288,7 @@ for (const failure of [
   const newTransport = current.transports[1]!;
   assert.notEqual(current.transports[0]!.resources.windowAlive, newTransport.resources.windowAlive);
   assert.notEqual(current.transports[0], newTransport);
-  oldTransport.emit({ type: "response-audio-started" });
+  oldTransport.emit({ type: "response-audio-started", responseId: "response-1" });
   assert.equal(current.service.snapshot().activity, "idle");
   assert.equal(current.service.snapshot().generation, 2);
   await current.service.close();

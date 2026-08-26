@@ -63,6 +63,12 @@ export class OpenAIRealtimeVoiceAssistantSession implements VoiceAssistantSessio
   #responseCompleted = false;
   #hasToolCall = false;
   #awaitingToolFollowup = false;
+  readonly #responseBindings = new Map<string, string>();
+  readonly #closedResponseIds = new Set<string>();
+  readonly #itemBindings = new Map<string, string>();
+  readonly #retiredItemIds = new Set<string>();
+  #activeResponseId: string | null = null;
+  #activeInputItemId: string | null = null;
 
   constructor(options: RealtimeVoiceSessionOptions) {
     this.#options = options;
@@ -152,19 +158,26 @@ export class OpenAIRealtimeVoiceAssistantSession implements VoiceAssistantSessio
   #handleConversationEvent(event: VoiceConversationEvent): void {
     if (this.#ended) return;
     if (event.type === "speech-started") {
+      const turn = this.#bindInputItem(event.itemId);
+      if (!turn) return;
       this.#setSnapshot({ status: this.#muted ? "muted" : "active", activity: this.#muted ? null : "listening" });
-      if (!this.#turn) this.#beginTurn();
     } else if (event.type === "speech-stopped") {
+      if (!this.#isCurrentInputItem(event.itemId)) return;
       this.#setSnapshot({ activity: this.#muted ? null : "thinking" });
     } else if (event.type === "response-started") {
+      if (!this.#bindResponse(event.responseId)) return;
       this.#setSnapshot({ activity: this.#muted ? null : "thinking" });
     } else if (event.type === "response-audio-started") {
+      if (!this.#isCurrentResponse(event.responseId)) return;
       this.#setSnapshot({ activity: this.#muted ? null : "speaking" });
     } else if (event.type === "response-audio-stopped") {
+      if (!this.#isCurrentResponse(event.responseId)) return;
       this.#setSnapshot({ activity: this.#muted ? null : "thinking" });
     } else if (event.type === "response-completed") {
+      if (!this.#closeResponse(event.responseId)) return;
       this.#completeTurn();
     } else if (event.type === "interrupted") {
+      if (event.responseId && !this.#retireResponse(event.responseId)) return;
       void this.interrupt().catch(() => undefined);
     } else if (event.type === "transcript") {
       this.#handleTranscript(event);
@@ -176,7 +189,8 @@ export class OpenAIRealtimeVoiceAssistantSession implements VoiceAssistantSessio
   }
 
   #handleTranscript(event: Extract<VoiceConversationEvent, { readonly type: "transcript" }>): void {
-    const turn = this.#turn ?? this.#beginTurn();
+    const turn = this.#resolveItemTurn(event.itemId, event.responseId);
+    if (!turn) return;
     const text = event.text.trim();
     if (!text) return;
     if (event.status === "final") turn.recordTranscript(event.speaker, text);
@@ -189,7 +203,8 @@ export class OpenAIRealtimeVoiceAssistantSession implements VoiceAssistantSessio
   }
 
   async #handleToolCall(event: Extract<VoiceConversationEvent, { readonly type: "tool-call" }>): Promise<void> {
-    const turn = this.#turn ?? this.#beginTurn();
+    const turn = this.#resolveItemTurn(event.itemId, event.responseId);
+    if (!turn) return;
     if (this.#toolCalls.has(event.callId)) return;
     this.#toolCalls.add(event.callId);
     this.#hasToolCall = true;
@@ -228,6 +243,60 @@ export class OpenAIRealtimeVoiceAssistantSession implements VoiceAssistantSessio
     return turn;
   }
 
+  #bindInputItem(itemId: string): PetAssistantRealtimeTurn | null {
+    const existingTurnId = this.#itemBindings.get(itemId);
+    if (existingTurnId && existingTurnId !== this.#turn?.turnId) return null;
+    if (this.#activeInputItemId === itemId) return this.#turn;
+    if (this.#activeInputItemId) this.#retiredItemIds.add(this.#activeInputItemId);
+    const turn = this.#turn ?? this.#beginTurn();
+    this.#itemBindings.set(itemId, turn.turnId);
+    this.#activeInputItemId = itemId;
+    return turn;
+  }
+
+  #bindResponse(responseId: string): PetAssistantRealtimeTurn | null {
+    if (this.#closedResponseIds.has(responseId)) return null;
+    const existingTurnId = this.#responseBindings.get(responseId);
+    if (existingTurnId) {
+      return existingTurnId === this.#turn?.turnId && this.#activeResponseId === responseId ? this.#turn : null;
+    }
+    const turn = this.#turn;
+    if (!turn || this.#activeResponseId) return null;
+    this.#responseBindings.set(responseId, turn.turnId);
+    this.#activeResponseId = responseId;
+    return turn;
+  }
+
+  #resolveItemTurn(itemId: string, responseId?: string): PetAssistantRealtimeTurn | null {
+    const turn = this.#turn;
+    if (!turn) return null;
+    if (responseId && !this.#isCurrentResponse(responseId)) return null;
+    if (this.#retiredItemIds.has(itemId)) return null;
+    const existingTurnId = this.#itemBindings.get(itemId);
+    if (existingTurnId && existingTurnId !== turn.turnId) return null;
+    this.#itemBindings.set(itemId, turn.turnId);
+    return turn;
+  }
+
+  #isCurrentInputItem(itemId: string): boolean {
+    return this.#activeInputItemId === itemId && this.#itemBindings.get(itemId) === this.#turn?.turnId;
+  }
+
+  #isCurrentResponse(responseId: string): boolean {
+    return this.#activeResponseId === responseId && this.#responseBindings.get(responseId) === this.#turn?.turnId && !this.#closedResponseIds.has(responseId);
+  }
+
+  #retireResponse(responseId: string): boolean {
+    if (!this.#isCurrentResponse(responseId)) return false;
+    this.#closedResponseIds.add(responseId);
+    this.#activeResponseId = null;
+    return true;
+  }
+
+  #closeResponse(responseId: string): boolean {
+    return this.#retireResponse(responseId);
+  }
+
   #completeTurn(): void {
     this.#responseCompleted = true;
     this.#completeTurnIfReady();
@@ -254,7 +323,6 @@ export class OpenAIRealtimeVoiceAssistantSession implements VoiceAssistantSessio
     const turn = this.#turn;
     if (!turn) return;
     this.#turnController?.abort();
-    const result = await turn.cancel();
     this.#turn = null;
     this.#turnController = null;
     this.#lastAssistantTranscript = undefined;
@@ -262,7 +330,13 @@ export class OpenAIRealtimeVoiceAssistantSession implements VoiceAssistantSessio
     this.#responseCompleted = false;
     this.#hasToolCall = false;
     this.#awaitingToolFollowup = false;
+    if (this.#activeResponseId) this.#closedResponseIds.add(this.#activeResponseId);
+    this.#activeResponseId = null;
+    if (this.#activeInputItemId) this.#retiredItemIds.add(this.#activeInputItemId);
+    this.#activeInputItemId = null;
+    const result = await turn.cancel();
     this.#emit({ type: "turn-settled", turnId: result.turnId, outcome: result.status });
+    this.#setSnapshot({ turnId: null });
     void reason;
   }
 

@@ -17,6 +17,10 @@
   let closing = false;
   let assistantSpeaking = false;
   let responseInProgress = false;
+  let activeResponseId = null;
+  let activeInputItemId = null;
+  const closedResponseIds = new Set();
+  const closedInputItemIds = new Set();
   const transcriptBuffers = new Map();
   const emittedToolCalls = new Set();
 
@@ -62,44 +66,71 @@
     if (!message || typeof message !== "object" || Array.isArray(message)) return;
     const type = typeof message.type === "string" ? message.type : "";
     if (type === "input_audio_buffer.speech_started") {
-      if (responseInProgress) emit({ type: "interrupted" });
+      const itemId = providerId(message.item_id);
+      if (!itemId || closedInputItemIds.has(itemId) || activeInputItemId === itemId) return;
+      if (activeInputItemId) closedInputItemIds.add(activeInputItemId);
+      const interruptedResponseId = activeResponseId;
+      if (responseInProgress && interruptedResponseId) {
+        closedResponseIds.add(interruptedResponseId);
+        emit({ type: "interrupted", responseId: interruptedResponseId, itemId });
+      }
+      activeInputItemId = itemId;
+      activeResponseId = null;
       responseInProgress = false;
       assistantSpeaking = false;
-      emit({ type: "speech-started" });
+      emit({ type: "speech-started", itemId });
     } else if (type === "input_audio_buffer.speech_stopped") {
-      emit({ type: "speech-stopped" });
+      const itemId = providerId(message.item_id);
+      if (!itemId || itemId !== activeInputItemId || closedInputItemIds.has(itemId)) return;
+      emit({ type: "speech-stopped", itemId });
     } else if (type === "response.created") {
+      const responseId = responseIdFromCreated(message);
+      if (!responseId || closedResponseIds.has(responseId) || activeResponseId) return;
+      activeResponseId = responseId;
       responseInProgress = true;
-      emit({ type: "response-started" });
+      emit({ type: "response-started", responseId });
     } else if (type === "response.output_audio.delta") {
-      if (!assistantSpeaking) emit({ type: "response-audio-started" });
+      const responseId = providerId(message.response_id);
+      if (!responseId || responseId !== activeResponseId) return;
+      if (!assistantSpeaking) emit({ type: "response-audio-started", responseId });
       assistantSpeaking = true;
       responseInProgress = true;
     } else if (type === "response.output_audio.done") {
-      if (assistantSpeaking) emit({ type: "response-audio-stopped" });
+      const responseId = providerId(message.response_id);
+      if (!responseId || responseId !== activeResponseId) return;
+      if (assistantSpeaking) emit({ type: "response-audio-stopped", responseId });
       assistantSpeaking = false;
     } else if (type === "response.done") {
-      if (assistantSpeaking) emit({ type: "response-audio-stopped" });
+      const responseId = responseIdFromDone(message);
+      if (!responseId || responseId !== activeResponseId) return;
+      if (assistantSpeaking) emit({ type: "response-audio-stopped", responseId });
       assistantSpeaking = false;
       responseInProgress = false;
-      emit({ type: "response-completed" });
+      activeResponseId = null;
+      closedResponseIds.add(responseId);
+      emit({ type: "response-completed", responseId });
     } else if (type === "conversation.item.input_audio_transcription.delta") {
       appendTranscript(message.item_id, "user", "partial", message.delta);
     } else if (type === "conversation.item.input_audio_transcription.completed") {
       appendTranscript(message.item_id, "user", "final", message.transcript);
     } else if (type === "response.output_audio_transcript.delta") {
-      if (!assistantSpeaking) emit({ type: "response-audio-started" });
+      const responseId = providerId(message.response_id);
+      if (!responseId || responseId !== activeResponseId) return;
+      if (!assistantSpeaking) emit({ type: "response-audio-started", responseId });
       assistantSpeaking = true;
       responseInProgress = true;
-      appendTranscript(message.item_id, "assistant", "partial", message.delta);
+      appendTranscript(message.item_id, "assistant", "partial", message.delta, responseId);
     } else if (type === "response.output_audio_transcript.done") {
-      appendTranscript(message.item_id, "assistant", "final", message.transcript);
+      const responseId = providerId(message.response_id);
+      if (!responseId || responseId !== activeResponseId) return;
+      appendTranscript(message.item_id, "assistant", "final", message.transcript, responseId);
     } else if (type === "response.function_call_arguments.done") {
-      emitToolCall(message.call_id, message.name, message.arguments);
+      emitToolCall(message.response_id, message.item_id, message.call_id, message.name, message.arguments);
     } else if (type === "response.output_item.done") {
       const item = message.item;
-      if (item && typeof item === "object" && !Array.isArray(item) && item.type === "function_call") {
-        emitToolCall(item.call_id, item.name, item.arguments);
+      const responseId = providerId(message.response_id);
+      if (responseId && responseId === activeResponseId && item && typeof item === "object" && !Array.isArray(item) && item.type === "function_call") {
+        emitToolCall(responseId, item.id, item.call_id, item.name, item.arguments);
       }
     } else if (type === "error") {
       const error = message.error && typeof message.error === "object" && !Array.isArray(message.error) ? message.error : {};
@@ -107,18 +138,22 @@
     }
   };
 
-  const appendTranscript = (entryId, speaker, status, text) => {
-    if (typeof entryId !== "string" || !entryId || typeof text !== "string" || !text) return;
-    const previous = transcriptBuffers.get(entryId) || "";
+  const appendTranscript = (itemId, speaker, status, text, responseId) => {
+    if (typeof itemId !== "string" || !itemId || typeof text !== "string" || !text) return;
+    if (speaker === "user" && itemId !== activeInputItemId) return;
+    if (speaker === "assistant" && responseId !== activeResponseId) return;
+    if (closedInputItemIds.has(itemId) || (responseId && closedResponseIds.has(responseId))) return;
+    const previous = transcriptBuffers.get(itemId) || "";
     const value = status === "partial" ? previous + text : text;
     if (new TextEncoder().encode(value).byteLength > MAX_SIGNAL_BYTES) return;
-    transcriptBuffers.set(entryId, value);
-    emit({ type: "transcript", entryId, speaker, status, text: value });
-    if (status === "final") transcriptBuffers.delete(entryId);
+    transcriptBuffers.set(itemId, value);
+    emit({ type: "transcript", entryId: itemId, itemId, ...(responseId ? { responseId } : {}), speaker, status, text: value });
+    if (status === "final") transcriptBuffers.delete(itemId);
   };
 
-  const emitToolCall = (callId, name, args) => {
-    if (typeof callId !== "string" || !callId || typeof name !== "string" || !name || typeof args !== "string" || !args || emittedToolCalls.has(callId)) return;
+  const emitToolCall = (responseId, itemId, callId, name, args) => {
+    if (typeof responseId !== "string" || !responseId || responseId !== activeResponseId || closedResponseIds.has(responseId)) return;
+    if (typeof itemId !== "string" || !itemId || typeof callId !== "string" || !callId || typeof name !== "string" || !name || typeof args !== "string" || !args || emittedToolCalls.has(callId)) return;
     if (new TextEncoder().encode(args).byteLength > MAX_SIGNAL_BYTES) return;
     try {
       const parsed = JSON.parse(args);
@@ -127,8 +162,12 @@
       // Keep the malformed representation visible to the host validator; never execute it as {}.
     }
     emittedToolCalls.add(callId);
-    emit({ type: "tool-call", callId, name, arguments: args });
+    emit({ type: "tool-call", responseId, itemId, callId, name, arguments: args });
   };
+
+  const providerId = (value) => typeof value === "string" && /^[A-Za-z0-9_-]+$/.test(value) ? value : null;
+  const responseIdFromCreated = (message) => message.response && typeof message.response === "object" && !Array.isArray(message.response) ? providerId(message.response.id) : null;
+  const responseIdFromDone = (message) => message.response && typeof message.response === "object" && !Array.isArray(message.response) ? providerId(message.response.id) : null;
 
   const start = async () => {
     if (started || closing) return;

@@ -311,7 +311,10 @@ stops. The renderer owns `getUserMedia`, WebRTC, the data channel, and remote
 audio. It emits only bounded normalized transcripts and tool-call requests; the
 host keeps credentials, builds canonical tools, executes capabilities through
 the Pet Assistant service, and encodes provider-specific results back to
-Realtime. No plugin SDK route or plugin permission exposes this adapter.
+Realtime. Response IDs and input item IDs remain attached through the normalized
+event boundary so delayed events from an interrupted response cannot mutate the
+replacement canonical turn. No plugin SDK route or plugin permission exposes
+this adapter.
 
 #### Generic host voice session and Talk controls (#147, #150)
 

@@ -41,15 +41,15 @@ export type VoiceConversationEvent =
   | { readonly type: "microphone-released" }
   | { readonly type: "negotiating" }
   | { readonly type: "connected" }
-  | { readonly type: "speech-started" }
-  | { readonly type: "speech-stopped" }
-  | { readonly type: "response-started" }
-  | { readonly type: "response-audio-started" }
-  | { readonly type: "response-audio-stopped" }
-  | { readonly type: "response-completed" }
-  | { readonly type: "transcript"; readonly entryId: string; readonly speaker: "user" | "assistant"; readonly status: "partial" | "final"; readonly text: string }
-  | { readonly type: "tool-call"; readonly callId: string; readonly name: string; readonly arguments: string }
-  | { readonly type: "interrupted" }
+  | { readonly type: "speech-started"; readonly itemId: string }
+  | { readonly type: "speech-stopped"; readonly itemId: string }
+  | { readonly type: "response-started"; readonly responseId: string }
+  | { readonly type: "response-audio-started"; readonly responseId: string }
+  | { readonly type: "response-audio-stopped"; readonly responseId: string }
+  | { readonly type: "response-completed"; readonly responseId: string }
+  | { readonly type: "transcript"; readonly entryId: string; readonly itemId: string; readonly responseId?: string; readonly speaker: "user" | "assistant"; readonly status: "partial" | "final"; readonly text: string }
+  | { readonly type: "tool-call"; readonly callId: string; readonly itemId: string; readonly responseId: string; readonly name: string; readonly arguments: string }
+  | { readonly type: "interrupted"; readonly responseId?: string; readonly itemId?: string }
   | { readonly type: "error"; readonly error: unknown }
   | { readonly type: "closed"; readonly reason?: string };
 

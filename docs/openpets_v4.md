@@ -143,9 +143,11 @@ headers are snapshotted once at activation.
 The hidden sandboxed renderer contains OpenAI wire decoding. It emits only
 bounded normalized user/assistant transcript events and completed function-call
 requests. Electron main validates sender, session, generation, identifiers,
-strict object arguments, duplicate state, and payload bounds again. The
-host-owned Pet Assistant service snapshots the current capabilities, builds the
-canonical provider-safe tool names, and executes calls through its
+strict object arguments, duplicate state, and payload bounds again. Provider
+response and input item identifiers remain attached through this boundary; the
+adapter binds them to the active canonical turn and drops retired response/item
+events deterministically. The host-owned Pet Assistant service snapshots the
+current capabilities, builds the canonical provider-safe tool names, and executes calls through its
 generation-pinned capability runtime. Structured completed, unavailable,
 rejected, indeterminate, and explicit missing-information outcomes are returned
 to Realtime and projected into the same Conversation/action/feedback state as
