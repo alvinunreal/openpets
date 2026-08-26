@@ -1,15 +1,14 @@
 import type { PetAssistantService } from "./pet-assistant-service.js";
 import type { HostProviderOperations } from "./provider-service.js";
-import type { VoiceAssistantInput, VoiceAssistantInputOptions, VoiceAssistantInputResult, VoiceAssistantSpeech, VoiceAssistantSynthesizer, VoiceAssistantTurnAdapter, VoiceAssistantTurnResult } from "./voice-assistant-session.js";
+import type { VoiceAssistantInput, VoiceAssistantInputOptions, VoiceAssistantInputResult, VoiceAssistantSpeech, VoiceAssistantSessionLike, VoiceAssistantSynthesizer, VoiceAssistantTurnAdapter, VoiceAssistantTurnResult } from "./voice-assistant-session.js";
 import type { VoiceCaptureService } from "./voice-capture.js";
 import { VoiceListeningService } from "./voice-listening-service.js";
-import { VoiceAssistantSession } from "./voice-assistant-session.js";
 import type { VoiceAssistantSessionEvent } from "./voice-assistant-session.js";
 
 const HOST_RECORDING_DURATION_MS = 10_000;
 
 export type VoiceAssistantHostInstance = {
-  readonly session: VoiceAssistantSession;
+  readonly session: VoiceAssistantSessionLike;
   readonly sessionId?: number;
   shutdown(): Promise<void>;
 };
@@ -29,7 +28,7 @@ export class VoiceAssistantHostController {
     this.#create = create;
   }
 
-  get session(): VoiceAssistantSession | null { return this.#active?.session ?? null; }
+  get session(): VoiceAssistantSessionLike | null { return this.#active?.session ?? null; }
 
   subscribe(listener: (event: VoiceAssistantHostEvent) => void): () => void {
     this.#listeners.add(listener);
@@ -37,7 +36,7 @@ export class VoiceAssistantHostController {
     return () => { this.#listeners.delete(listener); };
   }
 
-  activate(): Promise<VoiceAssistantSession> {
+  activate(): Promise<VoiceAssistantSessionLike> {
     if (this.#stopped) return Promise.reject(new Error("Voice assistant host has stopped."));
     const next = this.#transition.then(async () => {
       if (this.#stopped) throw new Error("Voice assistant host has stopped.");
@@ -65,7 +64,7 @@ export class VoiceAssistantHostController {
     return next;
   }
 
-  toggle(): Promise<VoiceAssistantSession | null> {
+  toggle(): Promise<VoiceAssistantSessionLike | null> {
     if (this.#stopped) return Promise.reject(new Error("Voice assistant host has stopped."));
     const next = this.#transition.then(async () => {
       if (this.#stopped) throw new Error("Voice assistant host has stopped.");

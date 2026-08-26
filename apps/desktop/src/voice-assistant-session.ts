@@ -35,7 +35,7 @@ export type VoiceAssistantSessionEvent =
   | { readonly type: "turn-settled"; readonly sequence: number; readonly turnId: string; readonly outcome: "completed" | "cancelled" | "failed" }
   | { readonly type: "ended"; readonly sequence: number; readonly reason: "ended" | "shutdown" };
 
-type VoiceAssistantSessionEventInput =
+export type VoiceAssistantSessionEventInput =
   | { readonly type: "snapshot"; readonly snapshot: VoiceAssistantSessionSnapshot }
   | Omit<VoiceAssistantTranscriptEvent, "sequence">
   | { readonly type: "error"; readonly scope: VoiceAssistantErrorScope; readonly message: string; readonly turnId?: string }
@@ -44,6 +44,18 @@ type VoiceAssistantSessionEventInput =
   | { readonly type: "ended"; readonly reason: "ended" | "shutdown" };
 
 export type VoiceAssistantSessionListener = (event: VoiceAssistantSessionEvent) => void;
+
+export interface VoiceAssistantSessionLike {
+  snapshot(): VoiceAssistantSessionSnapshot;
+  subscribe(listener: VoiceAssistantSessionListener): () => void;
+  start(): Promise<void>;
+  retry(): Promise<void>;
+  mute(): Promise<void>;
+  unmute(): Promise<void>;
+  interrupt(): Promise<void>;
+  end(): Promise<void>;
+  shutdown(): Promise<void>;
+}
 
 export type VoiceAssistantInputResult =
   | { readonly status: "completed"; readonly final: string }
@@ -137,7 +149,7 @@ type SpeechStage = {
 const DEFAULT_CONVERSATION_ID = "voice-assistant";
 
 /** Host-private batch voice session. No provider wire event crosses this boundary. */
-export class VoiceAssistantSession {
+export class VoiceAssistantSession implements VoiceAssistantSessionLike {
   readonly #options: VoiceAssistantSessionOptions;
   readonly #conversationId: string;
   readonly #turnIdPrefix: string;

@@ -2,7 +2,7 @@
 
 const COMMAND_CHANNEL = "openpets:voice-realtime-command";
 const EVENT_CHANNEL = "openpets:voice-realtime-event";
-const MAX_EVENT_BYTES = 512 * 1024;
+const MAX_EVENT_BYTES = 64 * 1024;
 const commandListeners = new Set();
 
 require("electron").ipcRenderer.on(COMMAND_CHANNEL, (_event, command) => {

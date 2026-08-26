@@ -200,10 +200,18 @@ flows worth holding in memory. Each links to the doc that details it.
   a host-owned temporary session, shows the privacy indicator only after microphone
   acquisition succeeds, transcribes through the configured provider, and cleans up
   on success, cancellation, timeout, teardown, or shutdown. It is never ambient.
-- **Realtime voice foundation.** The host contains a private, one-conversation
-  WebRTC lifecycle with a shared microphone lease, generation-safe cleanup, and
-  OpenAI-only SDP negotiation. It has no UI, tray surface, plugin SDK method,
-  permission, tools, transcripts, memory, or generic TTS integration yet.
+- **Realtime voice adapter.** The host contains an optional optimized OpenAI
+  Realtime adapter over the same Pet Assistant conversation. A hidden sandboxed
+  renderer validates and normalizes provider events; the main process validates
+  them again and routes bounded tool calls through the generation-pinned
+  PetAssistantService seam. Canonical capability outcomes are returned as
+  structured `function_call_output` items followed by `response.create`.
+  Provider response IDs and input item IDs are carried through normalization and
+  bound to the active canonical turn; retired response/item identities are
+  dropped deterministically. Normalized transcripts and canonical activity/action
+  events project into the shared Conversation surface. Provider wire events stop
+  at this adapter; Realtime is not exposed to plugins and does not add memory or
+  local-machine authority.
 - **Configuring an agent.** The CLI or Control Center detects the agent, writes
   MCP config + hooks/rules atomically, and installs a memory/instructions file.
   OpenClaw is the separate native-plugin path: its status is read from the
@@ -236,7 +244,7 @@ These hold everywhere; the rest of the docs assume them.
   explicitly cancellable, visibly indicated while a media track is live, and
   bounded by separate microphone-acquisition and transcription timeouts.
 - **Voice resource ownership is centralized.** Assistant, plugin one-shot, and
-  private Realtime lanes release their own leases/tracks; only the shared voice
+  native Realtime lanes release their own leases/tracks; only the shared voice
   resource owner destroys the privacy indicator after every lane has stopped.
 - **Pet Assistant lifecycle is bounded.** The host loop is stopped and active
   turns are cancelled before plugin teardown; capability handles remain pinned

@@ -18,6 +18,10 @@ import type { PetAssistantModalityCoordinator } from "./pet-assistant-modality.j
 import { getVoiceAssistantShortcutSnapshot } from "./voice-assistant-shortcut.js";
 import type { VoiceAssistantShortcutSnapshot } from "./voice-assistant-shortcut.js";
 import { shutdownVoiceAssistantResources, shutdownVoiceAssistantWithCleanup } from "./voice-assistant-host-cleanup.js";
+import { getPluginPlatformSettings } from "./plugin-platform-settings.js";
+import { createElectronVoiceRealtimeTransportFactory } from "./voice-realtime-electron.js";
+import { OpenAIRealtimeVoiceAssistantSession } from "./voice-realtime-assistant.js";
+import { getSharedVoicePrivacyIndicator } from "./plugin-voice.js";
 
 export type VoiceAssistantHostOptions = {
   readonly sessionId: number;
@@ -47,7 +51,7 @@ export type VoiceAssistantTalkEvent = (Exclude<VoiceAssistantHostEvent, { readon
 export class VoiceAssistantHost {
   readonly sessionId: number;
   readonly #player: PetWindowVoicePlayer;
-  readonly #session: VoiceAssistantSession;
+  readonly #session: import("./voice-assistant-session.js").VoiceAssistantSessionLike;
   readonly #unsubscribeSession: () => void;
   readonly #feedbackReducer?: PetAssistantFeedbackReducer;
   readonly #conversationController = getPetAssistantConversationController();
@@ -59,16 +63,30 @@ export class VoiceAssistantHost {
     const adapter = new PetAssistantVoiceAdapter(options.assistant);
     const synthesizer = new ProviderVoiceSynthesizer(options.provider);
     this.#player = new PetWindowVoicePlayer();
-    this.#session = new VoiceAssistantSession({
-      conversationId: PET_ASSISTANT_CONVERSATION_ID,
-      turnIdPrefix: `voice-session-${options.sessionId}`,
-      microphoneArbiter: options.microphoneArbiter ?? getSharedVoiceMicrophoneArbiter(),
-      input,
-      assistant: adapter,
-      synthesizer,
-      player: this.#player,
-      modalityCoordinator: options.modalityCoordinator ?? getPetAssistantModalityCoordinator(),
-    });
+    const microphoneArbiter = options.microphoneArbiter ?? getSharedVoiceMicrophoneArbiter();
+    const modalityCoordinator = options.modalityCoordinator ?? getPetAssistantModalityCoordinator();
+    this.#session = isNativeRealtimeSelected()
+      ? new OpenAIRealtimeVoiceAssistantSession({
+        provider: options.provider,
+        assistant: options.assistant,
+        microphoneArbiter,
+        privacyIndicator: getSharedVoicePrivacyIndicator(),
+        modalityCoordinator,
+        transportFactory: (provider) => createElectronVoiceRealtimeTransportFactory({
+          negotiate: (sdp, session, signal) => options.provider.negotiateRealtime(provider, sdp, session, signal),
+        }),
+        turnIdPrefix: `voice-session-${options.sessionId}`,
+      })
+      : new VoiceAssistantSession({
+        conversationId: PET_ASSISTANT_CONVERSATION_ID,
+        turnIdPrefix: `voice-session-${options.sessionId}`,
+        microphoneArbiter,
+        input,
+        assistant: adapter,
+        synthesizer,
+        player: this.#player,
+        modalityCoordinator,
+      });
     this.#unsubscribeSession = this.#session.subscribe((event) => {
       this.#feedbackReducer?.applyVoiceEvent(event);
       if (event.type === "transcript") {
@@ -86,7 +104,7 @@ export class VoiceAssistantHost {
     });
   }
 
-  get session(): VoiceAssistantSession { return this.#session; }
+  get session(): import("./voice-assistant-session.js").VoiceAssistantSessionLike { return this.#session; }
 
   async shutdown(): Promise<void> {
     await shutdownVoiceAssistantResources(
@@ -120,6 +138,12 @@ export function startVoiceAssistantHost(provider: HostProviderOperations, assist
   for (const listener of voiceEventListeners) voiceEventUnsubscribers.set(listener, activeHost.subscribe((event) => listener(addShortcutToEvent(event))));
   info("app", "Voice assistant host ready");
   return activeHost;
+}
+
+function isNativeRealtimeSelected(): boolean {
+  const settings = getPluginPlatformSettings();
+  const selected = settings.selections.text;
+  return selected !== null && settings.profiles[selected]?.adapter === "openai-realtime";
 }
 
 export function stopVoiceAssistantHost(): Promise<void> {

@@ -96,7 +96,7 @@ let settingsPath: string | null = null;
 let cached: PluginPlatformSettings = defaultPluginPlatformSettings;
 
 export const providerPresets = Object.freeze([
-  { id: "openai", label: "OpenAI", adapter: "openai-realtime" as const, model: "gpt-4o-mini", baseUrl: "https://api.openai.com/v1", credentialMode: "required" as const },
+  { id: "openai", label: "OpenAI", adapter: "openai-realtime" as const, model: "gpt-realtime-2.1", baseUrl: "https://api.openai.com/v1", credentialMode: "required" as const },
   { id: "anthropic", label: "Anthropic", adapter: "anthropic-text" as const, model: "claude-haiku-4-5-20251001", baseUrl: "https://api.anthropic.com", credentialMode: "required" as const },
   { id: "ollama", label: "Ollama", adapter: "openai-compatible-text" as const, model: "llama3.2", baseUrl: "http://127.0.0.1:11434/v1", credentialMode: "none" as const },
   { id: "lm-studio", label: "LM Studio", adapter: "openai-compatible-text" as const, model: "local-model", baseUrl: "http://127.0.0.1:1234/v1", credentialMode: "none" as const },

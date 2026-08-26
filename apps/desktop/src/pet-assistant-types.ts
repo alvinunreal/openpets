@@ -121,6 +121,22 @@ export type PetAssistantTurnOptions = {
   readonly turnId?: string;
 };
 
+export type PetAssistantRealtimeSession = {
+  readonly tools: readonly PetAssistantTool[];
+  readonly instructions: string;
+  beginTurn(turnId: string, signal: AbortSignal): PetAssistantRealtimeTurn;
+  close(): Promise<void>;
+};
+
+export type PetAssistantRealtimeTurn = {
+  readonly turnId: string;
+  recordTranscript(role: "user" | "assistant", text: string): void;
+  recordToolCall(call: PetAssistantToolCall): void;
+  executeToolCall(call: PetAssistantToolCall, signal: AbortSignal): Promise<PetAssistantToolResult>;
+  complete(response?: string): PetAssistantTurnResult;
+  cancel(): Promise<PetAssistantTurnResult>;
+};
+
 export type PetAssistantTranscriptMessage = {
   readonly conversationId: string;
   readonly turnId: string;

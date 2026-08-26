@@ -117,20 +117,47 @@ pet slot so cleanup does not erase unrelated plugin display state.
 
 An activation owns one session and its microphone reservation. Ending releases
 that reservation; a later activation creates a fresh session. Assistant,
-plugin one-shot, and private Realtime lanes release only their own work. A
+plugin one-shot and native Realtime lane release only their own work. A
 shared host resource owner destroys the privacy indicator only after all lanes
 have stopped. #150 adds activation controls and the shared Conversation
-projection hookup without changing provider protocol or Realtime behavior;
+projection hookup while keeping provider authority host-owned;
 retained history is host-owned, owner-deletable in the Control Center, and
 remains separate from the active projection.
 
-The current #138/#146/#145 implementation has no chat surface or editable
+The current implementation has a shared Conversation surface but no editable
 sensitive-action confirmation surface. #149 provides host-side
 transcript/history persistence and its Control Center local-history surface.
 The Control Center already provides editable provider
 profiles and communication preferences on the host. Conversation surfaces stay
 on top of the host contract rather than moving provider or capability authority
 into plugins.
+
+### #139 optional OpenAI Realtime adapter
+
+The native `openai-realtime` text profile selects an optimized Realtime path for
+the existing Talk surface. It is optional: all other provider selections keep
+the generic STT -> Pet Assistant -> TTS path, and no fourth provider role is
+introduced. The provider profile model, credential, endpoint, and allowed
+headers are snapshotted once at activation.
+
+The hidden sandboxed renderer contains OpenAI wire decoding. It emits only
+bounded normalized user/assistant transcript events and completed function-call
+requests. Electron main validates sender, session, generation, identifiers,
+strict object arguments, duplicate state, and payload bounds again. Provider
+response and input item identifiers remain attached through this boundary; the
+adapter binds them to the active canonical turn and drops retired response/item
+events deterministically. The host-owned Pet Assistant service snapshots the
+current capabilities, builds the canonical provider-safe tool names, and executes calls through its
+generation-pinned capability runtime. Structured completed, unavailable,
+rejected, indeterminate, and explicit missing-information outcomes are returned
+to Realtime and projected into the same Conversation/action/feedback state as
+typed and generic voice turns.
+
+Closing, interruption, renderer loss, provider failure, plugin reload/disable,
+and generation replacement reject late events. A side-effecting invocation
+that cannot produce a trustworthy result remains indeterminate and is not
+blindly retried. Realtime is not a plugin API, does not expose filesystem or
+shell access, and does not add semantic memory.
 
 ## v4 outcomes
 

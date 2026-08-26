@@ -54,6 +54,7 @@ const behaviorTests = [
   ".test-dist/tests/voice-bridge.test.js",
   ".test-dist/tests/voice-lifecycle.test.js",
   ".test-dist/tests/voice-conversation.test.js",
+  ".test-dist/tests/voice-realtime-assistant.test.js",
   ".test-dist/tests/voice-assistant-session.test.js",
   ".test-dist/tests/renderer-conversation-voice-state.test.js",
   ".test-dist/tests/renderer-conversation-history-state.test.js",

@@ -17,6 +17,8 @@ import {
   type PetAssistantToolResult,
   type PetAssistantTurnOptions,
   type PetAssistantTurnResult,
+  type PetAssistantRealtimeSession,
+  type PetAssistantRealtimeTurn,
 } from "./pet-assistant-types.js";
 import { randomUUID } from "node:crypto";
 import { buildPetAssistantTools, type PetAssistantToolSet } from "./pet-assistant-tools.js";
@@ -52,6 +54,27 @@ type ActiveTurn = {
   model: PetAssistantTextModel;
 };
 
+type RealtimeTurnState = {
+  readonly turnId: string;
+  readonly archiveTurnId: string;
+  readonly controller: AbortController;
+  readonly terminal: { value?: PetAssistantTurnResult };
+  readonly toolSet: PetAssistantToolSet;
+  readonly messages: PetAssistantMessage[];
+  readonly seenToolCallIds: Set<string>;
+  invocationStarted: boolean;
+  activeToolName?: string;
+  activeCall?: PetAssistantToolCall;
+  closePromise: Promise<PetAssistantTurnResult> | null;
+};
+
+type CapabilityExecutionState = {
+  readonly terminal: { value?: PetAssistantTurnResult };
+  invocationStarted: boolean;
+  activeToolName?: string;
+  activeCall?: PetAssistantToolCall;
+};
+
 const cancelledError = new Error("Pet Assistant turn cancelled.");
 
 export class PetAssistantService {
@@ -67,6 +90,8 @@ export class PetAssistantService {
   #nextTurn = 1;
   #nextSequence = 1;
   #stopped = false;
+  readonly #realtimeTurns = new Map<string, RealtimeTurnState>();
+  readonly #realtimePromises = new Set<Promise<unknown>>();
 
   constructor(model: PetAssistantTextModel, runtime: PetAssistantCapabilityRuntime, options: PetAssistantServiceOptions = {}) {
     this.#model = model;
@@ -116,8 +141,114 @@ export class PetAssistantService {
       this.#stopped = true;
       this.#emit({ type: "lifecycle", sequence: 0, lifecycle: "closing" });
       for (const active of this.#active.values()) active.controller.abort();
+      for (const turn of this.#realtimeTurns.values()) turn.controller.abort();
     }
-    await Promise.allSettled([...this.#active.values()].map((active) => active.promise).filter((promise): promise is Promise<PetAssistantTurnResult> => promise !== undefined));
+    await Promise.allSettled([
+      ...[...this.#active.values()].map((active) => active.promise).filter((promise): promise is Promise<PetAssistantTurnResult> => promise !== undefined),
+      ...this.#realtimePromises,
+    ]);
+  }
+
+  /** Snapshot provider-safe capabilities and expose only host-owned execution. */
+  async openRealtimeSession(signal: AbortSignal = new AbortController().signal): Promise<PetAssistantRealtimeSession> {
+    if (this.#stopped) throw new Error("Pet Assistant service is stopped.");
+    const snapshot = await waitFor(this.#runtime.snapshot(signal), signal);
+    const toolSet = buildPetAssistantTools(snapshot);
+    const instructions = composeHostSystemPrompt(this.#compositionProvider());
+    let closed = false;
+    const turns = new Set<RealtimeTurnState>();
+    const session: PetAssistantRealtimeSession = {
+      tools: toolSet.tools,
+      instructions,
+      beginTurn: (turnId, turnSignal) => {
+        if (closed) throw new Error("Pet Assistant realtime session is closed.");
+        const normalizedTurnId = validateTurnId(turnId);
+        if (this.#realtimeTurns.has(normalizedTurnId) || this.#active.has(PET_ASSISTANT_CONVERSATION_ID)) {
+          throw new Error(`Conversation ${PET_ASSISTANT_CONVERSATION_ID} already has an active turn.`);
+        }
+        const controller = new AbortController();
+        const abort = () => controller.abort();
+        if (turnSignal.aborted) controller.abort();
+        else turnSignal.addEventListener("abort", abort, { once: true });
+        const state: RealtimeTurnState = {
+          turnId: normalizedTurnId,
+          archiveTurnId: randomUUID(),
+          controller,
+          terminal: {},
+          toolSet,
+          messages: [],
+          seenToolCallIds: new Set(),
+          invocationStarted: false,
+          closePromise: null,
+        };
+        turns.add(state);
+        this.#realtimeTurns.set(PET_ASSISTANT_CONVERSATION_ID, state);
+        this.#emit({ type: "lifecycle", sequence: 0, lifecycle: "opening", conversationId: PET_ASSISTANT_CONVERSATION_ID, turnId: normalizedTurnId });
+        const finish = (result: PetAssistantTurnResult): PetAssistantTurnResult => this.#finishRealtimeTurn(state, result, () => {
+          turnSignal.removeEventListener("abort", abort);
+          turns.delete(state);
+          if (this.#realtimeTurns.get(PET_ASSISTANT_CONVERSATION_ID) === state) this.#realtimeTurns.delete(PET_ASSISTANT_CONVERSATION_ID);
+        });
+        const turn: PetAssistantRealtimeTurn = {
+          turnId: normalizedTurnId,
+          recordTranscript: (role, text) => {
+            if (state.terminal.value || !this.#isCurrentRealtimeTurn(state) || text.trim() === "") return;
+            if (byteLength(text) > this.#limits.maxMessageBytes) throw new Error("Realtime transcript is too large.");
+            const message: PetAssistantMessage = deepFreeze({ role, content: text });
+            state.messages.push(message);
+            this.#emitTranscript(PET_ASSISTANT_CONVERSATION_ID, normalizedTurnId, message);
+          },
+          recordToolCall: (call) => {
+            if (state.terminal.value || !this.#isCurrentRealtimeTurn(state)) return;
+            if (!validateRealtimeToolCall(call, this.#limits, state.seenToolCallIds)) throw new Error("Realtime tool call is invalid.");
+            const message: PetAssistantMessage = deepFreeze({ role: "assistant", toolCalls: [cloneToolCall(call)] });
+            state.messages.push(message);
+            this.#emitTranscript(PET_ASSISTANT_CONVERSATION_ID, normalizedTurnId, message);
+            this.#emitActivity(PET_ASSISTANT_CONVERSATION_ID, normalizedTurnId, "acting", call.name);
+          },
+          executeToolCall: (call, callSignal) => {
+            if (state.terminal.value || !this.#isCurrentRealtimeTurn(state)) return Promise.resolve(deepFreeze({ status: "indeterminate", reason: "Capability result was not available." }));
+            if (!state.seenToolCallIds.has(call.id) && !validateRealtimeToolCall(call, this.#limits, state.seenToolCallIds)) {
+              return Promise.resolve(deepFreeze({ status: "rejected", reason: "Tool-call arguments are malformed." }));
+            }
+            const executionSignal = combineAbortSignals(state.controller.signal, callSignal);
+            const operation = this.#executeCall(toolSet, call, state, executionSignal)
+              .then((result) => {
+                if (state.terminal.value || !this.#isCurrentRealtimeTurn(state)) return deepFreeze({ status: "indeterminate", reason: "Capability result arrived after the turn ended." });
+                const message: PetAssistantMessage = deepFreeze({ role: "tool", toolCallId: call.id, name: call.name, result });
+                state.messages.push(message);
+                this.#emitTranscript(PET_ASSISTANT_CONVERSATION_ID, normalizedTurnId, message);
+                this.#emitActivity(PET_ASSISTANT_CONVERSATION_ID, normalizedTurnId, "thinking");
+                return result;
+              });
+            this.#realtimePromises.add(operation);
+            void operation.finally(() => this.#realtimePromises.delete(operation));
+            return operation;
+          },
+          complete: (response) => finish({ conversationId: PET_ASSISTANT_CONVERSATION_ID, turnId: normalizedTurnId, status: "completed", ...(response === undefined ? {} : { response }) }),
+          cancel: () => {
+            state.controller.abort();
+            if (!state.closePromise) state.closePromise = Promise.resolve(finish({ conversationId: PET_ASSISTANT_CONVERSATION_ID, turnId: normalizedTurnId, status: "cancelled", error: state.invocationStarted ? "Pet Assistant turn cancelled after capability invocation started." : cancelledError.message }));
+            return state.closePromise;
+          },
+        };
+        return turn;
+      },
+      close: async () => {
+        closed = true;
+        await Promise.all([...turns].map((turn) => {
+          turn.controller.abort();
+          if (turn.closePromise) return turn.closePromise;
+          const result = this.#finishRealtimeTurn(turn, { conversationId: PET_ASSISTANT_CONVERSATION_ID, turnId: turn.turnId, status: "cancelled", error: turn.invocationStarted ? "Pet Assistant turn cancelled after capability invocation started." : cancelledError.message }, () => {
+            turns.delete(turn);
+            if (this.#realtimeTurns.get(PET_ASSISTANT_CONVERSATION_ID) === turn) this.#realtimeTurns.delete(PET_ASSISTANT_CONVERSATION_ID);
+          });
+          turn.closePromise = Promise.resolve(result);
+          return turn.closePromise;
+        }));
+      },
+    };
+    return session;
   }
 
   clearConversation(conversationId: string): void {
@@ -287,7 +418,7 @@ export class PetAssistantService {
     }
   }
 
-  async #executeCall(toolSet: PetAssistantToolSet, call: PetAssistantToolCall, active: ActiveTurn, signal: AbortSignal): Promise<PetAssistantToolResult> {
+  async #executeCall(toolSet: PetAssistantToolSet, call: PetAssistantToolCall, active: CapabilityExecutionState, signal: AbortSignal): Promise<PetAssistantToolResult> {
     const target = toolSet.targetsByName.get(call.name);
     if (!target) return deepFreeze({ status: "unavailable", reason: "Capability is unavailable." });
     if (!isPlainObject(call.arguments)) return deepFreeze({ status: "rejected", reason: "Capability arguments must be an object." });
@@ -314,6 +445,27 @@ export class PetAssistantService {
       active.activeToolName = undefined;
       active.activeCall = undefined;
     }
+  }
+
+  #finishRealtimeTurn(state: RealtimeTurnState, result: PetAssistantTurnResult, cleanup: () => void): PetAssistantTurnResult {
+    if (state.terminal.value) return state.terminal.value;
+    const outcomes = state.messages
+      .filter((message): message is Extract<PetAssistantMessage, { readonly role: "tool" }> => message.role === "tool")
+      .map((message): PetAssistantToolOutcome => ({ id: message.toolCallId, name: message.name, result: message.result }));
+    const summary = summarizeCapabilityOutcomes(outcomes);
+    const terminalResult = outcomes.length > 0 ? { ...result, ...(summary === undefined ? {} : { response: summary }), toolOutcomes: outcomes } : result;
+    if (terminalResult.status === "completed" && state.messages.length > 0) this.#commit(PET_ASSISTANT_CONVERSATION_ID, state.archiveTurnId, state.messages);
+    this.#archiveTerminalText(PET_ASSISTANT_CONVERSATION_ID, state.archiveTurnId, terminalResult, state.messages);
+    state.terminal.value = freezeEvent(terminalResult);
+    if (result.status === "cancelled") this.#emitActivity(PET_ASSISTANT_CONVERSATION_ID, state.turnId, "cancelled", state.activeToolName);
+    this.#emit({ type: "lifecycle", sequence: 0, lifecycle: "idle", conversationId: PET_ASSISTANT_CONVERSATION_ID, turnId: state.turnId });
+    this.#emit({ type: "terminal", sequence: 0, result: state.terminal.value });
+    cleanup();
+    return state.terminal.value;
+  }
+
+  #isCurrentRealtimeTurn(state: RealtimeTurnState): boolean {
+    return !this.#stopped && this.#realtimeTurns.get(PET_ASSISTANT_CONVERSATION_ID) === state && !state.terminal.value;
   }
 
   #commit(conversationId: string, archiveTurnId: string, messages: readonly PetAssistantMessage[]): void {
@@ -523,6 +675,33 @@ function safeError(error: unknown): string {
 function validateTurnId(value: string): string {
   if (typeof value !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(value)) throw new Error("Assistant turn id is invalid.");
   return value;
+}
+
+function validateRealtimeToolCall(call: PetAssistantToolCall, limits: PetAssistantLimits, seen: Set<string>): boolean {
+  if (!call || typeof call.id !== "string" || call.id.trim() === "" || seen.has(call.id) || byteLength(call.id) > limits.maxToolCallIdBytes) return false;
+  if (typeof call.name !== "string" || call.name.trim() === "" || byteLength(call.name) > limits.maxToolNameBytes) return false;
+  if (!isStrictJsonValue(call.arguments) || !isPlainObject(call.arguments)) return false;
+  try {
+    if (jsonByteLength(call.arguments) > limits.maxMessageBytes) return false;
+  } catch {
+    return false;
+  }
+  seen.add(call.id);
+  return true;
+}
+
+function cloneToolCall(call: PetAssistantToolCall): PetAssistantToolCall {
+  return deepFreeze({ id: call.id, name: call.name, arguments: cloneAndFreeze(call.arguments) });
+}
+
+function combineAbortSignals(...signals: readonly AbortSignal[]): AbortSignal {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  for (const signal of signals) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener("abort", abort, { once: true });
+  }
+  return controller.signal;
 }
 
 function deepFreeze<T>(value: T): T {
