@@ -4,6 +4,8 @@ import { delimiter, join, resolve } from "node:path";
 
 import { getAppStateSnapshot, initializeAppState, releaseStartupInstallLock } from "./app-state.js";
 import { createAppIcon } from "./assets.js";
+import { summarizeLegacyCodexV2MigrationSkips } from "./codex-pet-migration.js";
+import { migrateLegacyCodexV2ImportsAtStartup } from "./codex-pets.js";
 import { setLocaleFromPreference } from "./i18n/index.js";
 import { applyExternalPetReaction, applyExternalPetSay, getDefaultPetPaused, installDefaultPetDisplayHandlers, isDefaultPetVisible, shouldOpenDefaultPetOnLaunch, showDefaultPet } from "./default-pet-controller.js";
 import { installAppLifecycle } from "./lifecycle.js";
@@ -102,6 +104,19 @@ if (!gotSingleInstanceLock) {
     }
 
     initializeAppState();
+    try {
+      const migration = await migrateLegacyCodexV2ImportsAtStartup();
+      info("state", "Codex V2 import metadata migration completed", {
+        repaired: migration.repaired,
+        skipped: migration.skipped,
+        entries: migration.entries,
+        skipReasons: summarizeLegacyCodexV2MigrationSkips(migration),
+      });
+    } catch (migrationError) {
+      warn("state", "Codex V2 import metadata migration unavailable; continuing startup", {
+        error: migrationError instanceof Error ? migrationError.message : String(migrationError),
+      });
+    }
     initializeVoiceAssistantShortcut(globalShortcut, () => {
       void import("./voice-assistant-host.js").then(({ toggleVoiceAssistant }) => toggleVoiceAssistant()).catch((error: unknown) => logError("app", "voice shortcut toggle failed", error));
     }, getAppStateSnapshot().preferences.voiceAssistantShortcut);

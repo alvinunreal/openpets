@@ -11,10 +11,12 @@ import { applyRoamingToAllPets } from "./pet-roaming-controller.js";
 import { createAppIcon } from "./assets.js";
 import { getCatalogPageUiState, getCatalogSearchUiState, getCatalogUiState } from "./catalog.js";
 import { getCodexPetsUiState, importCodexPet, readCodexPetSpritesheet } from "./codex-pets.js";
+import { codexV1SpriteLayout, type CodexPetSpriteLayout } from "./codex-pets-core.js";
 import { setConfinementEnabled } from "./confinement-manager.js";
 import { setCrossDisplayRoamingEnabled } from "./display.js";
 import { getActiveLocale, getActiveMessages, LOCALE_LABELS, SUPPORTED_LOCALES, setLocaleFromPreference, t, type Locale, type LocalePreference } from "./i18n/index.js";
 import { recoverDefaultPetMouseInterop, refreshDefaultPetContent, resetDefaultPetToInitialPosition } from "./default-pet-controller.js";
+import { readInstalledPetSpriteLayout } from "./installed-pet-layout.js";
 import { getLanStatusSnapshot } from "./lan-controller.js";
 import { validatePreferencePatch } from "./preference-patch.js";
 import { installPet, installPetFromFolder, installPetFromZipFile, removePet, setDefaultInstalledPet } from "./pet-installation.js";
@@ -103,9 +105,20 @@ function syncDockVisibilityForInternalUi(): void {
   }
 }
 
-function getPetsStateSnapshot(): { preferences: { defaultPetId: string }; pets: ReturnType<typeof getAppStateSnapshot>["pets"] } {
+async function getPetsStateSnapshot(): Promise<{
+  preferences: { defaultPetId: string };
+  pets: { installed: ReadonlyArray<ReturnType<typeof getAppStateSnapshot>["pets"]["installed"][number] & { readonly spriteLayout?: CodexPetSpriteLayout }> };
+}> {
   const state = getAppStateSnapshot();
-  return { preferences: { defaultPetId: state.preferences.defaultPetId }, pets: state.pets };
+  const installed = await Promise.all(state.pets.installed.map(async (pet) => {
+    if (pet.builtIn) return { ...pet, spriteLayout: codexV1SpriteLayout };
+    try {
+      return { ...pet, spriteLayout: await readInstalledPetSpriteLayout(pet.id) };
+    } catch {
+      return pet;
+    }
+  }));
+  return { preferences: { defaultPetId: state.preferences.defaultPetId }, pets: { installed } };
 }
 
 function getSettingsStateSnapshot(): {
@@ -154,7 +167,7 @@ function getI18nSnapshot(): {
 }
 
 async function getDashboardSnapshot(): Promise<{
-  readonly defaultPet: { readonly id: string; readonly displayName: string; readonly previewSpriteUrl: string };
+  readonly defaultPet: { readonly id: string; readonly displayName: string; readonly previewSpriteUrl: string; readonly spriteLayout: CodexPetSpriteLayout };
   readonly installedPetCount: number;
   readonly catalog: { readonly source: string; readonly total?: number; readonly page?: number; readonly pageCount?: number; readonly error?: string };
   readonly plugins: { readonly installed: number; readonly enabled: number; readonly broken: number };
@@ -178,6 +191,7 @@ async function getDashboardSnapshot(): Promise<{
       id: defaultPet?.id ?? state.preferences.defaultPetId,
       displayName: defaultPet?.displayName ?? "OpenPets",
       previewSpriteUrl: `openpets-pet-preview://spritesheet/default?v=${encodeURIComponent(preview.version)}`,
+      spriteLayout: preview.spriteLayout,
     },
     installedPetCount: state.pets.installed.length,
     catalog: {
@@ -1094,7 +1108,7 @@ async function getReactionAnimationSettingsSnapshot(): Promise<unknown> {
       label: t(`settings.animation.${animation.id}.label`),
       description: t(`settings.animation.${animation.id}.description`),
     })),
-    sprite: { ...defaultPetSprite, states: getConfiguredSpriteStates(state.preferences.waitingAnimationDurationMs) },
+    sprite: { ...defaultPetSprite, ...preview.spriteLayout, states: getConfiguredSpriteStates(state.preferences.waitingAnimationDurationMs) },
     waitingAnimationDurationMs: state.preferences.waitingAnimationDurationMs,
     waitingAnimationDurationOptions: waitingAnimationDurationOptions.map((option) => ({
       value: option.value,
@@ -1107,23 +1121,25 @@ async function getReactionAnimationSettingsSnapshot(): Promise<unknown> {
   };
 }
 
-async function getDefaultPetPreviewSpriteInfo(): Promise<{ readonly path: string; readonly version: string }> {
+async function getDefaultPetPreviewSpriteInfo(): Promise<{ readonly path: string; readonly version: string; readonly spriteLayout: CodexPetSpriteLayout }> {
   const state = getAppStateSnapshot();
   const selected = state.pets.installed.find((pet) => pet.id === state.preferences.defaultPetId);
   const builtInPath = join(app.getAppPath(), "assets", defaultPetSprite.fileName);
-  const candidatePath = selected && !selected.broken && !selected.builtIn
+  const usesInstalledCandidate = Boolean(selected && !selected.broken && !selected.builtIn);
+  const candidatePath = usesInstalledCandidate && selected
     ? join(getInstalledPetDir(selected.id), "spritesheet.webp")
     : builtInPath;
   try {
     const spritesheet = await stat(candidatePath);
     if (spritesheet.isFile() && spritesheet.size > 0 && spritesheet.size <= 100 * 1024 * 1024) {
-      return { path: candidatePath, version: `${selected?.id ?? "builtin"}-${Math.round(spritesheet.mtimeMs)}-${spritesheet.size}` };
+      const spriteLayout = usesInstalledCandidate && selected ? await readInstalledPetSpriteLayout(selected.id) : codexV1SpriteLayout;
+      return { path: candidatePath, version: `${usesInstalledCandidate && selected ? selected.id : "builtin"}-${Math.round(spritesheet.mtimeMs)}-${spritesheet.size}`, spriteLayout };
     }
   } catch {
     // Fall back to the bundled pet if an installed default disappears while Settings is open.
   }
   const fallback = await stat(builtInPath);
-  return { path: builtInPath, version: `builtin-${Math.round(fallback.mtimeMs)}-${fallback.size}` };
+  return { path: builtInPath, version: `builtin-${Math.round(fallback.mtimeMs)}-${fallback.size}`, spriteLayout: codexV1SpriteLayout };
 }
 
 function getLaunchAtLoginState(): { supported: boolean; enabled: boolean } {

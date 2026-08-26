@@ -5,7 +5,8 @@ import { basename, join, resolve, sep } from "node:path";
 import sharp from "sharp";
 
 import { getAppStateSnapshot, installPetState, type OpenPetsStateV1 } from "./app-state.js";
-import { maxCodexPetJsonBytes, maxCodexPets, maxCodexSpritesheetBytes, maxCodexThumbnailSourceBytes, validateCodexPetMetadata, validateCodexPetSpritesheet, type CodexPetMetadata } from "./codex-pets-core.js";
+import { migrateLegacyCodexV2Imports, type LegacyCodexV2MigrationResult } from "./codex-pet-migration.js";
+import { getCodexPetSpriteLayout, maxCodexPetJsonBytes, maxCodexPets, maxCodexSpritesheetBytes, maxCodexThumbnailSourceBytes, validateCodexPetMetadata, validateCodexPetSpritesheet, type CodexPetMetadata, type CodexPetSpriteLayout } from "./codex-pets-core.js";
 import { readBoundedRegularFile } from "./pet-file-safety.js";
 import { withPetOperation } from "./pet-installation.js";
 import { assertInsideRoot, assertSafePetId, getInstalledPetDir, getPetsRoot } from "./pet-paths.js";
@@ -25,6 +26,14 @@ export interface CodexPetUiItem {
   readonly description: string;
   readonly preview: string;
   readonly spritesheet: string;
+  readonly spriteLayout: CodexPetSpriteLayout;
+}
+
+export async function migrateLegacyCodexV2ImportsAtStartup(): Promise<LegacyCodexV2MigrationResult> {
+  return migrateLegacyCodexV2Imports(getAppStateSnapshot().pets.installed, {
+    codexPetsRoot,
+    installedPetsRoot: getPetsRoot(),
+  });
 }
 
 export async function getCodexPetsUiState(): Promise<CodexPetUiState> {
@@ -104,13 +113,15 @@ async function tryReadCodexPet(root: string, dir: string, folderName: string): P
     const metadata = await readCodexPetMetadata(root, dir, folderName);
     const spritesheetPath = join(dir, metadata.spritesheetPath);
     await validateSpritesheet(spritesheetPath, metadata);
-    const preview = await createCodexThumbnailDataUrl(spritesheetPath);
+    const spriteLayout = getCodexPetSpriteLayout(metadata);
+    const preview = await createCodexThumbnailDataUrl(spritesheetPath, spriteLayout);
     return {
       id: metadata.id,
       displayName: metadata.displayName,
       description: metadata.description,
       preview,
       spritesheet: `openpets-codex://spritesheet/${encodeURIComponent(metadata.id)}`,
+      spriteLayout,
     };
   } catch (error) {
     console.error(`Skipping invalid Codex pet at ${dir}.`, error);
@@ -142,20 +153,21 @@ async function validateSpritesheet(path: string, metadata: CodexPetMetadata): Pr
   await validateCodexPetSpritesheet(await readBoundedRegularFile(path, maxCodexSpritesheetBytes, "spritesheet.webp"), metadata);
 }
 
-async function createCodexThumbnailDataUrl(path: string): Promise<string> {
+async function createCodexThumbnailDataUrl(path: string, spriteLayout: CodexPetSpriteLayout): Promise<string> {
   const stats = await lstat(path);
   if (stats.isSymbolicLink() || !stats.isFile() || stats.size <= 0 || stats.size > maxCodexThumbnailSourceBytes) return "";
-  const cacheKey = `${path}:${stats.size}:${stats.mtimeMs}`;
+  const cacheKey = `${path}:v${spriteLayout.version}:${stats.size}:${stats.mtimeMs}`;
   const cached = codexThumbnailCache.get(cacheKey);
   if (cached !== undefined) return cached;
 
   const image = sharp(path, { limitInputPixels: 50_000_000 });
   const metadata = await image.metadata();
   if (!metadata.width || !metadata.height) return "";
-  const width = Math.min(192, metadata.width);
-  const height = Math.min(208, metadata.height);
+  const width = Math.min(spriteLayout.frameWidth, metadata.width);
+  const height = Math.min(spriteLayout.frameHeight, metadata.height);
+  const left = spriteLayout.neutralPose ? spriteLayout.neutralPose.column * spriteLayout.frameWidth : 0;
   const thumbnail = await sharp(path, { limitInputPixels: 50_000_000 })
-    .extract({ left: 0, top: 0, width, height })
+    .extract({ left, top: 0, width, height })
     .resize(54, 58, { fit: "fill" })
     .png()
     .toBuffer();
