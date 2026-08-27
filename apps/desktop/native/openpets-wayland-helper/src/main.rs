@@ -690,7 +690,10 @@ impl App {
         let (x, y) = self.position;
         let left = x - ox;
         let bottom = (oy + oh) - (y + self.height as i32);
-        self.layer.set_margin(0, 0, bottom.max(0), left.max(0));
+        // Negative margins are allowed so the pet can be dragged partly off the
+        // output edges (mirrors the X11 behaviour); the compositor clamps the
+        // surface at the edges if it does not support off-screen placement.
+        self.layer.set_margin(0, 0, bottom, left);
         // `set_margin` only stages pending state — commit so the reposition
         // takes effect immediately (otherwise the surface only moves on the
         // next frame-stream commit, which stalls during a drag).
