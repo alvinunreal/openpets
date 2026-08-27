@@ -72,6 +72,13 @@ const allowWayland = process.env.OPENPETS_ALLOW_WAYLAND === "1";
 // frame production. Force software rendering to keep the frame stream stable.
 if (isLinux && process.env.OPENPETS_NATIVE_WAYLAND === "1") {
   app.disableHardwareAcceleration();
+  // The pet's sprite animation is pure CSS. Chromium throttles animations and
+  // timers for background/hidden renderers (the offscreen pet window is never
+  // shown), which would freeze the animation and stall the frame stream. These
+  // switches keep the hidden renderer actively animating.
+  app.commandLine.appendSwitch("disable-renderer-backgrounding");
+  app.commandLine.appendSwitch("disable-background-timer-throttling");
+  app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
 }
 const hasExplicitOzonePlatformArg = process.argv.some(
   (arg) => arg === "--ozone-platform" || arg.startsWith("--ozone-platform="),

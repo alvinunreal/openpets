@@ -16,6 +16,13 @@
 //! Helper → client:
 //! - `READY` (0x81): sent once the layer-shell surface has received its first
 //!   configure and is ready to accept frames.
+//! - `POINTER` (0x82): a pointer input event forwarded from the compositor, so
+//!   the client can replay it into the (offscreen) pet renderer. Payload:
+//!   kind(u8) x(i32) y(i32) button(u32), where kind is one of `PT_MOVE`/
+//!   `PT_PRESS`/`PT_RELEASE`/`PT_ENTER`/`PT_LEAVE` and x/y are surface-local
+//!   (logical) coordinates.
+//! - `POSITION` (0x83): the surface was repositioned by the helper (drag), so
+//!   the client can keep its tracked position in sync. Payload: x(i32) y(i32).
 
 use std::io::{self, Read, Write};
 
@@ -25,6 +32,17 @@ pub const TAG_SHOW: u8 = 0x03;
 pub const TAG_HIDE: u8 = 0x04;
 pub const TAG_QUIT: u8 = 0x05;
 pub const TAG_READY: u8 = 0x81;
+/// Pointer input forwarded from the compositor to the client (helper → client).
+pub const TAG_POINTER: u8 = 0x82;
+/// Surface position changed by the helper during a drag (helper → client).
+pub const TAG_POSITION: u8 = 0x83;
+
+/// Pointer event kinds carried by `TAG_POINTER`.
+pub const PT_MOVE: u8 = 0;
+pub const PT_PRESS: u8 = 1;
+pub const PT_RELEASE: u8 = 2;
+pub const PT_ENTER: u8 = 3;
+pub const PT_LEAVE: u8 = 4;
 
 /// A frame payload delivered by the Electron client.
 pub struct Frame {

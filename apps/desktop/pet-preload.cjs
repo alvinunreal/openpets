@@ -1,5 +1,34 @@
 const { ipcRenderer } = require("electron");
-const { splitSystemSpeech } = require("./pet-tts-helper.cjs");
+
+// The pet window's preload runs sandboxed, where `require()` cannot load
+// arbitrary local modules. `pet-tts-helper.cjs` is only loadable when the
+// preload is bundled/unsandboxed; provide an inline fallback so the preload
+// always loads — its mouse-interaction handlers are what make the pet
+// clickable/draggable, and those must survive a missing TTS helper.
+let splitSystemSpeech;
+try {
+  ({ splitSystemSpeech } = require("./pet-tts-helper.cjs"));
+} catch {
+  splitSystemSpeech = (text, maxChars = 500) => {
+    if (typeof text !== "string" || text.length === 0) return [];
+    if (!Number.isInteger(maxChars) || maxChars < 1) throw new Error("Invalid system speech chunk limit.");
+    const chunks = [];
+    let start = 0;
+    while (start < text.length) {
+      let end = Math.min(text.length, start + maxChars);
+      if (end < text.length) {
+        let breakAt = -1;
+        for (let i = end - 1; i > start; i -= 1) {
+          if (/\s/.test(text[i])) { breakAt = i; break; }
+        }
+        if (breakAt > start) end = breakAt + 1;
+      }
+      chunks.push(text.slice(start, end));
+      start = end;
+    }
+    return chunks;
+  };
+}
 
 const allowedMotionStates = new Set(["idle", "run-left", "run-right"]);
 const allowedReactionStates = new Set(["idle", "running-right", "running-left", "waving", "jumping", "failed", "waiting", "running", "review"]);

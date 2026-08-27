@@ -21,13 +21,21 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
-use protocol::{Message, TAG_READY};
+use protocol::{
+    Message, PT_ENTER, PT_LEAVE, PT_MOVE, PT_PRESS, PT_RELEASE, TAG_POINTER, TAG_POSITION,
+    TAG_READY,
+};
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
-    delegate_compositor, delegate_layer, delegate_output, delegate_registry, delegate_shm,
+    delegate_compositor, delegate_layer, delegate_output, delegate_pointer, delegate_registry,
+    delegate_seat, delegate_shm,
     output::{OutputHandler, OutputState},
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
+    seat::{
+        pointer::{PointerEvent, PointerEventKind, PointerHandler},
+        Capability, SeatHandler, SeatState,
+    },
     shell::{
         wlr_layer::{
             Anchor, KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface,
@@ -39,7 +47,7 @@ use smithay_client_toolkit::{
 };
 use wayland_client::{
     globals::registry_queue_init,
-    protocol::{wl_output, wl_shm, wl_surface},
+    protocol::{wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
     Connection, QueueHandle,
 };
 
@@ -110,8 +118,10 @@ enum SocketEvent {
 struct App {
     registry_state: RegistryState,
     output_state: OutputState,
+    seat_state: SeatState,
     shm: Shm,
     layer: LayerSurface,
+    _pointer: Option<wl_pointer::WlPointer>,
 
     width: u32,
     height: u32,
@@ -135,6 +145,14 @@ struct App {
     /// before the first configure (or while hidden) can be presented as soon
     /// as the surface is ready.
     pending_frame: Option<protocol::Frame>,
+
+    /// Pointer drag state. While a left-button drag is in progress the helper
+    /// moves the surface directly (incrementally) instead of routing motion
+    /// through the renderer, which avoids a feedback loop when the surface
+    /// moves under the cursor.
+    dragging: bool,
+    /// Surface-local cursor position from the previous pointer motion frame.
+    drag_prev_local: (f64, f64),
 }
 
 // ---------------------------------------------------------------------------
@@ -234,8 +252,10 @@ fn main() {
     let mut app = App {
         registry_state: RegistryState::new(&globals),
         output_state: OutputState::new(&globals, &qh),
+        seat_state: SeatState::new(&globals, &qh),
         shm,
         layer,
+        _pointer: None,
         width: args.width,
         height: args.height,
         position: (args.x, args.y),
@@ -246,6 +266,8 @@ fn main() {
         live_buffers: VecDeque::new(),
         client_writer: None,
         pending_frame: None,
+        dragging: false,
+        drag_prev_local: (0.0, 0.0),
     };
 
     // Start the socket reader thread. It forwards decoded messages to the main
@@ -459,17 +481,136 @@ impl ShmHandler for App {
     }
 }
 
+impl SeatHandler for App {
+    fn seat_state(&mut self) -> &mut SeatState {
+        &mut self.seat_state
+    }
+
+    fn new_seat(&mut self, _: &Connection, qh: &QueueHandle<Self>, seat: wl_seat::WlSeat) {
+        debug_log("new seat");
+        if self._pointer.is_none() {
+            self._pointer = self.seat_state.get_pointer(qh, &seat).ok();
+            if self._pointer.is_some() {
+                debug_log("pointer bound");
+            }
+        }
+    }
+
+    fn new_capability(
+        &mut self,
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+        seat: wl_seat::WlSeat,
+        capability: Capability,
+    ) {
+        debug_log(&format!("new capability: {capability:?}"));
+        if capability == Capability::Pointer && self._pointer.is_none() {
+            self._pointer = self.seat_state.get_pointer(qh, &seat).ok();
+            if self._pointer.is_some() {
+                debug_log("pointer bound");
+            }
+        }
+    }
+
+    fn remove_capability(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: wl_seat::WlSeat,
+        capability: Capability,
+    ) {
+        if capability == Capability::Pointer {
+            self._pointer = None;
+        }
+    }
+
+    fn remove_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
+}
+
+impl PointerHandler for App {
+    fn pointer_frame(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_pointer::WlPointer,
+        events: &[PointerEvent],
+    ) {
+        for event in events {
+            // Only handle events that target our layer surface.
+            if &event.surface != self.layer.wl_surface() {
+                continue;
+            }
+            let (x, y) = event.position;
+            match &event.kind {
+                PointerEventKind::Enter { .. } => self.send_pointer(PT_ENTER, x, y, 0),
+                PointerEventKind::Leave { .. } => {
+                    if self.dragging {
+                        debug_log("drag ended (pointer left)");
+                    }
+                    self.dragging = false;
+                    self.send_pointer(PT_LEAVE, x, y, 0);
+                }
+                PointerEventKind::Motion { .. } => {
+                    // While dragging, move the surface directly (incrementally)
+                    // so it follows the cursor without a renderer feedback
+                    // loop. `drag_prev_local` is the previous frame's local
+                    // cursor position; the delta equals the cursor's global
+                    // movement because the surface has not moved since that
+                    // frame.
+                    if self.dragging {
+                        let dx = x - self.drag_prev_local.0;
+                        let dy = y - self.drag_prev_local.1;
+                        self.drag_prev_local = (x, y);
+                        self.position.0 += dx.round() as i32;
+                        self.position.1 += dy.round() as i32;
+                        self.apply_position();
+                        self.send_position();
+                    }
+                    // Still forward motion so hover tracking works.
+                    self.send_pointer(PT_MOVE, x, y, 0);
+                }
+                PointerEventKind::Press { button, .. } => {
+                    // Left button (BTN_LEFT = 0x110 = 272) starts a drag.
+                    if *button == 272 {
+                        if !self.dragging {
+                            debug_log(&format!("drag started at ({x:.0},{y:.0})"));
+                        }
+                        self.dragging = true;
+                        self.drag_prev_local = (x, y);
+                    }
+                    self.send_pointer(PT_PRESS, x, y, *button);
+                }
+                PointerEventKind::Release { button, .. } => {
+                    if *button == 272 {
+                        if self.dragging {
+                            debug_log(&format!(
+                                "drag ended at ({}, {})",
+                                self.position.0, self.position.1
+                            ));
+                        }
+                        self.dragging = false;
+                    }
+                    self.send_pointer(PT_RELEASE, x, y, *button);
+                }
+                PointerEventKind::Axis { .. } => {}
+            }
+        }
+    }
+}
+
 delegate_compositor!(App);
 delegate_output!(App);
 delegate_shm!(App);
 delegate_layer!(App);
+delegate_seat!(App);
+delegate_pointer!(App);
 delegate_registry!(App);
 
 impl ProvidesRegistryState for App {
     fn registry(&mut self) -> &mut RegistryState {
         &mut self.registry_state
     }
-    registry_handlers![OutputState];
+    registry_handlers![OutputState, SeatState];
 }
 
 // ---------------------------------------------------------------------------
@@ -477,6 +618,32 @@ impl ProvidesRegistryState for App {
 // ---------------------------------------------------------------------------
 
 impl App {
+    /// Forward a pointer input event to the Electron client so it can replay
+    /// it into the (offscreen) pet renderer. Coordinates are surface-local.
+    fn send_pointer(&mut self, kind: u8, x: f64, y: f64, button: u32) {
+        let Some(writer) = self.client_writer.as_mut() else {
+            return;
+        };
+        let mut payload = Vec::with_capacity(13);
+        payload.push(kind);
+        payload.extend_from_slice(&(x.round() as i32).to_le_bytes());
+        payload.extend_from_slice(&(y.round() as i32).to_le_bytes());
+        payload.extend_from_slice(&button.to_le_bytes());
+        let _ = protocol::write_message(writer, TAG_POINTER, &payload);
+    }
+
+    /// Notify the client that the surface was repositioned (during a drag) so
+    /// its tracked position stays in sync.
+    fn send_position(&mut self) {
+        let Some(writer) = self.client_writer.as_mut() else {
+            return;
+        };
+        let mut payload = Vec::with_capacity(8);
+        payload.extend_from_slice(&self.position.0.to_le_bytes());
+        payload.extend_from_slice(&self.position.1.to_le_bytes());
+        let _ = protocol::write_message(writer, TAG_POSITION, &payload);
+    }
+
     /// Determine the primary output's logical geometry and cache it.
     fn refresh_output_geometry(&mut self) {
         let mut geometry = None;
@@ -524,6 +691,10 @@ impl App {
         let left = x - ox;
         let bottom = (oy + oh) - (y + self.height as i32);
         self.layer.set_margin(0, 0, bottom.max(0), left.max(0));
+        // `set_margin` only stages pending state — commit so the reposition
+        // takes effect immediately (otherwise the surface only moves on the
+        // next frame-stream commit, which stalls during a drag).
+        self.layer.commit();
         debug_log(&format!("apply_position: margin left={left} bottom={bottom}"));
     }
 

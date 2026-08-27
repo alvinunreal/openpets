@@ -37,12 +37,22 @@ const TAG_SHOW = 0x03;
 const TAG_HIDE = 0x04;
 const TAG_QUIT = 0x05;
 const TAG_READY = 0x81;
+const TAG_POINTER = 0x82;
+const TAG_POSITION = 0x83;
+
+const PT_MOVE = 0;
+const PT_PRESS = 1;
+const PT_RELEASE = 2;
+const PT_ENTER = 3;
+const PT_LEAVE = 4;
 
 const MAX_QUEUED_MESSAGES = 512;
 const MAX_CONNECT_ATTEMPTS = 40;
 const CONNECT_RETRY_MS = 50;
 /** Poll interval for `capturePage` frame streaming (~30 fps). */
 const FRAME_POLL_MS = 33;
+/** How long to wait for `beginFrameSubscription` before falling back to polling. */
+const FRAME_PROBE_MS = 1200;
 
 /**
  * Resolve the native helper binary path.
@@ -205,51 +215,168 @@ class LayerShellSurface {
         this.ready = true;
         info("pet.wayland", "helper surface ready (layer-shell configured)");
         this.attachFrameStreaming();
+      } else if (tag === TAG_POINTER && body.length >= 13) {
+        this.handlePointer(body[1], body.readInt32LE(2), body.readInt32LE(6), body.readUInt32LE(10));
+      } else if (tag === TAG_POSITION && body.length >= 9) {
+        this.handlePositionUpdate(body.readInt32LE(1), body.readInt32LE(5));
+      } else if (tag === TAG_POINTER) {
+        debug("pet.wayland", "short pointer message", { bodyLen: body.length });
+      }
+    }
+  }
+
+  /**
+   * Replay a compositor pointer event into the offscreen renderer so the
+   * existing pet click/drag/hover handlers fire unchanged. Coordinates from
+   * the helper are surface-local; screen coordinates are derived from the
+   * surface's tracked position.
+   */
+  private handlePointer(kind: number, x: number, y: number, button: number): void {
+    if (!this.window || this.window.isDestroyed() || this.window.webContents.isDestroyed()) {
+      return;
+    }
+    if (kind === PT_ENTER || kind === PT_LEAVE) return;
+    // While the left button is held the helper is dragging the surface. Pause
+    // frame polling so pointer-motion messages stay responsive; resume on
+    // release.
+    if (kind === PT_PRESS && button === 0x110 && !this.leftButtonDown) {
+      this.leftButtonDown = true;
+      this.pauseFrameStreaming();
+    } else if (kind === PT_RELEASE && button === 0x110 && this.leftButtonDown) {
+      this.leftButtonDown = false;
+      this.resumeFrameStreaming();
+    }
+    const globalX = this.position.x + x;
+    const globalY = this.position.y + y;
+    const btn = mapPointerButton(button);
+    try {
+      if (kind === PT_MOVE) {
+        this.window.webContents.sendInputEvent({ type: "mouseMove", x, y, globalX, globalY } as Electron.MouseInputEvent);
+      } else if (kind === PT_PRESS) {
+        this.window.webContents.sendInputEvent({ type: "mouseDown", x, y, globalX, globalY, button: btn, clickCount: 1 } as Electron.MouseInputEvent);
+      } else if (kind === PT_RELEASE) {
+        this.window.webContents.sendInputEvent({ type: "mouseUp", x, y, globalX, globalY, button: btn, clickCount: 1 } as Electron.MouseInputEvent);
+      }
+    } catch (error) {
+      debug("pet.wayland", "sendInputEvent failed", { error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  /**
+   * The helper moved the surface during a drag. Sync our tracked position so
+   * `getPosition()` (and therefore position persistence and the motion-state
+   * publisher) stays correct, and emit a synthetic `move` so the run-left/
+   * run-right animation triggers.
+   */
+  private handlePositionUpdate(x: number, y: number): void {
+    if (this.destroyed) return;
+    if (this.position.x === x && this.position.y === y) return;
+    this.position = { x, y };
+    if (this.window && !this.window.isDestroyed()) {
+      try {
+        this.window.emit("move");
+      } catch {
+        // synthetic move is best-effort (drives drag animation only)
       }
     }
   }
 
   private frameTimer: NodeJS.Timeout | null = null;
+  private frameSendFn: ((image: NativeImage) => void) | null = null;
+  /** Left button held (drag in progress) → pause frame polling to keep motion snappy. */
+  private leftButtonDown = false;
 
-  /** Start polling frames from the offscreen renderer with `capturePage`. */
+  /**
+   * Stream frames from the offscreen renderer. Prefers the event-driven
+   * `beginFrameSubscription` (only fires when content changes → smooth, low
+   * overhead); falls back to `capturePage` polling when the subscription does
+   * not produce frames (it can silently idle for windows never shown on
+   * screen on some compositors).
+   */
   private attachFrameStreaming(): void {
     if (!this.window || this.window.isDestroyed() || this.window.webContents.isDestroyed()) {
       debug("pet.wayland", "frame streaming skipped (window not ready)", {});
       return;
     }
     debug("pet.wayland", "frame streaming attached", { windowId: this.window.id });
-    // `beginFrameSubscription` is flaky for windows that are never shown on
-    // screen (it can silently stop producing frames on some compositors), so
-    // poll `capturePage` at the pet animation's frame rate instead. The pet is
-    // small (340×420), so the per-frame copy cost is negligible for a
-    // prototype.
     let lastBitmap: Buffer | null = null;
-    this.frameTimer = setInterval(() => {
-      if (!this.window || this.window.isDestroyed() || this.window.webContents.isDestroyed()) {
-        if (this.frameTimer) {
-          clearInterval(this.frameTimer);
-          this.frameTimer = null;
+    let usingSubscription = false;
+    let framesSent = 0;
+    let framesSkipped = 0;
+    const sendFrame = (image: NativeImage): void => {
+      const bitmap = image.toBitmap();
+      if (!bitmap || bitmap.length === 0) return;
+      // Skip frames identical to the previous one (static content) to keep
+      // the socket quiet and the helper from re-committing unchanged frames.
+      if (lastBitmap && bitmap.length === lastBitmap.length && bitmap.equals(lastBitmap)) {
+        framesSkipped += 1;
+        if (framesSkipped % 300 === 0) {
+          debug("pet.wayland", "frame dedup", { framesSent, framesSkipped });
         }
         return;
       }
-      void this.window.webContents.capturePage().then((image: NativeImage) => {
-        const bitmap = image.toBitmap();
-        if (!bitmap || bitmap.length === 0) return;
-        // Skip frames identical to the previous one (static content) to keep
-        // the socket quiet and the helper from re-committing unchanged frames.
-        if (lastBitmap && bitmap.length === lastBitmap.length && bitmap.equals(lastBitmap)) {
-          return;
-        }
-        lastBitmap = bitmap;
-        const size = image.getSize();
-        const height = Math.max(1, size.height);
-        const stride = bitmap.length / height;
-        this.write(encodeFrame(size.width, height, stride, bitmap));
-      }).catch(() => {
+      lastBitmap = bitmap;
+      framesSent += 1;
+      if (framesSent % 60 === 0) {
+        debug("pet.wayland", "frame sent", { framesSent, framesSkipped });
+      }
+      const size = image.getSize();
+      const height = Math.max(1, size.height);
+      const stride = bitmap.length / height;
+      this.write(encodeFrame(size.width, height, stride, bitmap));
+    };
+    this.frameSendFn = sendFrame;
+
+    // If the subscription yields nothing within the probe window, fall back.
+    const probeTimer = setTimeout(() => {
+      if (!usingSubscription) this.attachFrameStreamingFallback();
+    }, FRAME_PROBE_MS);
+
+    try {
+      this.window.webContents.beginFrameSubscription(false, (image: NativeImage) => {
+        usingSubscription = true;
+        clearTimeout(probeTimer);
+        sendFrame(image);
+      });
+    } catch (error) {
+      clearTimeout(probeTimer);
+      debug("pet.wayland", "beginFrameSubscription failed; using capturePage polling", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      this.attachFrameStreamingFallback();
+    }
+  }
+
+  /** Poll `capturePage` at the animation frame rate (fallback path). */
+  private attachFrameStreamingFallback(): void {
+    if (this.frameTimer || !this.frameSendFn) return;
+    debug("pet.wayland", "frame streaming fallback: capturePage polling", {});
+    this.frameTimer = setInterval(() => {
+      if (!this.window || this.window.isDestroyed() || this.window.webContents.isDestroyed()) {
+        this.stopFrameStreaming();
+        return;
+      }
+      void this.window.webContents.capturePage().then(this.frameSendFn!).catch(() => {
         // Transient capture failures are harmless; try again next tick.
       });
     }, FRAME_POLL_MS);
     this.frameTimer.unref?.();
+  }
+
+  /**
+   * Pause polling-based frame streaming while the pet is being dragged so the
+   * main process stays free to service pointer-motion messages (a slow
+   * `capturePage` can otherwise starve drag handling and make it stutter).
+   */
+  private pauseFrameStreaming(): void {
+    if (this.frameTimer) {
+      clearInterval(this.frameTimer);
+      this.frameTimer = null;
+    }
+  }
+
+  private resumeFrameStreaming(): void {
+    this.attachFrameStreamingFallback();
   }
 
   /** Stop polling frames (called on destroy). */
@@ -410,6 +537,13 @@ export function adoptPetWindowForLayerShell(window: BrowserWindow, position: Poi
 function resolveRuntimeDir(): string {
   if (process.env.XDG_RUNTIME_DIR) return process.env.XDG_RUNTIME_DIR;
   return tmpdir();
+}
+
+/** Map a `wl_pointer` (evdev) button code to Electron's button names. */
+function mapPointerButton(button: number): "left" | "middle" | "right" {
+  if (button === 0x111) return "right";
+  if (button === 0x112) return "middle";
+  return "left";
 }
 
 function patchWindowSurface(window: BrowserWindow, surface: LayerShellSurface): void {

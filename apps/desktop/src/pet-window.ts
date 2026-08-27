@@ -148,9 +148,12 @@ export function _resetEffectiveWaylandBackendCache(): void {
 /**
  * Whether to use Wayland native window-move drag instead of the manual
  * setBounds drag path.  Under x11/XWayland the manual path works correctly.
+ * In layer-shell mode the pet is dragged by the native helper (which moves
+ * the overlay surface directly), so the renderer must not participate in the
+ * manual setBounds drag either — it would fight the helper's own motion.
  */
 export function shouldUseWaylandNativePetDrag(): boolean {
-  return isEffectiveWaylandBackend();
+  return isEffectiveWaylandBackend() || shouldUseLayerShellBackend();
 }
 
 export function isPetWindowDragging(window: BrowserWindow): boolean {
@@ -698,16 +701,20 @@ function createBasePetWindowWithMode(title: string, position: Point, focusOption
     show: false,
     hasShadow: false,
     backgroundColor: "#00000000",
+    // In layer-shell mode this window never appears on screen — it only
+    // renders the pet page offscreen so its frames can be streamed to the
+    // native layer-shell helper. The visible pet is the helper's overlay
+    // surface, not this window. `paintWhenInitiallyHidden` must be a
+    // top-level option so the hidden renderer keeps painting (and therefore
+    // `beginFrameSubscription` keeps producing frames); `offscreen` and
+    // `backgroundThrottling` belong in webPreferences.
+    ...(useLayerShell ? { paintWhenInitiallyHidden: true } : {}),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
       preload: join(app.getAppPath(), "pet-preload.cjs"),
-      // In layer-shell mode this window never appears on screen — it only
-      // renders the pet page offscreen so its frames can be streamed to the
-      // native layer-shell helper. The visible pet is the helper's overlay
-      // surface, not this window.
-      ...(useLayerShell ? { offscreen: true, paintWhenInitiallyHidden: true, backgroundThrottling: false } : {}),
+      ...(useLayerShell ? { offscreen: true, backgroundThrottling: false } : {}),
     },
   });
 
