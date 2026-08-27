@@ -20,7 +20,8 @@ import type { PluginBubbleIndicator, PluginCommandForm, PluginBubbleHud, PluginB
 import { defaultPetSprite, getConfiguredSpriteCacheKey, getConfiguredSpriteStates, motionToSpriteState, resolveReactionSpriteState, type PetMotionState, type SpriteStateDefinition, type UniversalSpriteState } from "./reaction-animation-mapping.js";
 import { isFocusActionAvailable } from "./capabilities.js";
 import { canForwardMouseEvents as platformCanForwardMouseEvents, shouldWatchForwardedMouseEvents } from "./mouse-forwarding.js";
-import { computeEffectiveWaylandBackend, shouldPetWindowBeFocusable } from "./wayland-backend.js";
+import { computeEffectiveWaylandBackend, isLayerShellBackendRequested, shouldPetWindowBeFocusable } from "./wayland-backend.js";
+import { adoptPetWindowForLayerShell, isLayerShellHelperAvailable } from "./wayland-layer-backend.js";
 
 export interface PetWindowInteractionHooks {
   readonly onBubbleDismissed?: (dismissToken: string) => void;
@@ -664,6 +665,19 @@ function isScreenPoint(value: unknown): value is { readonly screenX: number; rea
 }
 
 function createBasePetWindow(title: string, position: Point, focusOptions: { readonly hasInteractiveInput?: boolean } = {}): BrowserWindow {
+  return createBasePetWindowWithMode(title, position, focusOptions, shouldUseLayerShellBackend());
+}
+
+/**
+ * Whether the experimental native Wayland layer-shell backend should carry pet
+ * windows. Opt-in via `OPENPETS_NATIVE_WAYLAND=1` and only when the native
+ * helper binary is present. See `wayland-layer-backend.ts`.
+ */
+export function shouldUseLayerShellBackend(): boolean {
+  return isLayerShellBackendRequested(process.platform, process.env) && isLayerShellHelperAvailable();
+}
+
+function createBasePetWindowWithMode(title: string, position: Point, focusOptions: { readonly hasInteractiveInput?: boolean }, useLayerShell: boolean): BrowserWindow {
   const effectiveWaylandBackend = isEffectiveWaylandBackend();
   const focusable = shouldPetWindowBeFocusable(process.platform, effectiveWaylandBackend, focusOptions.hasInteractiveInput === true);
   const window = new BrowserWindow({
@@ -689,6 +703,11 @@ function createBasePetWindow(title: string, position: Point, focusOptions: { rea
       contextIsolation: true,
       sandbox: true,
       preload: join(app.getAppPath(), "pet-preload.cjs"),
+      // In layer-shell mode this window never appears on screen — it only
+      // renders the pet page offscreen so its frames can be streamed to the
+      // native layer-shell helper. The visible pet is the helper's overlay
+      // surface, not this window.
+      ...(useLayerShell ? { offscreen: true, paintWhenInitiallyHidden: true, backgroundThrottling: false } : {}),
     },
   });
 
@@ -748,6 +767,20 @@ function createBasePetWindow(title: string, position: Point, focusOptions: { rea
     logError("pet.window", "renderer process gone", { windowId: window.id, details });
     console.error("Default pet renderer process gone.", details);
   });
+
+  if (useLayerShell) {
+    try {
+      // Adopt the window into a native layer-shell surface. This patches the
+      // display-facing methods on the instance so the rest of the pet stack
+      // (controllers, motion engine, content loading) keeps working unchanged
+      // while the visible carrier is the helper's overlay surface.
+      adoptPetWindowForLayerShell(window, position);
+    } catch (error) {
+      logError("pet.window", "layer-shell adoption failed; falling back to a normal window", error instanceof Error ? error : { error });
+      if (!window.isDestroyed()) window.destroy();
+      return createBasePetWindowWithMode(title, position, focusOptions, false);
+    }
+  }
 
   return window;
 }

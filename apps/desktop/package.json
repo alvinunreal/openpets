@@ -27,6 +27,7 @@
     "typecheck": "pnpm build:deps && tsc --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "build:main": "pnpm build:deps && tsc",
     "build:renderer": "vite build",
+    "build:wayland-helper": "cargo build --release --manifest-path native/openpets-wayland-helper/Cargo.toml",
     "dev:renderer": "vite --host 127.0.0.1",
     "build": "pnpm build:main && pnpm build:renderer",
     "package:preflight": "node scripts/check-windows-symlink-privilege.cjs"

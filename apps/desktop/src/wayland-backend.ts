@@ -48,3 +48,22 @@ export function shouldPetWindowBeFocusable(
   if (hasInteractiveInput) return true;
   return platform !== "linux";
 }
+
+/**
+ * Whether the experimental native Wayland `wlr-layer-shell` backend is
+ * requested.
+ *
+ * This is an opt-in, Linux-only experimental backend: the pet is carried by a
+ * real layer-shell overlay surface (via a small native helper process) instead
+ * of an XDG toplevel, so it is not a normal application window, does not take
+ * keyboard focus, and is not subject to window close/kill shortcuts or tiling
+ * layout. It is enabled with `OPENPETS_NATIVE_WAYLAND=1`; it is never the
+ * default.
+ */
+export function isLayerShellBackendRequested(
+  platform: NodeJS.Platform | string,
+  env: Record<string, string | undefined> = {},
+): boolean {
+  if (platform !== "linux") return false;
+  return env.OPENPETS_NATIVE_WAYLAND === "1";
+}

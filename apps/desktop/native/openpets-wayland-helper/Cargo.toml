@@ -1,0 +1,18 @@
+[package]
+name = "openpets-wayland-helper"
+version = "0.1.0"
+edition = "2021"
+description = "Native wlr-layer-shell backend helper for the OpenPets desktop pet (experimental, Linux/Wayland)"
+license = "MIT"
+
+[[bin]]
+name = "openpets-wayland-helper"
+path = "src/main.rs"
+
+[dependencies]
+smithay-client-toolkit = "0.19"
+wayland-client = "0.31"
+wayland-protocols = "0.32"
+wayland-protocols-wlr = "0.3"
+libc = "0.2"
+log = "0.4"

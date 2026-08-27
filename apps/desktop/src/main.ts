@@ -64,6 +64,15 @@ if (process.platform === "win32") {
 // and manual drag will not function under native Wayland.
 const isLinux = process.platform === "linux";
 const allowWayland = process.env.OPENPETS_ALLOW_WAYLAND === "1";
+
+// In layer-shell mode the pet is carried by the native helper's overlay
+// surface; the hidden offscreen renderer only composites frames for it. GPU
+// compositing is not needed there and Chromium's GPU process can crash on some
+// Wayland/ANGLE stacks (observed as SIGSEGV under Niri), stalling offscreen
+// frame production. Force software rendering to keep the frame stream stable.
+if (isLinux && process.env.OPENPETS_NATIVE_WAYLAND === "1") {
+  app.disableHardwareAcceleration();
+}
 const hasExplicitOzonePlatformArg = process.argv.some(
   (arg) => arg === "--ozone-platform" || arg.startsWith("--ozone-platform="),
 );
@@ -94,6 +103,9 @@ if (!gotSingleInstanceLock) {
     if (isLinux && allowWayland) {
       const effectiveOzone = app.commandLine.getSwitchValue("ozone-platform") || "(auto/system)";
       warn("app", "native Wayland mode active — pet positioning, gravity, walkabout, and drag are unsupported under native Wayland; remove OPENPETS_ALLOW_WAYLAND=1 to restore full functionality", { effectiveOzone });
+    }
+    if (isLinux && process.env.OPENPETS_NATIVE_WAYLAND === "1") {
+      info("app", "experimental native Wayland layer-shell backend requested (OPENPETS_NATIVE_WAYLAND=1); pet windows will be carried by wlr-layer-shell overlay surfaces", {});
     }
 
     if (process.platform === "darwin") {
