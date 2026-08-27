@@ -256,11 +256,29 @@ the existing runtime is idle. This matches the released
 [Malou V2 manifest](https://raw.githubusercontent.com/mySebbe/malou-codex-pet/v2.0.0/dist/malou/pet.json)
 and its [8×11 atlas specification](https://raw.githubusercontent.com/mySebbe/malou-codex-pet/v2.0.0/metadata/atlas.json).
 
+The Control Center carries that sprite layout with Codex-source and installed
+pet entries. Its Pets, Dashboard, and Settings previews therefore scale V1
+atlases as 8×9, V2 atlases as 8×11, and show the static V2 neutral cell instead
+of treating the extra rows as part of a nine-row animation.
+
+At startup, OpenPets also performs an idempotent repair for Codex V2 imports
+created by older releases that copied the 11-row atlas but dropped the version
+marker from the installed `pet.json`. It restores only that marker, and only
+when the persisted source still points to the expected canonical Codex pet,
+the source manifest is valid V2, the local atlas passes the exact V2
+`1536×2288` contract, and SHA-256 hashes of the source and local atlas bytes
+match. Already-current and unverifiable imports are skipped; per-pet results,
+repaired/skipped counts, and skip reasons are logged, and a migration problem
+never prevents the desktop app from starting.
+
 V2's sixteen look-direction cells (rows 9–10) are retained in the imported
 atlas but are not individually selected: OpenPets currently emits only idle,
 left-run, and right-run motion, not a two-dimensional gaze target. It therefore
 does not invent directional behavior or claim full gaze support. A future gaze
 API can map those cells directly without changing the import contract.
+
+Codex integration remains import-only: OpenPets does not write installed or
+catalog pets back into `~/.codex/pets/`.
 
 ## Image protocols & CSP
 

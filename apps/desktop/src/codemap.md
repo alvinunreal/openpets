@@ -28,6 +28,7 @@ main.ts
 ├── lifecycle.ts (app events, cleanup)
 ├── logger.ts (structured logging init)
 ├── app-state.ts (state init)
+├── codex-pet-migration.ts (safe legacy V2 marker repair)
 ├── plugin-service.ts (plugin state/runtime init, JS host wiring)
 ├── tray.ts (tray creation)
 ├── local-ipc.ts (IPC server start)
@@ -234,6 +235,8 @@ main.ts/settings → i18n.setLocaleFromPreference(system/user locale)
 - `pet-file-safety.ts`: Bounded, no-follow regular-file reads shared by pet import and installed-pet rendering
 - `codex-pets.ts`: Import from `~/.codex/pets/` with validation
 - `codex-pets-core.ts`: Codex V1/V2 metadata, exact V2 atlas, and neutral-pose layout validation
+- `codex-pet-migration.ts`: Idempotent startup repair for legacy Codex V2 imports gated by canonical source, exact local atlas validation, and byte hash equality
+- `installed-pet-layout.ts`: Bounded installed-manifest reader shared by pet windows and Control Center sprite previews
 - `catalog.ts`: Remote catalog fetch with V3 pagination support, search, fixture fallback
 - `catalog-validation.ts`: CatalogV2/V3 schema validation
 - `zip-safety.ts`: ZIP entry path validation (traversal prevention, case collision detection)

@@ -5,11 +5,11 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { getAppStateSnapshot, markPetBroken, type PetScaleValue } from "./app-state.js";
-import { getCodexPetSpriteLayout, getCodexPetSpritePosition, maxCodexPetJsonBytes, validateCodexPetMetadata, type CodexPetSpriteLayout } from "./codex-pets-core.js";
+import { getCodexPetSpritePosition, type CodexPetSpriteLayout } from "./codex-pets-core.js";
 import { clampToNearestDisplayIfOffscreen, clampToVisibleWorkArea, defaultPetWindowSize, getDefaultPetInitialPosition, isCrossDisplayRoamingEnabled, type Point } from "./display.js";
 import { builtInPet } from "./built-in-pet.js";
+import { readInstalledPetSpriteLayout } from "./installed-pet-layout.js";
 import { getInstalledPetDir } from "./pet-paths.js";
-import { readBoundedRegularFile } from "./pet-file-safety.js";
 import { getActiveLocale, getActiveLocaleLang, t } from "./i18n/index.js";
 import { defaultMediaDurationMs, type OpenPetsReaction } from "./local-ipc-protocol.js";
 import { pickReactionMessage } from "./reaction-messages.js";
@@ -1188,15 +1188,6 @@ async function createInstalledPetRender(petId: string, displayName: string, paus
         </body>
       </html>`,
   };
-}
-
-async function readInstalledPetSpriteLayout(petId: string): Promise<CodexPetSpriteLayout> {
-  const metadataPath = join(getInstalledPetDir(petId), "pet.json");
-  const metadata = validateCodexPetMetadata(
-    JSON.parse((await readBoundedRegularFile(metadataPath, maxCodexPetJsonBytes, "Installed pet metadata")).toString("utf8")) as unknown,
-    petId,
-  );
-  return getCodexPetSpriteLayout(metadata);
 }
 
 function createPetBodyMarkup(stageLabel: string, bubble: string, spriteMarkup: string, pinnedBubble = "", hasPinned = false): string {

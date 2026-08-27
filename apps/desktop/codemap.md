@@ -27,7 +27,7 @@ OpenPets desktop companion application. Tray-first Electron app providing animat
 
 ## Flow
 
-**Startup**: `main.ts` → `installAppLifecycle()` → `initializeAppState()` → `initializeLogger()` → `createAppTray()` → `startLocalIpcServer()` → initialize plugin service with JavaScript host/SDK bridge → construct Pet Assistant host and local conversation archive → optionally `showDefaultPet()`
+**Startup**: `main.ts` → `installAppLifecycle()` → `initializeLogger()` → `initializeAppState()` → safely repair eligible legacy Codex V2 import markers → `createAppTray()` → `startLocalIpcServer()` → initialize plugin service with JavaScript host/SDK bridge → construct Pet Assistant host and local conversation archive → optionally `showDefaultPet()`
 
 **Pet Display**: IPC Request → `local-ipc.ts` → `LeaseManager.acquire()` → `agent-pet-controller.ts` → `pet-window.ts` → HTML/CSS spritesheet animation with reaction-to-animation mapping
 

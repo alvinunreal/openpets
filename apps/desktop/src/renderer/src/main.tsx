@@ -6,6 +6,7 @@ import openPetsLogoUrl from "../../../assets/openpets.webp";
 import defaultThumbUrl from "../../../assets/default-pet-thumbnail.png";
 import { ConversationView } from "./conversation/ConversationView.js";
 import type { ConversationEvent, ConversationSnapshot, LocalConversationHistoryMessage, VoiceAssistantTalkEvent, VoiceAssistantSessionSnapshot } from "./conversation/conversation-types.js";
+import { buildPetSpritePreviewModel, type PetSpriteLayout } from "./pet-preview-state.js";
 import { resolveShortcutSaveOutcome } from "./settings-shortcut-state.js";
 
 import claudeLogoUrl from "../../../assets/integrations/claude.svg";
@@ -17,8 +18,8 @@ import windsurfLogoUrl from "../../../assets/integrations/windsurf.svg";
 import zedLogoUrl from "../../../assets/integrations/zed.svg";
 
 type Filter = "all" | "installed" | "featured" | "originals" | "codex";
-type InstalledPet = { id: string; displayName: string; description?: string; builtIn: boolean; protected: boolean; installed: boolean; broken?: boolean; brokenReason?: string; source?: { kind?: "catalog"; preview?: string } | { kind: "codex"; path: string } };
-type PetEntry = { id: string; displayName: string; description?: string; searchText?: string; preview?: string; thumbnail?: string; spritesheet?: string; category?: "western" | "asian"; original?: boolean; featured?: boolean; catalogPage?: number; sourceKind?: "installed" | "catalog" | "codex"; installed?: boolean; builtIn?: boolean; protected?: boolean; broken?: boolean; brokenReason?: string };
+type InstalledPet = { id: string; displayName: string; description?: string; builtIn: boolean; protected: boolean; installed: boolean; broken?: boolean; brokenReason?: string; spriteLayout?: PetSpriteLayout; source?: { kind?: "catalog"; preview?: string } | { kind: "codex"; path: string } };
+type PetEntry = { id: string; displayName: string; description?: string; searchText?: string; preview?: string; thumbnail?: string; spritesheet?: string; spriteLayout?: PetSpriteLayout; category?: "western" | "asian"; original?: boolean; featured?: boolean; catalogPage?: number; sourceKind?: "installed" | "catalog" | "codex"; installed?: boolean; builtIn?: boolean; protected?: boolean; broken?: boolean; brokenReason?: string };
 type SearchPetEntry = Pick<PetEntry, "id" | "displayName" | "category" | "original" | "featured"> & { searchText?: string; catalogPage?: number };
 type StateSnapshot = { preferences: { defaultPetId: string }; pets: { installed: InstalledPet[] } };
 type CatalogState = { pets: PetEntry[]; source: string; error?: string; page?: number; pageCount?: number; total?: number; categories?: { id: "western" | "asian"; label: string; count: number }[]; originalsCount?: number; featuredCount?: number };
@@ -43,8 +44,8 @@ type LanTopologyIssue = { code: "self_reference" | "missing_reverse"; host: stri
 type LanStatusSnapshot = { mode: "off" | "server" | "client"; localHost: string; serverUrl: string; port: number; auth: "token" | "none"; authSource: "env" | "stored" | "generated" | "none"; authInsecure: boolean; tokenHint: string | null; topologyHosts: number; topologyLinks: number; topologyIssues: LanTopologyIssue[]; currentHost: string | null; clients: Array<{ host: string; lastSeen: number; position?: { x: number; y: number } }>; updatedAt: number; persistedCurrentHost: string | null; persistedUpdatedAt: number | null };
 type UpdateStatus = { state: "idle" | "checking" | "available" | "current" | "error"; currentVersion: string; latestVersion?: string; releaseUrl?: string; checkedAt?: number; error?: string };
 type DashboardActivity = { messagesSent: number; reactionsSent: number; reactionCounts: Record<string, number>; perPetActivityCounts: Record<string, number>; lastActivityAt?: number };
-type DashboardSnapshot = { defaultPet: { id: string; displayName: string; previewSpriteUrl: string }; installedPetCount: number; catalog: { source: string; total?: number; page?: number; pageCount?: number; error?: string }; plugins: { installed: number; enabled: number; broken: number }; updateStatus: UpdateStatus; activity: DashboardActivity };
-type ReactionAnimationSettings = { reactions: { id: string; label: string; description: string; defaultAnimation: UserSelectableAnimationState }[]; animations: { id: UserSelectableAnimationState; label: string; description: string }[]; sprite: { frameWidth: number; frameHeight: number; columns: number; rows: number; states: Record<UserSelectableAnimationState, { row: number; frames: number; durationMs: number; iterations?: number | "infinite" }> }; overrides: ReactionAnimationOverrides; previewSpriteUrl: string; waitingAnimationDurationMs: number; waitingAnimationDurationOptions: { value: number; label: string }[] };
+type DashboardSnapshot = { defaultPet: { id: string; displayName: string; previewSpriteUrl: string; spriteLayout: PetSpriteLayout }; installedPetCount: number; catalog: { source: string; total?: number; page?: number; pageCount?: number; error?: string }; plugins: { installed: number; enabled: number; broken: number }; updateStatus: UpdateStatus; activity: DashboardActivity };
+type ReactionAnimationSettings = { reactions: { id: string; label: string; description: string; defaultAnimation: UserSelectableAnimationState }[]; animations: { id: UserSelectableAnimationState; label: string; description: string }[]; sprite: PetSpriteLayout & { states: Record<UserSelectableAnimationState, { row: number; frames: number; durationMs: number; iterations?: number | "infinite" }> }; overrides: ReactionAnimationOverrides; previewSpriteUrl: string; waitingAnimationDurationMs: number; waitingAnimationDurationOptions: { value: number; label: string }[] };
 type PluginFilter = "all" | "installed" | "catalog" | "local" | "broken";
 type PluginPermission =
   | "pet:speak" | "pet:reaction" | "pet:move" | "timer" | "schedule" | "storage" | "status" | "commands" | "network"
@@ -700,7 +701,7 @@ function DashboardView({ onNavigate }: { onNavigate: (route: Route) => void }) {
           </div>
         </div>
         <div className="dashboard-hero-pet">
-          <SpriteFrame src={defaultPet.previewSpriteUrl} label={defaultPet.displayName} state="idle" size="detail" />
+          <SpriteFrame src={defaultPet.previewSpriteUrl} label={defaultPet.displayName} spriteLayout={defaultPet.spriteLayout} state="idle" size="detail" />
         </div>
       </section>
 
@@ -1057,16 +1058,18 @@ const spriteStates = {
   happy: { row: 4, frames: 5, duration: "1.35s" },
 } as const;
 
-function SpriteFrame({ src, label, state = "idle", size = "detail" }: { src?: string; label: string; state?: "idle" | "thinking" | "happy" | "wave"; size?: "thumb" | "detail" | "mini" }) {
+function SpriteFrame({ src, label, spriteLayout, state = "idle", size = "detail" }: { src?: string; label: string; spriteLayout?: PetSpriteLayout; state?: "idle" | "thinking" | "happy" | "wave"; size?: "thumb" | "detail" | "mini" }) {
   const safeSrc = safePetImage(src);
   if (!safeSrc) return <img src={defaultThumbUrl} alt="" />;
   const frame = spriteFrameSizes[size];
   const sprite = spriteStates[state];
-  const xValues = Array.from({ length: sprite.frames }, (_, index) => String(-index * frame.width)).join(";");
-  const y = -sprite.row * frame.height;
+  const preview = buildPetSpritePreviewModel(spriteLayout, sprite, state === "idle");
+  const xValues = preview.frameColumns.map((column) => String(-column * frame.width)).join(";");
+  const x = -(preview.frameColumns[0] ?? 0) * frame.width;
+  const y = -preview.row * frame.height;
   return <svg className={`sprite-frame sprite-${state} sprite-${size}`} width={frame.width} height={frame.height} viewBox={`0 0 ${frame.width} ${frame.height}`} role="img" aria-label={label}>
-    <image href={safeSrc} x="0" y={y} width={frame.width * 8} height={frame.height * 9} preserveAspectRatio="none" onError={() => logPetsError("sprite-failed", { label, state, size, src: imageDebug(safeSrc) })}>
-      <animate attributeName="x" values={xValues} dur={sprite.duration} repeatCount="indefinite" calcMode="discrete" />
+    <image href={safeSrc} x={x} y={y} width={frame.width * preview.atlasColumns} height={frame.height * preview.atlasRows} preserveAspectRatio="none" onError={() => logPetsError("sprite-failed", { label, state, size, src: imageDebug(safeSrc) })}>
+      {preview.animated && <animate attributeName="x" values={xValues} dur={sprite.duration} repeatCount="indefinite" calcMode="discrete" />}
     </image>
   </svg>;
 }
@@ -1216,14 +1219,16 @@ function ReactionPreviewSprite({ settings, state }: { settings: ReactionAnimatio
   const { t } = useI18n();
   const frame = { width: settings.sprite.frameWidth, height: settings.sprite.frameHeight };
   const sprite = settings.sprite.states[state] ?? settings.sprite.states.idle;
-  const xValues = Array.from({ length: sprite.frames }, (_, index) => String(-index * frame.width)).join(";");
-  const y = -sprite.row * frame.height;
+  const preview = buildPetSpritePreviewModel(settings.sprite, sprite, state === "idle");
+  const xValues = preview.frameColumns.map((column) => String(-column * frame.width)).join(";");
+  const x = -(preview.frameColumns[0] ?? 0) * frame.width;
+  const y = -preview.row * frame.height;
 
   return (
     <div className="reaction-preview-sprite-shell">
       <svg className="reaction-preview-sprite" width={frame.width} height={frame.height} viewBox={`0 0 ${frame.width} ${frame.height}`} role="img" aria-label={t("settings.reactions.previewAria", { state })}>
-        <image href={settings.previewSpriteUrl} x="0" y={y} width={frame.width * settings.sprite.columns} height={frame.height * settings.sprite.rows} preserveAspectRatio="none">
-          <animate attributeName="x" values={xValues} dur={`${sprite.durationMs}ms`} repeatCount="indefinite" calcMode="discrete" />
+        <image href={settings.previewSpriteUrl} x={x} y={y} width={frame.width * preview.atlasColumns} height={frame.height * preview.atlasRows} preserveAspectRatio="none">
+          {preview.animated && <animate attributeName="x" values={xValues} dur={`${sprite.durationMs}ms`} repeatCount="indefinite" calcMode="discrete" />}
         </image>
       </svg>
     </div>
@@ -5066,6 +5071,7 @@ function ControlCenter({ onAppearanceThemeChange }: { onAppearanceThemeChange: (
       const localSpritesheet = p.id && !catalogPet && !codexPet && !p.builtIn ? installedPetSpritesheetUrl(p.id) : undefined;
       const spritesheet = safePetImage(codexPet?.spritesheet) || safePetImage(catalogPet?.spritesheet) || safePetImage(localSpritesheet);
       const preview = safePetImage(codexPet?.preview) || safePetImage(catalogPet?.preview) || safePetImage(catalogPet?.thumbnail) || safePetImage(p.source && "preview" in p.source ? (p.source as { preview?: string }).preview : undefined) || safePetImage(localSpritesheet) || defaultThumbUrl;
+      const spriteLayout = codexPet?.spriteLayout ?? catalogPet?.spriteLayout ?? p.spriteLayout;
       const category = catalogPet?.category;
       const original = catalogPet?.original;
       const featured = catalogPet?.featured;
@@ -5073,6 +5079,7 @@ function ControlCenter({ onAppearanceThemeChange }: { onAppearanceThemeChange: (
         ...p,
         spritesheet,
         preview,
+        spriteLayout,
         category,
         original,
         featured,
@@ -5163,7 +5170,7 @@ function ControlCenter({ onAppearanceThemeChange }: { onAppearanceThemeChange: (
 
   useEffect(() => {
     if (!selected) return;
-    logPetsEvent("selected-pet", { id: selected.id, sourceKind: selected.sourceKind, installed: selected.installed, builtIn: selected.builtIn, preview: imageDebug(selected.preview), spritesheet: imageDebug(selected.spritesheet), hasSafePreview: Boolean(safePetImage(selected.preview)), hasSafeSpritesheet: Boolean(safePetImage(selected.spritesheet)), catalogPages: Object.keys(catalogPages).join(",") });
+    logPetsEvent("selected-pet", { id: selected.id, sourceKind: selected.sourceKind, installed: selected.installed, builtIn: selected.builtIn, spriteVersion: selected.spriteLayout?.version, spriteRows: selected.spriteLayout?.rows, preview: imageDebug(selected.preview), spritesheet: imageDebug(selected.spritesheet), hasSafePreview: Boolean(safePetImage(selected.preview)), hasSafeSpritesheet: Boolean(safePetImage(selected.spritesheet)), catalogPages: Object.keys(catalogPages).join(",") });
   }, [selected]);
 
   const statusText = useMemo(() => {
@@ -5327,7 +5334,7 @@ function ControlCenter({ onAppearanceThemeChange }: { onAppearanceThemeChange: (
                 >
                   <span className="thumb">
                     {useSpritesheetFrame ? (
-                      <SpriteFrame src={pet.spritesheet} label={t("pets.spriteLabel.thumbnail", { name: pet.displayName })} size="thumb" />
+                      <SpriteFrame src={pet.spritesheet} label={t("pets.spriteLabel.thumbnail", { name: pet.displayName })} spriteLayout={pet.spriteLayout} size="thumb" />
                     ) : (
                       <PetImage src={pet.preview} debugLabel={`${pet.id}:card`} />
                     )}
@@ -5437,7 +5444,7 @@ function ControlCenter({ onAppearanceThemeChange }: { onAppearanceThemeChange: (
                 <div className="plugin-inspector-head">
                   <span className="plugin-inspector-icon">
                     {safePetImage(selected.spritesheet) ? (
-                      <SpriteFrame src={selected.spritesheet} label={t("pets.spriteLabel.thumb", { name: selected.displayName })} size="thumb" />
+                      <SpriteFrame src={selected.spritesheet} label={t("pets.spriteLabel.thumb", { name: selected.displayName })} spriteLayout={selected.spriteLayout} size="thumb" />
                     ) : (
                       <PetImage src={selected.preview} debugLabel={`${selected.id}:thumb`} />
                     )}
@@ -5454,7 +5461,7 @@ function ControlCenter({ onAppearanceThemeChange }: { onAppearanceThemeChange: (
                     <p className="desc">{selected.description || selected.id}</p>
                     <div className="stage">
                       {safePetImage(selected.spritesheet) ? (
-                        <SpriteFrame src={selected.spritesheet} label={t("pets.spriteLabel.animatedPreview", { name: selected.displayName })} />
+                        <SpriteFrame src={selected.spritesheet} label={t("pets.spriteLabel.animatedPreview", { name: selected.displayName })} spriteLayout={selected.spriteLayout} />
                       ) : (
                         <PetImage src={selected.preview} debugLabel={`${selected.id}:detail-fallback`} />
                       )}
@@ -5479,7 +5486,7 @@ function ControlCenter({ onAppearanceThemeChange }: { onAppearanceThemeChange: (
                         { label: t("pets.detail.preview.wave"), state: "wave" as const },
                       ].map((previewState) => (
                         <article key={previewState.state} className="pet-preview-item">
-                          <SpriteFrame src={selected.spritesheet} label={t("pets.spriteLabel.statePreview", { name: selected.displayName, state: previewState.label })} state={previewState.state} size="mini" />
+                          <SpriteFrame src={selected.spritesheet} label={t("pets.spriteLabel.statePreview", { name: selected.displayName, state: previewState.label })} spriteLayout={selected.spriteLayout} state={previewState.state} size="mini" />
                           <span className="text-xs font-bold text-slatecopy">{previewState.label}</span>
                         </article>
                       ))}
