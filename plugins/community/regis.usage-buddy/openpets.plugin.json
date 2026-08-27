@@ -1,0 +1,75 @@
+{
+  "manifestVersion": 3,
+  "id": "regis.usage-buddy",
+  "name": "$t:plugin.name",
+  "description": "$t:plugin.description",
+  "version": "1.0.0",
+  "runtime": "javascript",
+  "icon": "sparkles",
+  "sdkVersion": "3.0.0",
+  "entry": "index.js",
+  "permissions": [
+    "pet:speak",
+    "pet:reaction",
+    "commands",
+    "status",
+    "schedule",
+    "network",
+    "network:local",
+    "storage"
+  ],
+  "network": {
+    "hosts": ["127.0.0.1:45455"]
+  },
+  "assets": {
+    "icons": {
+      "starter": "assets/icon.svg"
+    }
+  },
+  "configSchema": {
+    "pollSeconds": {
+      "type": "number",
+      "label": "$t:config.pollSeconds.label",
+      "description": "$t:config.pollSeconds.description",
+      "default": 60,
+      "min": 15
+    },
+    "port": {
+      "type": "number",
+      "label": "$t:config.port.label",
+      "description": "$t:config.port.description",
+      "default": 45455
+    },
+    "providerFilter": {
+      "type": "select",
+      "label": "$t:config.providerFilter.label",
+      "description": "$t:config.providerFilter.description",
+      "default": "both",
+      "options": [
+        { "value": "both", "label": "$t:config.providerFilter.both" },
+        { "value": "claude", "label": "$t:config.providerFilter.claude" },
+        { "value": "codex", "label": "$t:config.providerFilter.codex" }
+      ]
+    },
+    "thresholds": {
+      "type": "text",
+      "label": "$t:config.thresholds.label",
+      "description": "$t:config.thresholds.description",
+      "default": "50,75,90,100",
+      "maxLength": 40
+    },
+    "quietStatus": {
+      "type": "boolean",
+      "label": "$t:config.quietStatus.label",
+      "description": "$t:config.quietStatus.description",
+      "default": false
+    },
+    "hiddenWindows": {
+      "type": "text",
+      "label": "$t:config.hiddenWindows.label",
+      "description": "$t:config.hiddenWindows.description",
+      "default": "nimbus_quill",
+      "maxLength": 200
+    }
+  }
+}

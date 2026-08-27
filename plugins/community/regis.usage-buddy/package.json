@@ -1,0 +1,12 @@
+{
+  "name": "openpets-plugin-starter",
+  "version": "1.0.0",
+  "description": "Starter template for building an OpenPets community plugin.",
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-vm-modules test.js"
+  },
+  "devDependencies": {
+    "@open-pets/plugin-sdk": "^3.0.0"
+  }
+}
