@@ -64,18 +64,15 @@ if (process.platform === "win32") {
 // and manual drag will not function under native Wayland.
 const isLinux = process.platform === "linux";
 const allowWayland = process.env.OPENPETS_ALLOW_WAYLAND === "1";
+const layerShellBackend = isLinux && process.env.OPENPETS_NATIVE_WAYLAND === "1";
 
 // In layer-shell mode the pet is carried by the native helper's overlay
-// surface; the hidden offscreen renderer only composites frames for it. GPU
-// compositing is not needed there and Chromium's GPU process can crash on some
-// Wayland/ANGLE stacks (observed as SIGSEGV under Niri), stalling offscreen
-// frame production. Force software rendering to keep the frame stream stable.
-if (isLinux && process.env.OPENPETS_NATIVE_WAYLAND === "1") {
-  app.disableHardwareAcceleration();
-  // The pet's sprite animation is pure CSS. Chromium throttles animations and
-  // timers for background/hidden renderers (the offscreen pet window is never
-  // shown), which would freeze the animation and stall the frame stream. These
-  // switches keep the hidden renderer actively animating.
+// surface; the hidden offscreen renderer only composites frames for it. The
+// pet's sprite animation is pure CSS, and Chromium throttles animations and
+// timers for background/hidden renderers (the offscreen pet window is never
+// shown), which would freeze the animation and stall the frame stream. These
+// switches keep the hidden renderer actively animating.
+if (layerShellBackend) {
   app.commandLine.appendSwitch("disable-renderer-backgrounding");
   app.commandLine.appendSwitch("disable-background-timer-throttling");
   app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
@@ -87,10 +84,19 @@ const hasExplicitOzonePlatformArg = process.argv.some(
 // switch: Electron honours the system default (typically wayland on a Wayland
 // session, or any explicit --ozone-platform the user passed) and we warn at
 // startup that positioning/gravity/walkabout/drag are unsupported there.
-if (isLinux && !allowWayland) {
+//
+// In layer-shell mode the pet is a native Wayland layer-shell surface (owned by
+// the helper) and the pet's own renderer is a hidden offscreen window, so
+// Electron's ozone platform only matters for the Control Center and other
+// ordinary windows. Under Niri, XWayland (x11) windows are unreliable (they may
+// not map), so layer-shell mode forces native Wayland for those instead.
+if (isLinux && !allowWayland && !layerShellBackend) {
   // Force x11 even if the user passed --ozone-platform=wayland or auto;
   // we overwrite any pre-existing switch so nothing silently slips through.
   app.commandLine.appendSwitch("ozone-platform", "x11");
+}
+if (layerShellBackend && !hasExplicitOzonePlatformArg) {
+  app.commandLine.appendSwitch("ozone-platform", "wayland");
 }
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();

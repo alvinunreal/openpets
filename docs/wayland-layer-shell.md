@@ -28,7 +28,7 @@ process owns the surface, and the existing renderer keeps producing the pet:
 ```text
 OpenPets Electron main process (pet runtime / animation unchanged)
         │  hidden offscreen BrowserWindow renders the same pet HTML page
-        │  `capturePage()` → BGRA frames
+        │  offscreen frame stream → BGRA frames
         │  Unix socket (XDG_RUNTIME_DIR)
         ▼
 openpets-wayland-helper   (Rust, smithay-client-toolkit)
@@ -109,9 +109,13 @@ The binary is expected at
   but only Niri has been verified).
 - Settings UI / auto backend detection / packaging the helper binary into the
   released app.
-- The offscreen renderer uses `capturePage()` polling (`~30 fps`); a more
-  efficient `beginFrameSubscription` path is a future optimization (it is flaky
-  for windows that are never shown on screen).
+- Frame streaming prefers the event-driven `beginFrameSubscription` and falls
+  back to `capturePage` polling; frame polling pauses while the pet is being
+  dragged so pointer-motion stays responsive.
+- In layer-shell mode Electron runs on the native Wayland ozone backend, so
+  ordinary windows (Control Center, plugin panels) are native Wayland windows
+  that compositors display normally — only the pet itself is a layer-shell
+  overlay surface.
 
 ## Known limitations
 
