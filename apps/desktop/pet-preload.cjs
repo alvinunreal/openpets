@@ -524,6 +524,8 @@ const installLayerShellContextMenu = () => {
     setInteractiveHit(true, "context-menu");
   });
 
+  ipcRenderer.on("openpets:pet-menu-close", close);
+
   document.addEventListener("mousedown", (event) => {
     if (overlay && !overlay.contains(event.target)) close();
   });

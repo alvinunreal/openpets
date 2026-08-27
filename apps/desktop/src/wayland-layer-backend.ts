@@ -200,10 +200,49 @@ class LayerShellSurface {
       throw new Error(`failed to spawn ${this.helperPath}`);
     }
     this.helper = child;
+    child.on("exit", () => this.restart());
 
     // The helper binds its socket shortly after launch; retry the connect so
     // we never lose the race against a fresh process.
     this.connectWithRetry(0);
+  }
+
+  /**
+   * The helper process exited (crash, lock screen, session teardown) — spawn
+   * a fresh one and re-establish the surface so the pet does not vanish until
+   * the whole app is restarted.
+   */
+  private restart(): void {
+    if (this.destroyed) return;
+    info("pet.wayland", "helper exited; restarting layer-shell surface", { socketPath: this.socketPath });
+    if (this.socket) {
+      try {
+        this.socket.destroy();
+      } catch {
+        // already closed
+      }
+      this.socket = null;
+    }
+    this.connected = false;
+    this.ready = false;
+    this.pending = [];
+    this.socketBuffer = Buffer.alloc(0);
+    // A killed helper can leave a stale socket file behind; the new helper's
+    // `bind` would fail on it, so remove it first.
+    try {
+      if (existsSync(this.socketPath)) unlinkSync(this.socketPath);
+    } catch {
+      // ignore
+    }
+    const child = spawnHelper(this.helperPath, this.socketPath, this.width, this.height, this.position);
+    if (!child) {
+      logError("pet.wayland", "helper restart failed", { socketPath: this.socketPath });
+      return;
+    }
+    this.helper = child;
+    child.on("exit", () => this.restart());
+    this.connectWithRetry(0);
+    if (!this.visible) this.write(encodeMessage(TAG_HIDE, Buffer.alloc(0)));
   }
 
   private connectWithRetry(attempt: number): void {
@@ -286,7 +325,19 @@ class LayerShellSurface {
     if (!this.window || this.window.isDestroyed() || this.window.webContents.isDestroyed()) {
       return;
     }
-    if (kind === PT_ENTER || kind === PT_LEAVE) return;
+    if (kind === PT_ENTER) return;
+    if (kind === PT_LEAVE) {
+      // Pointer left the pet surface. The inline context menu (if open) must
+      // close: clicks outside the surface (desktop / other windows) never
+      // reach the offscreen renderer, and layer-shell has no keyboard focus
+      // (Escape can't arrive), so this Leave is the only reliable signal.
+      try {
+        this.window.webContents.send("openpets:pet-menu-close");
+      } catch {
+        // webContents may be mid-teardown
+      }
+      return;
+    }
     // The helper moves the surface itself while dragging (absolute anchor, so
     // it tracks the cursor precisely); here we just pause frame polling so
     // pointer-motion messages stay responsive and resume on release.
@@ -350,6 +401,12 @@ class LayerShellSurface {
     if (!this.window || this.window.isDestroyed() || this.window.webContents.isDestroyed()) {
       debug("pet.wayland", "frame streaming skipped (window not ready)", {});
       return;
+    }
+    // A re-attach (helper restart) must stop any previous polling timer first,
+    // otherwise old captures and a fresh subscription would double-send frames.
+    if (this.frameTimer) {
+      clearInterval(this.frameTimer);
+      this.frameTimer = null;
     }
     debug("pet.wayland", "frame streaming attached", { windowId: this.window.id });
     let lastBitmap: Buffer | null = null;
