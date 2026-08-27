@@ -20,7 +20,8 @@ import type { PluginBubbleIndicator, PluginCommandForm, PluginBubbleHud, PluginB
 import { defaultPetSprite, getConfiguredSpriteCacheKey, getConfiguredSpriteStates, motionToSpriteState, resolveReactionSpriteState, type PetMotionState, type SpriteStateDefinition, type UniversalSpriteState } from "./reaction-animation-mapping.js";
 import { isFocusActionAvailable } from "./capabilities.js";
 import { canForwardMouseEvents as platformCanForwardMouseEvents, shouldWatchForwardedMouseEvents } from "./mouse-forwarding.js";
-import { computeEffectiveWaylandBackend, shouldPetWindowBeFocusable } from "./wayland-backend.js";
+import { computeEffectiveWaylandBackend, isLayerShellBackendRequested, shouldPetWindowBeFocusable } from "./wayland-backend.js";
+import { adoptPetWindowForLayerShell, isLayerShellHelperAvailable } from "./wayland-layer-backend.js";
 
 export interface PetWindowInteractionHooks {
   readonly onBubbleDismissed?: (dismissToken: string) => void;
@@ -147,9 +148,12 @@ export function _resetEffectiveWaylandBackendCache(): void {
 /**
  * Whether to use Wayland native window-move drag instead of the manual
  * setBounds drag path.  Under x11/XWayland the manual path works correctly.
+ * In layer-shell mode the pet is dragged by the native helper (which moves
+ * the overlay surface directly), so the renderer must not participate in the
+ * manual setBounds drag either — it would fight the helper's own motion.
  */
 export function shouldUseWaylandNativePetDrag(): boolean {
-  return isEffectiveWaylandBackend();
+  return isEffectiveWaylandBackend() || shouldUseLayerShellBackend();
 }
 
 export function isPetWindowDragging(window: BrowserWindow): boolean {
@@ -208,14 +212,47 @@ export function recoverPetMouseInterop(window: BrowserWindow, reason: string): v
 
 function installPetContextMenu(window: BrowserWindow, action: { readonly label: string; readonly click: () => void; readonly defaultPet?: boolean; readonly focusSessionWindow?: () => void; readonly talk?: () => void; readonly talkLabel?: () => Promise<string> }): void {
   const webContents = window.webContents;
-  const handleContextMenu = (event: Electron.Event): void => {
+  let layerShellClicks: Array<() => void> = [];
+
+  const handleContextMenu = (event: Electron.Event, params: Electron.ContextMenuParams): void => {
     event.preventDefault();
     if (window.isDestroyed()) return;
+    if (shouldUseLayerShellBackend()) {
+      void buildPetContextMenuTemplate(action).then((template) => {
+        let nextClickIndex = 0;
+        layerShellClicks = [];
+        const flatten = (items: readonly Electron.MenuItemConstructorOptions[]): unknown[] =>
+          items.map((item) => {
+            if (item.type === "separator") return { type: "separator" };
+            const out: { label?: string; submenu?: unknown[]; clickIndex?: number } = { label: item.label };
+            if (item.submenu) out.submenu = flatten(item.submenu as readonly Electron.MenuItemConstructorOptions[]);
+            if (typeof item.click === "function") {
+              out.clickIndex = nextClickIndex++;
+              layerShellClicks.push(item.click as unknown as () => void);
+            }
+            return out;
+          });
+        webContents.send("openpets:pet-menu-data", { x: params.x, y: params.y, items: flatten(template) });
+      }).catch((error: unknown) => {
+        logError("pet.window", "layer-shell context menu build failed", error instanceof Error ? error : { error });
+      });
+      return;
+    }
     void buildPetContextMenuTemplate(action).then((template) => Menu.buildFromTemplate(template).popup({ window })).catch((error) => { logError("pet.window", "context menu build failed", error); Menu.buildFromTemplate([{ label: action.label, click: action.click }]).popup({ window }); });
   };
+
+  const handleLayerShellSelect = (event: IpcMainEvent, index: unknown): void => {
+    if (event.sender !== webContents || !shouldUseLayerShellBackend()) return;
+    const click = layerShellClicks[Number(index)];
+    layerShellClicks = [];
+    if (click) click();
+  };
+
   webContents.on("context-menu", handleContextMenu);
+  ipcMain.on("openpets:pet-menu-select", handleLayerShellSelect);
   window.once("closed", () => {
     if (!webContents.isDestroyed()) webContents.off("context-menu", handleContextMenu);
+    ipcMain.removeListener("openpets:pet-menu-select", handleLayerShellSelect);
   });
 }
 
@@ -664,6 +701,19 @@ function isScreenPoint(value: unknown): value is { readonly screenX: number; rea
 }
 
 function createBasePetWindow(title: string, position: Point, focusOptions: { readonly hasInteractiveInput?: boolean } = {}): BrowserWindow {
+  return createBasePetWindowWithMode(title, position, focusOptions, shouldUseLayerShellBackend());
+}
+
+/**
+ * Whether the experimental native Wayland layer-shell backend should carry pet
+ * windows. Opt-in via `OPENPETS_NATIVE_WAYLAND=1` and only when the native
+ * helper binary is present. See `wayland-layer-backend.ts`.
+ */
+export function shouldUseLayerShellBackend(): boolean {
+  return isLayerShellBackendRequested(process.platform, process.env) && isLayerShellHelperAvailable();
+}
+
+function createBasePetWindowWithMode(title: string, position: Point, focusOptions: { readonly hasInteractiveInput?: boolean }, useLayerShell: boolean): BrowserWindow {
   const effectiveWaylandBackend = isEffectiveWaylandBackend();
   const focusable = shouldPetWindowBeFocusable(process.platform, effectiveWaylandBackend, focusOptions.hasInteractiveInput === true);
   const window = new BrowserWindow({
@@ -684,11 +734,20 @@ function createBasePetWindow(title: string, position: Point, focusOptions: { rea
     show: false,
     hasShadow: false,
     backgroundColor: "#00000000",
+    // In layer-shell mode this window never appears on screen — it only
+    // renders the pet page offscreen so its frames can be streamed to the
+    // native layer-shell helper. The visible pet is the helper's overlay
+    // surface, not this window. `paintWhenInitiallyHidden` must be a
+    // top-level option so the hidden renderer keeps painting (and therefore
+    // `beginFrameSubscription` keeps producing frames); `offscreen` and
+    // `backgroundThrottling` belong in webPreferences.
+    ...(useLayerShell ? { paintWhenInitiallyHidden: true } : {}),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
       preload: join(app.getAppPath(), "pet-preload.cjs"),
+      ...(useLayerShell ? { offscreen: true, backgroundThrottling: false } : {}),
     },
   });
 
@@ -748,6 +807,20 @@ function createBasePetWindow(title: string, position: Point, focusOptions: { rea
     logError("pet.window", "renderer process gone", { windowId: window.id, details });
     console.error("Default pet renderer process gone.", details);
   });
+
+  if (useLayerShell) {
+    try {
+      // Adopt the window into a native layer-shell surface. This patches the
+      // display-facing methods on the instance so the rest of the pet stack
+      // (controllers, motion engine, content loading) keeps working unchanged
+      // while the visible carrier is the helper's overlay surface.
+      adoptPetWindowForLayerShell(window, position);
+    } catch (error) {
+      logError("pet.window", "layer-shell adoption failed; falling back to a normal window", error instanceof Error ? error : { error });
+      if (!window.isDestroyed()) window.destroy();
+      return createBasePetWindowWithMode(title, position, focusOptions, false);
+    }
+  }
 
   return window;
 }
