@@ -21,6 +21,7 @@ export default defineMeta({
     "troubleshooting",
     "lan-mode",
     "wayland",
+    "wayland-layer-shell",
     "architecture",
     "development",
     "testing-and-validation",
