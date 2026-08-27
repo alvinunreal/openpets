@@ -442,6 +442,96 @@ ipcRenderer.on("openpets:tts-audio-stop", (_event, payload) => {
   stopMatchingTts(typeof payload?.requestId === "string" ? payload.requestId : undefined, "audio");
 });
 
+const installLayerShellContextMenu = () => {
+  let overlay = null;
+  const style = document.createElement("style");
+  style.textContent = `
+    .openpets-context-menu { position: fixed; z-index: 1000; box-sizing: border-box; overflow: auto; padding: 4px; border: 1px solid rgba(30,41,59,.16); border-radius: 8px; background: rgba(255,255,255,.98); box-shadow: 0 10px 30px rgba(15,23,42,.2), 0 2px 6px rgba(15,23,42,.1); color: #1e293b; font: 13px/1.35 system-ui,sans-serif; pointer-events: auto; -webkit-app-region: no-drag; }
+    .openpets-context-item { display: block; box-sizing: border-box; width: 100%; min-height: 30px; margin: 0; border: 0; border-radius: 5px; padding: 6px 12px; background: transparent; color: inherit; font: inherit; text-align: left; white-space: nowrap; cursor: pointer; }
+    .openpets-context-item:hover { background: rgba(37,99,235,.12); }
+    button.openpets-context-item:disabled { color: #94a3b8; cursor: default; }
+    .openpets-context-separator { height: 1px; margin: 4px 7px; background: rgba(30,41,59,.11); }
+    .openpets-context-group { margin: 0; }
+    .openpets-context-group > summary { list-style: none; padding-right: 24px; position: relative; }
+    .openpets-context-group > summary::-webkit-details-marker { display: none; }
+    .openpets-context-group > summary::after { content: "›"; position: absolute; right: 10px; }
+    .openpets-context-group[open] > summary::after { transform: rotate(90deg); }
+    .openpets-context-children { padding-left: 8px; }
+  `;
+  document.head.appendChild(style);
+
+  const close = () => {
+    overlay?.remove();
+    overlay = null;
+  };
+
+  const appendItems = (items, container, depth = 0) => {
+    for (const item of items || []) {
+      if (item.type === "separator") {
+        const separator = document.createElement("div");
+        separator.className = "openpets-context-separator";
+        container.appendChild(separator);
+        continue;
+      }
+      if (item.submenu?.length) {
+        const group = document.createElement("details");
+        group.className = "openpets-context-group";
+        const summary = document.createElement("summary");
+        summary.className = "openpets-context-item";
+        summary.textContent = item.label || "";
+        group.appendChild(summary);
+        const children = document.createElement("div");
+        children.className = "openpets-context-children";
+        appendItems(item.submenu, children, depth + 1);
+        group.appendChild(children);
+        container.appendChild(group);
+        continue;
+      }
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "openpets-context-item";
+      row.textContent = item.label || "";
+      row.style.paddingLeft = `${12 + depth * 12}px`;
+      row.disabled = typeof item.clickIndex !== "number";
+      if (!row.disabled) row.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const index = item.clickIndex;
+        close();
+        ipcRenderer.send("openpets:pet-menu-select", index);
+      });
+      container.appendChild(row);
+    }
+  };
+
+  ipcRenderer.on("openpets:pet-menu-data", (_event, menu) => {
+    close();
+    const root = document.createElement("div");
+    root.className = "openpets-context-menu";
+    root.addEventListener("mousedown", (event) => event.stopPropagation());
+    root.addEventListener("contextmenu", (event) => event.preventDefault());
+    appendItems(menu?.items, root);
+    document.body.appendChild(root);
+
+    const width = 232;
+    const maxHeight = Math.min(360, Math.max(120, window.innerHeight - 12));
+    const requestedX = Number.isFinite(menu?.x) ? menu.x : window.innerWidth / 2;
+    const requestedY = Number.isFinite(menu?.y) ? menu.y : window.innerHeight / 2;
+    root.style.width = `${width}px`;
+    root.style.maxHeight = `${maxHeight}px`;
+    root.style.left = `${Math.max(6, Math.min(requestedX, window.innerWidth - width - 6))}px`;
+    root.style.top = `${Math.max(6, Math.min(requestedY, window.innerHeight - Math.min(root.scrollHeight, maxHeight) - 6))}px`;
+    overlay = root;
+    setInteractiveHit(true, "context-menu");
+  });
+
+  document.addEventListener("mousedown", (event) => {
+    if (overlay && !overlay.contains(event.target)) close();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") close();
+  });
+};
+
 const installMouseInterop = () => {
   lastInteractiveHit = null;
   dragging = false;
@@ -453,6 +543,7 @@ const installMouseInterop = () => {
     dismissBubble(event);
   });
   installPetSenses();
+  if (usesNativePetDrag()) installLayerShellContextMenu();
 
   let dragStartPoint = null;
 

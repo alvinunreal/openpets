@@ -212,102 +212,47 @@ export function recoverPetMouseInterop(window: BrowserWindow, reason: string): v
 
 function installPetContextMenu(window: BrowserWindow, action: { readonly label: string; readonly click: () => void; readonly defaultPet?: boolean; readonly focusSessionWindow?: () => void; readonly talk?: () => void; readonly talkLabel?: () => Promise<string> }): void {
   const webContents = window.webContents;
-  const handleContextMenu = (event: Electron.Event): void => {
+  let layerShellClicks: Array<() => void> = [];
+
+  const handleContextMenu = (event: Electron.Event, params: Electron.ContextMenuParams): void => {
     event.preventDefault();
     if (window.isDestroyed()) return;
     if (shouldUseLayerShellBackend()) {
-      // The pet's offscreen window cannot host a native Menu.popup on Wayland
-      // (the menu would not be shown), so show the menu in a standalone window.
-      showLayerShellContextMenu(action);
+      void buildPetContextMenuTemplate(action).then((template) => {
+        let nextClickIndex = 0;
+        layerShellClicks = [];
+        const flatten = (items: readonly Electron.MenuItemConstructorOptions[]): unknown[] =>
+          items.map((item) => {
+            if (item.type === "separator") return { type: "separator" };
+            const out: { label?: string; submenu?: unknown[]; clickIndex?: number } = { label: item.label };
+            if (item.submenu) out.submenu = flatten(item.submenu as readonly Electron.MenuItemConstructorOptions[]);
+            if (typeof item.click === "function") {
+              out.clickIndex = nextClickIndex++;
+              layerShellClicks.push(item.click as unknown as () => void);
+            }
+            return out;
+          });
+        webContents.send("openpets:pet-menu-data", { x: params.x, y: params.y, items: flatten(template) });
+      }).catch((error: unknown) => {
+        logError("pet.window", "layer-shell context menu build failed", error instanceof Error ? error : { error });
+      });
       return;
     }
     void buildPetContextMenuTemplate(action).then((template) => Menu.buildFromTemplate(template).popup({ window })).catch((error) => { logError("pet.window", "context menu build failed", error); Menu.buildFromTemplate([{ label: action.label, click: action.click }]).popup({ window }); });
   };
+
+  const handleLayerShellSelect = (event: IpcMainEvent, index: unknown): void => {
+    if (event.sender !== webContents || !shouldUseLayerShellBackend()) return;
+    const click = layerShellClicks[Number(index)];
+    layerShellClicks = [];
+    if (click) click();
+  };
+
   webContents.on("context-menu", handleContextMenu);
+  ipcMain.on("openpets:pet-menu-select", handleLayerShellSelect);
   window.once("closed", () => {
     if (!webContents.isDestroyed()) webContents.off("context-menu", handleContextMenu);
-  });
-}
-
-/**
- * Show the pet's context menu in a small standalone window (used by the
- * layer-shell backend, where `Menu.popup` on the offscreen pet window would not
- * be displayed on Wayland). Menu items come from the same builder as the native
- * menu; clicks are routed back over IPC.
- */
-function showLayerShellContextMenu(action: { readonly label: string; readonly click: () => void; readonly defaultPet?: boolean; readonly focusSessionWindow?: () => void; readonly talk?: () => void; readonly talkLabel?: () => Promise<string> }): void {
-  void buildPetContextMenuTemplate(action).then((template) => {
-    // Flatten the template: every item with a click handler gets a runtime
-    // index so the menu window can reference it over IPC.
-    let nextClickIndex = 0;
-    const clicks: Array<() => void> = [];
-    const flatten = (items: readonly Electron.MenuItemConstructorOptions[]): unknown[] =>
-      items.map((item) => {
-        if (item.type === "separator") return { type: "separator" };
-        const out: { label?: string; submenu?: unknown[]; clickIndex?: number } = { label: item.label };
-        if (item.submenu) out.submenu = flatten(item.submenu as readonly Electron.MenuItemConstructorOptions[]);
-        if (typeof item.click === "function") {
-          out.clickIndex = nextClickIndex++;
-          // Electron's click signature carries extra params; the pet menu
-          // template builds zero-arg callbacks, so cast for our own array.
-          clicks.push(item.click as unknown as () => void);
-        }
-        return out;
-      });
-    const menuData = { items: flatten(template) };
-
-    const cursor = screen.getCursorScreenPoint();
-    const width = 240;
-    const menuWindow = new BrowserWindow({
-      title: "OpenPets",
-      width,
-      height: 320,
-      x: Math.round(cursor.x),
-      y: Math.round(cursor.y),
-      frame: false,
-      resizable: false,
-      minimizable: false,
-      maximizable: false,
-      fullscreenable: false,
-      skipTaskbar: true,
-      alwaysOnTop: true,
-      show: false,
-      webPreferences: {
-        nodeIntegration: false,
-        contextIsolation: true,
-        sandbox: true,
-        preload: join(app.getAppPath(), "pet-menu-preload.cjs"),
-      },
-    });
-    menuWindow.setMenu(null);
-
-    const handleSelect = (event: IpcMainEvent, index: unknown): void => {
-      if (event.sender !== menuWindow.webContents) return;
-      const click = clicks[Number(index)];
-      if (!menuWindow.isDestroyed()) menuWindow.close();
-      if (click) click();
-    };
-    ipcMain.on("openpets:pet-menu-select", handleSelect);
-    menuWindow.once("closed", () => {
-      ipcMain.removeListener("openpets:pet-menu-select", handleSelect);
-    });
-    // Close when it loses focus (e.g. the user clicks elsewhere).
-    menuWindow.on("blur", () => {
-      if (!menuWindow.isDestroyed()) menuWindow.close();
-    });
-
-    const csp = "default-src 'none'; style-src 'unsafe-inline'";
-    const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html,body{margin:0;padding:0;background:transparent;font:13px/1.4 system-ui,sans-serif;overflow:hidden}.menu{box-sizing:border-box;padding:4px;border:1px solid rgba(30,41,59,.14);border-radius:10px;background:rgba(255,255,255,.98);box-shadow:0 10px 30px rgba(15,23,42,.18),0 2px 6px rgba(15,23,42,.08)}.item{padding:7px 12px;border-radius:6px;color:#1e293b;cursor:default;white-space:nowrap;position:relative}.item:hover{background:rgba(37,99,235,.12)}.item.clickable{cursor:pointer}.item.has-sub{padding-right:20px}.item.has-sub::after{content:"▸";position:absolute;right:9px;top:50%;transform:translateY(-50%);color:#94a3b8}.item .submenu{display:none;position:absolute;left:100%;top:-4px;min-width:170px;border:1px solid rgba(30,41,59,.14);border-radius:10px;background:rgba(255,255,255,.98);box-shadow:0 10px 30px rgba(15,23,42,.18);padding:4px;z-index:2}.item.has-sub:hover .submenu{display:block}.sep{height:1px;margin:4px 6px;background:rgba(30,41,59,.1)}</style></head><body><div class="menu" id="menu"></div></body></html>`;
-    void menuWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).then(() => {
-      if (menuWindow.isDestroyed()) return;
-      menuWindow.webContents.send("openpets:pet-menu-data", menuData);
-      menuWindow.show();
-    }).catch((error: unknown) => {
-      logError("pet.window", "layer-shell context menu load failed", error instanceof Error ? error : { error });
-      if (!menuWindow.isDestroyed()) menuWindow.destroy();
-    });
-  }).catch((error: unknown) => {
-    logError("pet.window", "layer-shell context menu build failed", error instanceof Error ? error : { error });
+    ipcMain.removeListener("openpets:pet-menu-select", handleLayerShellSelect);
   });
 }
 

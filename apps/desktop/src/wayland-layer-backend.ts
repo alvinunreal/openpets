@@ -95,13 +95,63 @@ function encodeMessage(tag: number, payload: Buffer): Buffer {
   return msg;
 }
 
-function encodeFrame(width: number, height: number, stride: number, data: Buffer): Buffer {
-  const payload = Buffer.allocUnsafe(12 + data.length);
-  payload.writeUInt32LE(width, 0);
-  payload.writeUInt32LE(height, 4);
-  payload.writeUInt32LE(stride, 8);
-  data.copy(payload, 12);
+function encodeFrame(offsetX: number, offsetY: number, width: number, height: number, stride: number, data: Buffer): Buffer {
+  const payload = Buffer.allocUnsafe(20 + data.length);
+  payload.writeInt32LE(offsetX, 0);
+  payload.writeInt32LE(offsetY, 4);
+  payload.writeUInt32LE(width, 8);
+  payload.writeUInt32LE(height, 12);
+  payload.writeUInt32LE(stride, 16);
+  data.copy(payload, 20);
   return encodeMessage(TAG_FRAME, payload);
+}
+
+interface CroppedFrame {
+  readonly offsetX: number;
+  readonly offsetY: number;
+  readonly width: number;
+  readonly height: number;
+  readonly stride: number;
+  readonly bitmap: Buffer;
+}
+
+/** Remove fully transparent canvas margins while preserving logical offsets. */
+function cropTransparentFrame(image: NativeImage): CroppedFrame | null {
+  const bitmap = image.toBitmap();
+  const size = image.getSize();
+  if (!bitmap.length || size.width <= 0 || size.height <= 0) return null;
+  const sourceStride = bitmap.length / size.height;
+  if (!Number.isInteger(sourceStride) || sourceStride < size.width * 4) return null;
+
+  let left = size.width;
+  let top = size.height;
+  let right = -1;
+  let bottom = -1;
+  for (let y = 0; y < size.height; y += 1) {
+    const row = y * sourceStride;
+    for (let x = 0; x < size.width; x += 1) {
+      if (bitmap[row + x * 4 + 3] === 0) continue;
+      left = Math.min(left, x);
+      top = Math.min(top, y);
+      right = Math.max(right, x);
+      bottom = Math.max(bottom, y);
+    }
+  }
+  if (right < left || bottom < top) return null;
+
+  const padding = 4;
+  left = Math.max(0, left - padding);
+  top = Math.max(0, top - padding);
+  right = Math.min(size.width - 1, right + padding);
+  bottom = Math.min(size.height - 1, bottom + padding);
+  const width = right - left + 1;
+  const height = bottom - top + 1;
+  const stride = width * 4;
+  const cropped = Buffer.allocUnsafe(stride * height);
+  for (let y = 0; y < height; y += 1) {
+    bitmap.copy(cropped, y * stride, (top + y) * sourceStride + left * 4, (top + y) * sourceStride + (right + 1) * 4);
+  }
+  return { offsetX: left, offsetY: top, width, height, stride, bitmap: cropped };
 }
 
 function encodeMove(x: number, y: number): Buffer {
@@ -119,6 +169,7 @@ function encodeMove(x: number, y: number): Buffer {
 class LayerShellSurface {
   readonly width: number;
   readonly height: number;
+  private frameOffset = { x: 0, y: 0 };
 
   private readonly socketPath: string;
   private readonly helperPath: string;
@@ -236,9 +287,9 @@ class LayerShellSurface {
       return;
     }
     if (kind === PT_ENTER || kind === PT_LEAVE) return;
-    // While the left button is held the helper is dragging the surface. Pause
-    // frame polling so pointer-motion messages stay responsive; resume on
-    // release.
+    // The helper moves the surface itself while dragging (absolute anchor, so
+    // it tracks the cursor precisely); here we just pause frame polling so
+    // pointer-motion messages stay responsive and resume on release.
     if (kind === PT_PRESS && button === 0x110 && !this.leftButtonDown) {
       this.leftButtonDown = true;
       this.pauseFrameStreaming();
@@ -246,16 +297,18 @@ class LayerShellSurface {
       this.leftButtonDown = false;
       this.resumeFrameStreaming();
     }
-    const globalX = this.position.x + x;
-    const globalY = this.position.y + y;
+    const logicalX = x + this.frameOffset.x;
+    const logicalY = y + this.frameOffset.y;
+    const globalX = this.position.x + logicalX;
+    const globalY = this.position.y + logicalY;
     const btn = mapPointerButton(button);
     try {
       if (kind === PT_MOVE) {
-        this.window.webContents.sendInputEvent({ type: "mouseMove", x, y, globalX, globalY } as Electron.MouseInputEvent);
+        this.window.webContents.sendInputEvent({ type: "mouseMove", x: logicalX, y: logicalY, globalX, globalY } as Electron.MouseInputEvent);
       } else if (kind === PT_PRESS) {
-        this.window.webContents.sendInputEvent({ type: "mouseDown", x, y, globalX, globalY, button: btn, clickCount: 1 } as Electron.MouseInputEvent);
+        this.window.webContents.sendInputEvent({ type: "mouseDown", x: logicalX, y: logicalY, globalX, globalY, button: btn, clickCount: 1 } as Electron.MouseInputEvent);
       } else if (kind === PT_RELEASE) {
-        this.window.webContents.sendInputEvent({ type: "mouseUp", x, y, globalX, globalY, button: btn, clickCount: 1 } as Electron.MouseInputEvent);
+        this.window.webContents.sendInputEvent({ type: "mouseUp", x: logicalX, y: logicalY, globalX, globalY, button: btn, clickCount: 1 } as Electron.MouseInputEvent);
       }
     } catch (error) {
       debug("pet.wayland", "sendInputEvent failed", { error: error instanceof Error ? error.message : String(error) });
@@ -304,8 +357,9 @@ class LayerShellSurface {
     let framesSent = 0;
     let framesSkipped = 0;
     const sendFrame = (image: NativeImage): void => {
-      const bitmap = image.toBitmap();
-      if (!bitmap || bitmap.length === 0) return;
+      const frame = cropTransparentFrame(image);
+      if (!frame) return;
+      const bitmap = frame.bitmap;
       // Skip frames identical to the previous one (static content) to keep
       // the socket quiet and the helper from re-committing unchanged frames.
       if (lastBitmap && bitmap.length === lastBitmap.length && bitmap.equals(lastBitmap)) {
@@ -320,10 +374,8 @@ class LayerShellSurface {
       if (framesSent % 60 === 0) {
         debug("pet.wayland", "frame sent", { framesSent, framesSkipped });
       }
-      const size = image.getSize();
-      const height = Math.max(1, size.height);
-      const stride = bitmap.length / height;
-      this.write(encodeFrame(size.width, height, stride, bitmap));
+      this.frameOffset = { x: frame.offsetX, y: frame.offsetY };
+      this.write(encodeFrame(frame.offsetX, frame.offsetY, frame.width, frame.height, frame.stride, bitmap));
     };
     this.frameSendFn = sendFrame;
 

@@ -5,8 +5,10 @@
 //! by that many payload bytes. The first payload byte is a message-type tag.
 //!
 //! Client → helper:
-//! - `FRAME` (0x01): width(u32) height(u32) stride(u32) then `stride * height`
-//!   bytes of BGRA pixels (matches Electron `NativeImage.toBitmap()`).
+//! - `FRAME` (0x01): offset_x(i32) offset_y(i32), width(u32), height(u32),
+//!   stride(u32), then `stride * height` bytes of BGRA pixels. The offset is
+//!   the cropped frame's origin within Electron's logical pet canvas, so the
+//!   helper can place the (smaller) visible surface at the right global spot.
 //! - `MOVE` (0x02): x(i32) y(i32) — top-left corner in global compositor
 //!   (logical) coordinates.
 //! - `SHOW` (0x03): map the layer-shell surface.
@@ -46,6 +48,8 @@ pub const PT_LEAVE: u8 = 4;
 
 /// A frame payload delivered by the Electron client.
 pub struct Frame {
+    pub offset_x: i32,
+    pub offset_y: i32,
     pub width: u32,
     pub height: u32,
     pub stride: u32,
@@ -74,7 +78,10 @@ impl Message {
         }
         let len = u32::from_le_bytes(len_buf) as usize;
         if len == 0 || len > 64 * 1024 * 1024 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid message length"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid message length",
+            ));
         }
         let mut payload = vec![0u8; len];
         read_exact_or_eof(reader, &mut payload)?
@@ -85,24 +92,28 @@ impl Message {
         match tag {
             TAG_FRAME => {
                 let body = &payload[1..];
-                if body.len() < 12 {
+                if body.len() < 20 {
                     return Err(io::Error::new(io::ErrorKind::InvalidData, "short frame"));
                 }
-                let width = u32::from_le_bytes(body[0..4].try_into().unwrap());
-                let height = u32::from_le_bytes(body[4..8].try_into().unwrap());
-                let stride = u32::from_le_bytes(body[8..12].try_into().unwrap());
+                let offset_x = i32::from_le_bytes(body[0..4].try_into().unwrap());
+                let offset_y = i32::from_le_bytes(body[4..8].try_into().unwrap());
+                let width = u32::from_le_bytes(body[8..12].try_into().unwrap());
+                let height = u32::from_le_bytes(body[12..16].try_into().unwrap());
+                let stride = u32::from_le_bytes(body[16..20].try_into().unwrap());
                 let expected = stride as usize * height as usize;
-                if body.len() != 12 + expected {
+                if body.len() != 20 + expected {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
                         "frame pixel data length mismatch",
                     ));
                 }
                 Ok(Some(Message::Frame(Frame {
+                    offset_x,
+                    offset_y,
                     width,
                     height,
                     stride,
-                    data: body[12..].to_vec(),
+                    data: body[20..].to_vec(),
                 })))
             }
             TAG_MOVE => {

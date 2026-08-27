@@ -28,12 +28,13 @@ use protocol::{
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
     delegate_compositor, delegate_layer, delegate_output, delegate_pointer, delegate_registry,
-    delegate_seat, delegate_shm,
+    delegate_relative_pointer, delegate_seat, delegate_shm,
     output::{OutputHandler, OutputState},
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
     seat::{
         pointer::{PointerEvent, PointerEventKind, PointerHandler},
+        relative_pointer::{RelativeMotionEvent, RelativePointerHandler, RelativePointerState},
         Capability, SeatHandler, SeatState,
     },
     shell::{
@@ -50,6 +51,7 @@ use wayland_client::{
     protocol::{wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
     Connection, QueueHandle,
 };
+use wayland_protocols::wp::relative_pointer::zv1::client::zwp_relative_pointer_v1::ZwpRelativePointerV1;
 
 // ---------------------------------------------------------------------------
 // Startup arguments
@@ -96,7 +98,13 @@ fn parse_args() -> Args {
         panic!("invalid surface size {width}x{height}");
     }
 
-    Args { socket_path, width, height, x, y }
+    Args {
+        socket_path,
+        width,
+        height,
+        x,
+        y,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -126,6 +134,15 @@ struct App {
     width: u32,
     height: u32,
     position: (i32, i32),
+    /// Cropped-frame origin within the logical pet canvas. The visible layer
+    /// surface is only the non-transparent region; `position` stays the
+    /// logical canvas origin that Electron controllers see.
+    frame_offset: (i32, i32),
+    /// Virtual global cursor and surface-local grab point used during drag.
+    /// Relative-pointer motion can continue after the physical cursor reaches
+    /// an output edge, so the virtual cursor is clamped to the output first.
+    drag_cursor: (f64, f64),
+    drag_grab: (f64, f64),
     visible: bool,
     configured: bool,
 
@@ -146,13 +163,14 @@ struct App {
     /// as the surface is ready.
     pending_frame: Option<protocol::Frame>,
 
-    /// Pointer drag state. While a left-button drag is in progress the helper
-    /// moves the surface directly (incrementally) instead of routing motion
-    /// through the renderer, which avoids a feedback loop when the surface
-    /// moves under the cursor.
+    /// Pointer drag state. While a left-button drag is in progress, movement
+    /// comes from `zwp_relative_pointer_v1` motion deltas (pure cursor motion,
+    /// independent of the surface's position), which avoids the local-
+    /// coordinate rebound problem entirely.
     dragging: bool,
-    /// Surface-local cursor position from the previous pointer motion frame.
-    drag_prev_local: (f64, f64),
+    /// Relative-pointer manager/object used for drag movement.
+    relative_pointer_state: RelativePointerState,
+    relative_pointer: Option<ZwpRelativePointerV1>,
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +195,10 @@ fn main() {
     let listener = match UnixListener::bind(&args.socket_path) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("openpets-wayland-helper: failed to bind socket {}: {e}", args.socket_path);
+            eprintln!(
+                "openpets-wayland-helper: failed to bind socket {}: {e}",
+                args.socket_path
+            );
             std::process::exit(2);
         }
     };
@@ -192,7 +213,8 @@ fn main() {
         }
     };
 
-    let (globals, mut event_queue) = registry_queue_init(&conn).expect("wayland globals init failed");
+    let (globals, mut event_queue) =
+        registry_queue_init(&conn).expect("wayland globals init failed");
     let qh = event_queue.handle();
 
     let compositor = match CompositorState::bind(&globals, &qh) {
@@ -220,13 +242,8 @@ fn main() {
     };
 
     let surface = compositor.create_surface(&qh);
-    let layer = layer_shell.create_layer_surface(
-        &qh,
-        surface,
-        Layer::Overlay,
-        Some("openpets-pet"),
-        None,
-    );
+    let layer =
+        layer_shell.create_layer_surface(&qh, surface, Layer::Overlay, Some("openpets-pet"), None);
     // Bottom-left anchored: the pet is placed with margins computed from the
     // output geometry so it lands at an arbitrary global (x, y).
     layer.set_anchor(Anchor::BOTTOM | Anchor::LEFT);
@@ -238,10 +255,7 @@ fn main() {
 
     // Give the pool room for several full frames so the buffer ring never
     // needs to grow at runtime.
-    let pool = match SlotPool::new(
-        (args.width as usize) * (args.height as usize) * 4 * 4,
-        &shm,
-    ) {
+    let pool = match SlotPool::new((args.width as usize) * (args.height as usize) * 4 * 4, &shm) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("openpets-wayland-helper: failed to create shm pool: {e}");
@@ -259,6 +273,7 @@ fn main() {
         width: args.width,
         height: args.height,
         position: (args.x, args.y),
+        frame_offset: (0, 0),
         visible: true,
         configured: false,
         output_geometry: None,
@@ -267,7 +282,10 @@ fn main() {
         client_writer: None,
         pending_frame: None,
         dragging: false,
-        drag_prev_local: (0.0, 0.0),
+        relative_pointer_state: RelativePointerState::bind(&globals, &qh),
+        relative_pointer: None,
+        drag_cursor: (args.x as f64, args.y as f64),
+        drag_grab: (0.0, 0.0),
     };
 
     // Start the socket reader thread. It forwards decoded messages to the main
@@ -415,11 +433,39 @@ fn handle_socket_event(app: &mut App, event: SocketEvent) -> bool {
 // ---------------------------------------------------------------------------
 
 impl CompositorHandler for App {
-    fn scale_factor_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: i32) {}
-    fn transform_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: wl_output::Transform) {}
+    fn scale_factor_changed(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_surface::WlSurface,
+        _: i32,
+    ) {
+    }
+    fn transform_changed(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_surface::WlSurface,
+        _: wl_output::Transform,
+    ) {
+    }
     fn frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: u32) {}
-    fn surface_enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: &wl_output::WlOutput) {}
-    fn surface_leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: &wl_output::WlOutput) {}
+    fn surface_enter(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_surface::WlSurface,
+        _: &wl_output::WlOutput,
+    ) {
+    }
+    fn surface_leave(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_surface::WlSurface,
+        _: &wl_output::WlOutput,
+    ) {
+    }
 }
 
 impl OutputHandler for App {
@@ -492,6 +538,7 @@ impl SeatHandler for App {
             self._pointer = self.seat_state.get_pointer(qh, &seat).ok();
             if self._pointer.is_some() {
                 debug_log("pointer bound");
+                self.setup_relative_pointer(qh);
             }
         }
     }
@@ -508,6 +555,7 @@ impl SeatHandler for App {
             self._pointer = self.seat_state.get_pointer(qh, &seat).ok();
             if self._pointer.is_some() {
                 debug_log("pointer bound");
+                self.setup_relative_pointer(qh);
             }
         }
     }
@@ -544,56 +592,87 @@ impl PointerHandler for App {
             match &event.kind {
                 PointerEventKind::Enter { .. } => self.send_pointer(PT_ENTER, x, y, 0),
                 PointerEventKind::Leave { .. } => {
-                    if self.dragging {
-                        debug_log("drag ended (pointer left)");
-                    }
                     self.dragging = false;
                     self.send_pointer(PT_LEAVE, x, y, 0);
                 }
-                PointerEventKind::Motion { .. } => {
-                    // While dragging, move the surface directly (incrementally)
-                    // so it follows the cursor without a renderer feedback
-                    // loop. `drag_prev_local` is the previous frame's local
-                    // cursor position; the delta equals the cursor's global
-                    // movement because the surface has not moved since that
-                    // frame.
-                    if self.dragging {
-                        let dx = x - self.drag_prev_local.0;
-                        let dy = y - self.drag_prev_local.1;
-                        self.drag_prev_local = (x, y);
-                        self.position.0 += dx.round() as i32;
-                        self.position.1 += dy.round() as i32;
-                        self.apply_position();
-                        self.send_position();
-                    }
-                    // Still forward motion so hover tracking works.
-                    self.send_pointer(PT_MOVE, x, y, 0);
-                }
+                // Drag movement is driven by relative-pointer motion deltas
+                // (`RelativePointerHandler`), which are pure cursor movement
+                // independent of the surface position. wl_pointer motion is
+                // only forwarded for hover tracking.
+                PointerEventKind::Motion { .. } => self.send_pointer(PT_MOVE, x, y, 0),
                 PointerEventKind::Press { button, .. } => {
                     // Left button (BTN_LEFT = 0x110 = 272) starts a drag.
-                    if *button == 272 {
-                        if !self.dragging {
-                            debug_log(&format!("drag started at ({x:.0},{y:.0})"));
-                        }
+                    if *button == 272 && !self.dragging {
                         self.dragging = true;
-                        self.drag_prev_local = (x, y);
+                        let (fx, fy) = self.frame_offset;
+                        // Grab point in logical canvas coordinates.
+                        self.drag_grab = ((x + fx as f64), (y + fy as f64));
+                        self.drag_cursor = (
+                            self.position.0 as f64 + self.drag_grab.0,
+                            self.position.1 as f64 + self.drag_grab.1,
+                        );
+                        debug_log(&format!(
+                            "drag start pos=({}, {}) grab=({:.0},{:.0})",
+                            self.position.0, self.position.1, self.drag_grab.0, self.drag_grab.1
+                        ));
                     }
                     self.send_pointer(PT_PRESS, x, y, *button);
                 }
                 PointerEventKind::Release { button, .. } => {
-                    if *button == 272 {
-                        if self.dragging {
-                            debug_log(&format!(
-                                "drag ended at ({}, {})",
-                                self.position.0, self.position.1
-                            ));
-                        }
+                    if *button == 272 && self.dragging {
                         self.dragging = false;
+                        debug_log(&format!(
+                            "drag ended at ({}, {})",
+                            self.position.0, self.position.1
+                        ));
                     }
                     self.send_pointer(PT_RELEASE, x, y, *button);
                 }
                 PointerEventKind::Axis { .. } => {}
             }
+        }
+    }
+}
+
+impl RelativePointerHandler for App {
+    fn relative_pointer_motion(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &ZwpRelativePointerV1,
+        _: &wl_pointer::WlPointer,
+        event: RelativeMotionEvent,
+    ) {
+        if !self.dragging {
+            return;
+        }
+        let (dx, dy) = event.delta;
+        let Some((ox, oy, ow, oh)) = self.output_geometry else {
+            return;
+        };
+        let (_, fy) = self.frame_offset;
+        // Left/right/bottom may extend off-screen (up to one output size) so
+        // the pet can be dragged partly off like a normal window. The top is
+        // clamped to the output: Niri clamps layer-surface tops to the output
+        // edge, so letting the logical position go negative would desync the
+        // tracked position from the compositor's actual placement (and the
+        // visible cursor is physically clamped to the output by the
+        // compositor anyway).
+        let min_x = ox - ow;
+        let max_x = ox + 2 * ow;
+        let min_y = oy - fy; // surface top (= y + fy) stays >= oy
+        let max_y = oy + 2 * oh; // bottom may extend one output height off
+        self.drag_cursor.0 += dx;
+        self.drag_cursor.1 += dy;
+        let next = (
+            (self.drag_cursor.0 - self.drag_grab.0).round() as i32,
+            (self.drag_cursor.1 - self.drag_grab.1).round() as i32,
+        );
+        let next = (next.0.clamp(min_x, max_x), next.1.clamp(min_y, max_y));
+        if next != self.position {
+            self.position = next;
+            self.apply_position();
+            self.send_position();
         }
     }
 }
@@ -604,6 +683,7 @@ delegate_shm!(App);
 delegate_layer!(App);
 delegate_seat!(App);
 delegate_pointer!(App);
+delegate_relative_pointer!(App);
 delegate_registry!(App);
 
 impl ProvidesRegistryState for App {
@@ -644,6 +724,24 @@ impl App {
         let _ = protocol::write_message(writer, TAG_POSITION, &payload);
     }
 
+    /// Create the relative pointer object used for drag movement, if the
+    /// compositor advertises `zwp_relative_pointer_manager_v1`.
+    fn setup_relative_pointer(&mut self, qh: &QueueHandle<Self>) {
+        let Some(pointer) = self._pointer.as_ref() else {
+            return;
+        };
+        match self
+            .relative_pointer_state
+            .get_relative_pointer(pointer, qh)
+        {
+            Ok(rel) => {
+                self.relative_pointer = Some(rel);
+                debug_log("relative pointer bound");
+            }
+            Err(e) => debug_log(&format!("relative pointer unavailable: {e:?}")),
+        }
+    }
+
     /// Determine the primary output's logical geometry and cache it.
     fn refresh_output_geometry(&mut self) {
         let mut geometry = None;
@@ -682,14 +780,17 @@ impl App {
     }
 
     /// Convert the desired global (x, y) into layer-shell margins and apply.
+    /// `position` is the logical canvas origin; the visible surface (the
+    /// cropped, non-transparent frame) is placed at `position + frame_offset`.
     fn apply_position(&mut self) {
         let Some((ox, oy, _ow, oh)) = self.output_geometry else {
             debug_log("apply_position: no output geometry yet");
             return;
         };
         let (x, y) = self.position;
-        let left = x - ox;
-        let bottom = (oy + oh) - (y + self.height as i32);
+        let (fx, fy) = self.frame_offset;
+        let left = (x + fx) - ox;
+        let bottom = (oy + oh) - (y + fy + self.height as i32);
         // Negative margins are allowed so the pet can be dragged partly off the
         // output edges (mirrors the X11 behaviour); the compositor clamps the
         // surface at the edges if it does not support off-screen placement.
@@ -698,7 +799,10 @@ impl App {
         // takes effect immediately (otherwise the surface only moves on the
         // next frame-stream commit, which stalls during a drag).
         self.layer.commit();
-        debug_log(&format!("apply_position: margin left={left} bottom={bottom}"));
+        debug_log(&format!(
+            "apply_position: margin left={left} bottom={bottom} (surface {}x{})",
+            self.width, self.height
+        ));
     }
 
     /// Present the latest pending frame onto the surface (if any and if
@@ -724,7 +828,9 @@ impl App {
         if !self.configured {
             return;
         }
-        // Surface size should match the frame; adjust if the renderer resized.
+        self.frame_offset = (frame.offset_x, frame.offset_y);
+        // Surface size should match the frame; adjust if the renderer resized
+        // (the cropped non-transparent region changes size as content changes).
         if frame.width != self.width || frame.height != self.height {
             self.width = frame.width;
             self.height = frame.height;
@@ -738,16 +844,17 @@ impl App {
 
         // Allocate a fresh buffer from the pool (slots are recycled once the
         // previous buffers are released by the compositor).
-        let (buffer, canvas) = match self
-            .pool
-            .create_buffer(width, height, stride, wl_shm::Format::Argb8888)
-        {
-            Ok(pair) => pair,
-            Err(e) => {
-                eprintln!("openpets-wayland-helper: create buffer failed: {e}");
-                return;
-            }
-        };
+        let (buffer, canvas) =
+            match self
+                .pool
+                .create_buffer(width, height, stride, wl_shm::Format::Argb8888)
+            {
+                Ok(pair) => pair,
+                Err(e) => {
+                    eprintln!("openpets-wayland-helper: create buffer failed: {e}");
+                    return;
+                }
+            };
 
         // Copy BGRA (Electron) → premultiplied ARGB (wl_shm) bytes.
         // Chromium bitmaps carry straight alpha; wl_shm ARGB8888 is
