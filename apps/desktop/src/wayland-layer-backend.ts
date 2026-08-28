@@ -171,6 +171,19 @@ class LayerShellSurface {
   readonly height: number;
   private frameOffset = { x: 0, y: 0 };
 
+  /**
+   * Fatal backend failure (helper cannot start / keeps dying). When set, the
+   * owner should tear down the offscreen pet and rebuild it as a normal
+   * window so the pet stays visible even when layer-shell is unavailable.
+   */
+  onFatal: (() => void) | null = null;
+  private restartCount = 0;
+  private startupTimer: NodeJS.Timeout | null = null;
+  private stabilityTimer: NodeJS.Timeout | null = null;
+  private static readonly MAX_RESTARTS = 2;
+  private static readonly STARTUP_TIMEOUT_MS = 10_000;
+  private static readonly STABLE_RUNTIME_MS = 30_000;
+
   private readonly socketPath: string;
   private readonly helperPath: string;
   private helper: ReturnType<typeof import("node:child_process").spawn> | null = null;
@@ -178,6 +191,8 @@ class LayerShellSurface {
   private connected = false;
   private ready = false;
   private destroyed = false;
+  /** Invalidates delayed socket retries from an exited/replaced helper. */
+  private connectionGeneration = 0;
   private position: Point;
   private visible = true;
   /** Commands queued while the socket is still connecting. */
@@ -195,6 +210,7 @@ class LayerShellSurface {
 
   /** Spawn the helper and open the socket. Must be called once. */
   start(): void {
+    this.restartCount = 0;
     const child = spawnHelper(this.helperPath, this.socketPath, this.width, this.height, this.position);
     if (!child) {
       throw new Error(`failed to spawn ${this.helperPath}`);
@@ -204,17 +220,31 @@ class LayerShellSurface {
 
     // The helper binds its socket shortly after launch; retry the connect so
     // we never lose the race against a fresh process.
-    this.connectWithRetry(0);
+    const generation = ++this.connectionGeneration;
+    this.connectWithRetry(0, generation);
+    this.armStartupTimer();
   }
 
   /**
    * The helper process exited (crash, lock screen, session teardown) — spawn
    * a fresh one and re-establish the surface so the pet does not vanish until
-   * the whole app is restarted.
+   * the whole app is restarted. If it keeps dying (e.g. the compositor does
+   * not actually provide wlr-layer-shell), give up and ask the owner to fall
+   * back to a normal window instead of restarting forever.
    */
   private restart(): void {
     if (this.destroyed) return;
-    info("pet.wayland", "helper exited; restarting layer-shell surface", { socketPath: this.socketPath });
+    this.clearStabilityTimer();
+    this.restartCount += 1;
+    if (this.restartCount > LayerShellSurface.MAX_RESTARTS) {
+      logError("pet.wayland", "helper kept failing; giving up on layer-shell", {
+        socketPath: this.socketPath,
+        restartCount: this.restartCount,
+      });
+      this.fatal();
+      return;
+    }
+    info("pet.wayland", "helper exited; restarting layer-shell surface", { socketPath: this.socketPath, restartCount: this.restartCount });
     if (this.socket) {
       try {
         this.socket.destroy();
@@ -237,37 +267,122 @@ class LayerShellSurface {
     const child = spawnHelper(this.helperPath, this.socketPath, this.width, this.height, this.position);
     if (!child) {
       logError("pet.wayland", "helper restart failed", { socketPath: this.socketPath });
+      this.fatal();
       return;
     }
     this.helper = child;
     child.on("exit", () => this.restart());
-    this.connectWithRetry(0);
+    const generation = ++this.connectionGeneration;
+    this.connectWithRetry(0, generation);
     if (!this.visible) this.write(encodeMessage(TAG_HIDE, Buffer.alloc(0)));
+    this.armStartupTimer();
   }
 
-  private connectWithRetry(attempt: number): void {
+  /** Start a timer that gives up if the helper never reports READY. */
+  private armStartupTimer(): void {
+    this.clearStartupTimer();
+    this.startupTimer = setTimeout(() => {
+      this.startupTimer = null;
+      debug("pet.wayland", "helper did not become ready in time", { socketPath: this.socketPath });
+      this.fatal();
+    }, LayerShellSurface.STARTUP_TIMEOUT_MS);
+  }
+
+  private clearStartupTimer(): void {
+    if (this.startupTimer) {
+      clearTimeout(this.startupTimer);
+      this.startupTimer = null;
+    }
+  }
+
+  /** A READY helper must stay alive for a while before failures are forgiven. */
+  private armStabilityTimer(): void {
+    this.clearStabilityTimer();
+    this.stabilityTimer = setTimeout(() => {
+      this.stabilityTimer = null;
+      this.restartCount = 0;
+      debug("pet.wayland", "helper runtime considered stable", { socketPath: this.socketPath });
+    }, LayerShellSurface.STABLE_RUNTIME_MS);
+  }
+
+  private clearStabilityTimer(): void {
+    if (this.stabilityTimer) {
+      clearTimeout(this.stabilityTimer);
+      this.stabilityTimer = null;
+    }
+  }
+
+  /**
+   * Permanently stop the layer-shell backend and notify the owner so it can
+   * rebuild the pet as a normal window.
+   */
+  private fatal(): void {
+    if (this.destroyed) return;
+    this.destroyed = true; // stops the restart loop and any further teardown
+    this.connectionGeneration += 1; // invalidates delayed connect retries
+    this.clearStartupTimer();
+    this.clearStabilityTimer();
+    this.stopFrameStreaming();
+    if (this.socket) {
+      try {
+        this.socket.destroy();
+      } catch {
+        // already closed
+      }
+      this.socket = null;
+    }
+    if (this.helper && !this.helper.killed) {
+      try {
+        this.helper.kill();
+      } catch {
+        // already gone
+      }
+      this.helper = null;
+    }
+    try {
+      if (existsSync(this.socketPath)) unlinkSync(this.socketPath);
+    } catch {
+      // ignore stale socket cleanup failure
+    }
+    logError("pet.wayland", "layer-shell backend fatal; falling back", { socketPath: this.socketPath });
+    this.onFatal?.();
+  }
+
+  private connectWithRetry(attempt: number, generation: number): void {
+    if (this.destroyed || generation !== this.connectionGeneration) return;
     const socket = net.connect(this.socketPath);
     this.socket = socket;
     socket.setNoDelay(true);
 
     socket.on("connect", () => {
+      if (this.destroyed || generation !== this.connectionGeneration) {
+        socket.destroy();
+        return;
+      }
       this.connected = true;
       debug("pet.wayland", "helper socket connected", { socketPath: this.socketPath, attempt });
       this.flushPending();
     });
-    socket.on("data", (chunk: Buffer) => this.handleIncoming(chunk));
+    socket.on("data", (chunk: Buffer) => {
+      if (!this.destroyed && generation === this.connectionGeneration) this.handleIncoming(chunk);
+    });
     socket.on("error", (error) => {
-      const refused = (error as NodeJS.ErrnoException).code === "ECONNREFUSED" || (error as NodeJS.ErrnoException).code === "ENOENT";
-      if (refused && attempt < MAX_CONNECT_ATTEMPTS) {
-        // Not bound yet — tear down and try again shortly.
+      if (this.destroyed || generation !== this.connectionGeneration) {
         socket.destroy();
-        this.socket = null;
-        setTimeout(() => this.connectWithRetry(attempt + 1), CONNECT_RETRY_MS);
+        return;
+      }
+      const refused = (error as NodeJS.ErrnoException).code === "ECONNREFUSED" || (error as NodeJS.ErrnoException).code === "ENOENT";
+      if (refused && attempt < MAX_CONNECT_ATTEMPTS && !this.destroyed && generation === this.connectionGeneration) {
+        // Not bound yet — tear down and try again shortly. The generation
+        // check prevents retries from an exited helper racing a replacement.
+        socket.destroy();
+        if (this.socket === socket) this.socket = null;
+        setTimeout(() => this.connectWithRetry(attempt + 1, generation), CONNECT_RETRY_MS);
         return;
       }
       logError("pet.wayland", "helper socket error", { socketPath: this.socketPath, error: error.message, attempt });
       socket.destroy();
-      this.socket = null;
+      if (this.socket === socket) this.socket = null;
     });
     socket.on("close", () => {
       if (this.socket === socket) {
@@ -303,6 +418,8 @@ class LayerShellSurface {
       const tag = body[0];
       if (tag === TAG_READY && !this.ready) {
         this.ready = true;
+        this.clearStartupTimer();
+        this.armStabilityTimer();
         info("pet.wayland", "helper surface ready (layer-shell configured)");
         this.attachFrameStreaming();
       } else if (tag === TAG_POINTER && body.length >= 13) {
@@ -535,6 +652,9 @@ class LayerShellSurface {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    this.connectionGeneration += 1;
+    this.clearStartupTimer();
+    this.clearStabilityTimer();
     this.stopFrameStreaming();
     if (this.window && !this.window.isDestroyed() && !this.window.webContents.isDestroyed()) {
       try {
@@ -611,7 +731,7 @@ function spawnHelper(
  * existing pet controllers keep working unchanged. Throws when the helper
  * cannot be started (caller should fall back to a normal window).
  */
-export function adoptPetWindowForLayerShell(window: BrowserWindow, position: Point): BrowserWindow {
+export function adoptPetWindowForLayerShell(window: BrowserWindow, position: Point): LayerShellSurface {
   const helperPath = resolveHelperBinaryPath();
   if (!helperPath) {
     throw new Error("openpets-wayland-helper binary not found");
@@ -640,7 +760,7 @@ export function adoptPetWindowForLayerShell(window: BrowserWindow, position: Poi
     size: [surface.width, surface.height],
     socketPath,
   });
-  return window;
+  return surface;
 }
 
 function resolveRuntimeDir(): string {

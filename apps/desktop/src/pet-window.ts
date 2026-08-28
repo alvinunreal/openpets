@@ -40,6 +40,8 @@ export interface DefaultPetWindowOptions extends PetWindowInteractionHooks {
   readonly onHideRequested: () => void;
   readonly onTalkRequested?: () => void;
   readonly onTalkLabelRequested?: () => Promise<string>;
+  /** Called when an asynchronous layer-shell failure rebuilds this pet as a normal window. */
+  readonly onWindowReplaced?: (window: BrowserWindow) => void;
 }
 
 export interface AgentPetWindowOptions extends PetWindowInteractionHooks {
@@ -57,6 +59,8 @@ export interface AgentPetWindowOptions extends PetWindowInteractionHooks {
    * When provided, a "Focus session window" item is added to the right-click menu.
    */
   readonly onFocusSessionWindow?: () => void;
+  /** Called when an asynchronous layer-shell failure rebuilds this pet as a normal window. */
+  readonly onWindowReplaced?: (window: BrowserWindow) => void;
 }
 
 /** Plugin-arbiter bubble content for one pet surface (both slots). */
@@ -161,9 +165,25 @@ export function isPetWindowDragging(window: BrowserWindow): boolean {
 }
 
 export function createDefaultPetWindow(options: DefaultPetWindowOptions, dismissToken?: string): BrowserWindow {
-  const window = createBasePetWindow("OpenPets — Default Pet", options.position, {
-    hasInteractiveInput: petPluginBubblesHaveInteractiveInput(options.pluginBubbles ?? null),
-  });
+  const window = createBasePetWindow(
+    "OpenPets — Default Pet",
+    options.position,
+    { hasInteractiveInput: petPluginBubblesHaveInteractiveInput(options.pluginBubbles ?? null) },
+    (fallbackPosition, wasVisible) => {
+      // layer-shell backend failed asynchronously — rebuild as a normal window
+      // at the pet's latest tracked position, not its original spawn point.
+      info("pet.window", "layer-shell failed; rebuilding default pet as a normal window", { position: fallbackPosition, wasVisible });
+      const replacement = createBasePetWindowWithMode("OpenPets — Default Pet", fallbackPosition, { hasInteractiveInput: petPluginBubblesHaveInteractiveInput(options.pluginBubbles ?? null) }, false);
+      installDefaultPetWindow(replacement, options, dismissToken);
+      options.onWindowReplaced?.(replacement);
+      if (wasVisible) replacement.showInactive();
+    },
+  );
+  if (!window.isDestroyed()) installDefaultPetWindow(window, options, dismissToken);
+  return window;
+}
+
+function installDefaultPetWindow(window: BrowserWindow, options: DefaultPetWindowOptions, dismissToken?: string): void {
   info("pet.window", "default window create", { windowId: window.id, position: options.position, paused: options.paused, hasDisplay: Boolean(options.display), badge: options.badge });
   installMousePassthroughAndDrag(window, options);
   installMotionStatePublisher(window);
@@ -185,18 +205,33 @@ export function createDefaultPetWindow(options: DefaultPetWindowOptions, dismiss
   });
 
   void loadDefaultPetContent(window, options.paused, options.display, options.badge, dismissToken, options.pluginBubbles ?? null);
-
-  return window;
 }
 
 export function createAgentPetWindow(options: AgentPetWindowOptions, dismissToken?: string): BrowserWindow {
-  const window = createBasePetWindow(`OpenPets — ${options.displayName}`, options.position);
+  const window = createBasePetWindow(
+    `OpenPets — ${options.displayName}`,
+    options.position,
+    {},
+    (fallbackPosition, wasVisible) => {
+      // layer-shell backend failed asynchronously — rebuild as a normal window
+      // at the pet's latest tracked position, not its original spawn point.
+      info("pet.window", "layer-shell failed; rebuilding agent pet as a normal window", { petId: options.petId, position: fallbackPosition, wasVisible });
+      const replacement = createBasePetWindowWithMode(`OpenPets — ${options.displayName}`, fallbackPosition, {}, false);
+      installAgentPetWindow(replacement, options, dismissToken);
+      options.onWindowReplaced?.(replacement);
+      if (wasVisible) replacement.showInactive();
+    },
+  );
+  if (!window.isDestroyed()) installAgentPetWindow(window, options, dismissToken);
+  return window;
+}
+
+function installAgentPetWindow(window: BrowserWindow, options: AgentPetWindowOptions, dismissToken?: string): void {
   info("pet.window", "agent window create", { windowId: window.id, petId: options.petId, displayName: options.displayName, position: options.position, hasDisplay: Boolean(options.display), badge: options.badge });
   installMousePassthroughAndDrag(window, options);
   installMotionStatePublisher(window);
   installPetContextMenu(window, { label: t("pet.menu.closePet"), click: options.onCloseRequested, focusSessionWindow: options.onFocusSessionWindow });
   void loadExplicitPetContent(window, options.petId, options.display, options.badge, dismissToken, options.scale);
-  return window;
 }
 
 export function recoverPetMouseInterop(window: BrowserWindow, reason: string): void {
@@ -700,8 +735,8 @@ function isScreenPoint(value: unknown): value is { readonly screenX: number; rea
   return typeof value === "object" && value !== null && typeof (value as { readonly screenX?: unknown }).screenX === "number" && typeof (value as { readonly screenY?: unknown }).screenY === "number";
 }
 
-function createBasePetWindow(title: string, position: Point, focusOptions: { readonly hasInteractiveInput?: boolean } = {}): BrowserWindow {
-  return createBasePetWindowWithMode(title, position, focusOptions, shouldUseLayerShellBackend());
+function createBasePetWindow(title: string, position: Point, focusOptions: { readonly hasInteractiveInput?: boolean } = {}, onLayerShellFatal?: (position: Point, wasVisible: boolean) => void): BrowserWindow {
+  return createBasePetWindowWithMode(title, position, focusOptions, shouldUseLayerShellBackend(), onLayerShellFatal);
 }
 
 /**
@@ -713,7 +748,7 @@ export function shouldUseLayerShellBackend(): boolean {
   return isLayerShellBackendRequested(process.platform, process.env) && isLayerShellHelperAvailable();
 }
 
-function createBasePetWindowWithMode(title: string, position: Point, focusOptions: { readonly hasInteractiveInput?: boolean }, useLayerShell: boolean): BrowserWindow {
+function createBasePetWindowWithMode(title: string, position: Point, focusOptions: { readonly hasInteractiveInput?: boolean }, useLayerShell: boolean, onLayerShellFatal?: (position: Point, wasVisible: boolean) => void): BrowserWindow {
   const effectiveWaylandBackend = isEffectiveWaylandBackend();
   const focusable = shouldPetWindowBeFocusable(process.platform, effectiveWaylandBackend, focusOptions.hasInteractiveInput === true);
   const window = new BrowserWindow({
@@ -814,7 +849,28 @@ function createBasePetWindowWithMode(title: string, position: Point, focusOption
       // display-facing methods on the instance so the rest of the pet stack
       // (controllers, motion engine, content loading) keeps working unchanged
       // while the visible carrier is the helper's overlay surface.
-      adoptPetWindowForLayerShell(window, position);
+      const surface = adoptPetWindowForLayerShell(window, position);
+      // Asynchronous startup/runtime failure (helper cannot start, keeps
+      // dying, never becomes ready) — tear the offscreen window down and let
+      // the caller rebuild the pet as a normal visible window.
+      surface.onFatal = () => {
+        if (window.isDestroyed()) return;
+        logError("pet.window", "layer-shell backend fatal; falling back to a normal window", {});
+        // Build and publish the replacement first. The old window's `closed`
+        // listener can then see that it no longer owns the controller slot and
+        // must not clear the replacement's state.
+        try {
+          onLayerShellFatal?.(readWindowPosition(window), window.isVisible());
+        } catch (error) {
+          logError("pet.window", "normal-window fallback failed", error instanceof Error ? error : { error });
+        } finally {
+          try {
+            if (!window.isDestroyed()) window.destroy();
+          } catch {
+            // window may already be gone
+          }
+        }
+      };
     } catch (error) {
       logError("pet.window", "layer-shell adoption failed; falling back to a normal window", error instanceof Error ? error : { error });
       if (!window.isDestroyed()) window.destroy();

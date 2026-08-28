@@ -57,8 +57,12 @@ The backend only activates when all of these hold:
 - the native helper binary is available
 
 Otherwise OpenPets falls back to the existing window path unchanged. If the
-helper cannot start at runtime, each pet window logs an error and falls back to
-a normal window.
+helper cannot start or becomes unhealthy at runtime (helper exits before
+`READY`, cannot bind `wlr-layer-shell`, or does not report `READY` within 10
+seconds), OpenPets retries a bounded number of times, then rebuilds the pet as
+a normal `BrowserWindow` at its current tracked position/visibility. Each
+controller adopts the replacement so later state updates keep routing to the
+visible window instead of the old offscreen pet.
 
 ## Build the helper
 

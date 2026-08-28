@@ -194,6 +194,18 @@ function getOrCreateAgentPetWindow(petId: string): BrowserWindow {
     badge,
     onCloseRequested: () => dismissAgentPetForActiveLease(petId),
     onBubbleDismissed: (token) => handleBubbleDismissed(petId, token),
+    onWindowReplaced: (replacement) => {
+      agentPetWindows.set(petId, replacement);
+      const currentDisplay = transientDisplays.get(petId) ?? null;
+      const currentBadge = statusBadges.get(petId) ?? null;
+      void loadExplicitPetContent(replacement, petId, currentDisplay, currentBadge, getCurrentDismissToken(petId, currentDisplay, currentBadge), getPreferredPetScale());
+      replacement.on("closed", () => {
+        if (agentPetWindows.get(petId) !== replacement) return;
+        unregisterRoamingPet(petId);
+        agentPetWindows.delete(petId);
+        clearAgentDisplay(petId);
+      });
+    },
     onFocusSessionWindow: () => {
       const confinement = getConfinementState(petId);
       if (confinement?.terminalOwnerPid) {
@@ -206,6 +218,7 @@ function getOrCreateAgentPetWindow(petId: string): BrowserWindow {
   const windowId = window.id;
 
   window.on("closed", () => {
+    if (agentPetWindows.get(petId) !== window) return;
     info("pet.agent", "closed", { petId, windowId, activeWindowsBeforeDelete: agentPetWindows.size });
     // Unregister from the motion engine BEFORE deleting the window map entry
     // to prevent the shared ticker from touching the destroyed window.
