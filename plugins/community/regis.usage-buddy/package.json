@@ -1,8 +1,10 @@
 {
-  "name": "openpets-plugin-starter",
-  "version": "1.0.0",
-  "description": "Starter template for building an OpenPets community plugin.",
+  "name": "openpets-plugin-usage-buddy",
+  "version": "1.1.0",
+  "description": "OpenPets plugin whose pet reflects live Claude and Codex usage from a local usage-monitor endpoint.",
   "type": "module",
+  "license": "MIT",
+  "author": "Regis Benedito dos Santos Bittencourt",
   "scripts": {
     "test": "node --experimental-vm-modules test.js"
   },

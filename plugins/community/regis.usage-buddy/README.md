@@ -41,7 +41,7 @@ minimum, Usage Buddy runs its own faster loop with `schedule.once`
 | Setting | Default | Notes |
 |---|---|---|
 | `pollSeconds` | `60` | How often to read the endpoint. Minimum 15. |
-| `port` | `45455` | Must match the companion app. **If you change it, also update `network.hosts` in `openpets.plugin.json` to `127.0.0.1:<port>`** or OpenPets blocks the request. |
+| `port` | `45455` | Must match the companion app. Only applies to **local/dev (Load Folder) installs** — a catalog-installed package can reach only its declared host, so changing it also requires editing `network.hosts` in `openpets.plugin.json` to `127.0.0.1:<port>`. |
 | `providerFilter` | `both` | `both`, `claude`, or `codex`. |
 | `thresholds` | `50,75,90,100` | Comma-separated band boundaries (%). |
 | `quietStatus` | `false` | Only update the status line on warning/error tones. |
@@ -132,3 +132,7 @@ Network hosts:
 External account setup:
 - None. Requires the companion app usage-monitor-for-claude-and-codex running locally.
 ```
+
+## License
+
+[MIT](LICENSE) © Regis Benedito dos Santos Bittencourt

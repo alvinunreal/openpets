@@ -437,6 +437,8 @@ plugin release.**
 `plugins/community/`. Catalog v2 entries include `publisherType` so the app and
 site can distinguish reviewed first-party plugins from community submissions.
 Community plugins follow the same release validation but cannot set `bundled`.
+When a plugin has a root `LICENSE`, `LICENSE.md`, or `LICENSE.txt`, the release
+ZIP preserves it alongside the manifest and declared runtime files.
 
 ### Community plugin provenance, pending submissions, and owner safe updates
 

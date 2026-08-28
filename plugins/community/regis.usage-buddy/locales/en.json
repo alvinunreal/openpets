@@ -4,7 +4,7 @@
   "config.pollSeconds.label": "Poll interval (seconds)",
   "config.pollSeconds.description": "How often to read the local usage endpoint, in seconds. Minimum 15.",
   "config.port.label": "Monitor port",
-  "config.port.description": "Localhost port where the usage monitor serves /usage. If you change this, also update network.hosts in openpets.plugin.json to 127.0.0.1:<port> or OpenPets will block the request.",
+  "config.port.description": "Localhost port where the usage monitor serves /usage. Only takes effect for local/dev (Load Folder) installs: a catalog-installed package can reach only its declared host, so changing this also requires editing network.hosts in openpets.plugin.json to 127.0.0.1:<port>.",
   "config.providerFilter.label": "Providers to watch",
   "config.providerFilter.description": "Which providers the pet reacts to.",
   "config.providerFilter.both": "Claude and Codex",

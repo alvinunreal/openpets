@@ -3,7 +3,7 @@
   "id": "regis.usage-buddy",
   "name": "$t:plugin.name",
   "description": "$t:plugin.description",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "runtime": "javascript",
   "icon": "sparkles",
   "sdkVersion": "3.0.0",
