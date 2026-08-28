@@ -5,7 +5,7 @@ import { clampToVisibleWorkArea, defaultPetWindowSize, getDefaultPetInitialPosit
 import { debug, info, warn } from "./logger.js";
 import { planLanPetPresence, resolveRenderableLanPetId } from "./lan-pet-presence.js";
 import type { LanPetRecord, LanPoint } from "./lan-state.js";
-import { createAgentPetWindow, getTransientDisplayDurationMs, loadExplicitPetContent, readWindowPosition } from "./pet-window.js";
+import { createAgentPetWindow, getTransientDisplayDurationMs, loadExplicitPetContent, readWindowPosition, type PetTransientDisplay } from "./pet-window.js";
 import type { OpenPetsReaction } from "./local-ipc-protocol.js";
 import { registerRoamingPet, unregisterRoamingPet } from "./pet-roaming-controller.js";
 
@@ -14,13 +14,14 @@ type VisitingPetWindow = {
   readonly requestedPetId: string;
   readonly renderedPetId: string;
   readonly motionHandleId: string;
-  readonly window: BrowserWindow;
+  window: BrowserWindow;
 };
 
 const visitingPetWindows = new Map<string, VisitingPetWindow>();
 const dismissedOwnerHosts = new Set<string>();
 const unavailablePetWarnings = new Set<string>();
 const displayClearTimers = new Map<string, NodeJS.Timeout>();
+const activeDisplays = new Map<string, PetTransientDisplay>();
 
 export function syncLanVisitingPets(localHost: string, pets: readonly LanPetRecord[]): void {
   const plan = planLanPetPresence(localHost, pets, [...visitingPetWindows.keys()]);
@@ -55,9 +56,11 @@ export function applyLanVisitingPetSay(ownerHost: string, message: string, react
   const existingTimer = displayClearTimers.get(ownerHost);
   if (existingTimer) clearTimeout(existingTimer);
   const display = { message, reaction, suppressReactionMessage: true, dismissToken: `lan-work:${ownerHost}:${sequence}` };
+  activeDisplays.set(ownerHost, display);
   void loadExplicitPetContent(entry.window, entry.renderedPetId, display, null, display.dismissToken, getAppStateSnapshot().preferences.petScale as PetScaleValue);
   const timer = setTimeout(() => {
     displayClearTimers.delete(ownerHost);
+    activeDisplays.delete(ownerHost);
     const current = visitingPetWindows.get(ownerHost);
     if (current && !current.window.isDestroyed()) void loadExplicitPetContent(current.window, current.renderedPetId);
   }, getTransientDisplayDurationMs(display));
@@ -114,6 +117,19 @@ function showLanVisitingPet(pet: LanPetRecord): void {
       dismissedOwnerHosts.add(pet.ownerHost);
       closeLanVisitingPet(pet.ownerHost);
     },
+    onWindowReplaced: (replacement) => {
+      const current = visitingPetWindows.get(pet.ownerHost);
+      if (!current) return;
+      current.window = replacement;
+      const currentDisplay = activeDisplays.get(pet.ownerHost) ?? null;
+      void loadExplicitPetContent(replacement, renderedPetId, currentDisplay, null, currentDisplay?.dismissToken, getAppStateSnapshot().preferences.petScale as PetScaleValue);
+      replacement.once("closed", () => {
+        const latest = visitingPetWindows.get(pet.ownerHost);
+        if (latest?.window !== replacement) return;
+        unregisterRoamingPet(motionHandleId);
+        visitingPetWindows.delete(pet.ownerHost);
+      });
+    },
   });
   const entry: VisitingPetWindow = {
     ownerHost: pet.ownerHost,
@@ -141,6 +157,7 @@ function closeLanVisitingPet(ownerHost: string): void {
   const displayTimer = displayClearTimers.get(ownerHost);
   if (displayTimer) clearTimeout(displayTimer);
   displayClearTimers.delete(ownerHost);
+  activeDisplays.delete(ownerHost);
   const entry = visitingPetWindows.get(ownerHost);
   if (!entry) return;
   visitingPetWindows.delete(ownerHost);

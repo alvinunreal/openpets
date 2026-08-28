@@ -79,7 +79,15 @@ export function onPluginPetsChange(listener: (pets: PluginPetInfo[]) => void): (
 function refreshSpawnedPet(pet: SpawnedPet): void {
   if (!pet.window || pet.window.isDestroyed()) return;
   void loadExplicitPetContent(pet.window, pet.petId, null, pet.statusReaction, undefined, pet.scale, pet.bubbles.transient || pet.bubbles.pinned ? pet.bubbles : null).then(() => {
-    if (pet.window && !pet.window.isDestroyed() && pet.spriteOverride) setPetSpriteOverride(pet.window, pet.spriteOverride);
+    if (!pet.window || pet.window.isDestroyed()) return;
+    if (pet.spriteOverride) {
+      setPetSpriteOverride(pet.window, pet.spriteOverride);
+      return;
+    }
+    if (pet.currentAnimation !== "idle" && pet.currentAnimation !== "sprite") {
+      const spriteState = resolveReactionSpriteState(pet.currentAnimation as OpenPetsReaction, getAppStateSnapshot().preferences.reactionAnimationOverrides);
+      setPetReactionState(pet.window, spriteState);
+    }
   });
 }
 
@@ -129,9 +137,14 @@ export async function spawnPluginPet(opts: { pluginId: string; petId: string; na
     onBubbleAction: (token, actionId) => pet.arbiter.handleAction(token, actionId),
     onBubbleSubmit: (token, values) => pet.arbiter.handleSubmit(token, values),
     onPetEvent: (name, payload) => publishPluginPetEvent(handleId, name, payload),
+    onWindowReplaced: (replacement) => {
+      pet.window = replacement;
+      replacement.once("closed", () => { if (pet.window === replacement) pet.window = null; });
+      refreshSpawnedPet(pet);
+    },
   });
   pet.window = window;
-  window.once("closed", () => { pet.window = null; });
+  window.once("closed", () => { if (pet.window === window) pet.window = null; });
   window.showInactive();
   spawnedPets.set(handleId, pet);
   info("plugin", "plugin pet spawned", { handleId, petId: opts.petId, pluginId: opts.pluginId });

@@ -345,11 +345,23 @@ function getOrCreateDefaultPetWindow(): BrowserWindow {
     onBubbleAction: (token, actionId) => defaultPetBubbleArbiter.handleAction(token, actionId),
     onBubbleSubmit: (token, values) => defaultPetBubbleArbiter.handleSubmit(token, values),
     onPetEvent: (name, payload) => publishPluginPetEvent("default", name, payload),
+    onWindowReplaced: (replacement) => {
+      defaultPetWindow = replacement;
+      void loadDefaultPetContent(replacement, paused, getRenderedDisplay(), getRenderedBadge(), getCurrentDismissToken(), getDefaultPetPluginBubbles());
+      const replacementId = replacement.id;
+      replacement.on("closed", () => {
+        if (defaultPetWindow !== replacement) return;
+        info("pet.default", "closed", { windowId: replacementId });
+        defaultPetWindow = null;
+      });
+    },
   }, getCurrentDismissToken());
-  const windowId = defaultPetWindow.id;
+  const createdWindow = defaultPetWindow;
+  const windowId = createdWindow.id;
   info("pet.default", "created", { windowId, position, paused, petId: getAppStateSnapshot().preferences.defaultPetId });
 
-  defaultPetWindow.on("closed", () => {
+  createdWindow.on("closed", () => {
+    if (defaultPetWindow !== createdWindow) return;
     info("pet.default", "closed", { windowId });
     defaultPetWindow = null;
   });
