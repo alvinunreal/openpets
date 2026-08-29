@@ -93,6 +93,7 @@ const behaviorTests = [
   ".test-dist/tests/pet-motion-engine-nan-guard.test.js",
   ".test-dist/tests/pet-roaming-controller.test.js",
   ".test-dist/tests/display.test.js",
+  ".test-dist/tests/system-metrics.test.js",
   ".test-dist/tests/preference-patch.test.js",
   ".test-dist/tests/plugin-agent-activity.test.js",
   ".test-dist/tests/pet-window-wayland-predicate.test.js",

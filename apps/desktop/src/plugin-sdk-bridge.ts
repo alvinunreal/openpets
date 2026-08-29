@@ -202,7 +202,7 @@ export interface PluginHostCapabilities {
   };
   system: {
     info(): Promise<{ platform: "mac" | "win" | "linux"; locale: string; timezone: string; theme: "light" | "dark"; appVersion: string; online: boolean }>;
-    metrics(): Promise<{ cpuPercent: number; memUsedPercent: number; battery?: { percent: number; charging: boolean } }>;
+    metrics(): Promise<{ cpuPercent: number; memUsedPercent: number; gpuPercent?: number; diskUsedPercent?: number; battery?: { percent: number; charging: boolean } }>;
     openExternal(url: string): Promise<void>;
     readClipboardText(): Promise<string>;
     writeClipboardText(text: string): Promise<void>;

@@ -31,6 +31,7 @@ import { getAppStateSnapshot } from "./app-state.js";
 import { readSafePluginManifest } from "./plugin-manifest-reader.js";
 import { resolveTrustedPluginSprite } from "./plugin-assets.js";
 import { getPluginService } from "./plugin-service.js";
+import { readExtendedSystemMetrics } from "./system-metrics.js";
 
 /**
  * The Electron implementation of every SDK v3 host capability. Built once at
@@ -43,6 +44,20 @@ const maxPickedFileBytes = 16 * 1024 * 1024;
 type PickedFileEntry = { path: string; name: string; sizeBytes: number };
 
 let cpuSample: { idle: number; total: number } | null = null;
+let extendedMetricsCache: { expiresAt: number; value: Awaited<ReturnType<typeof readExtendedSystemMetrics>> } | null = null;
+let extendedMetricsInFlight: Promise<Awaited<ReturnType<typeof readExtendedSystemMetrics>>> | null = null;
+
+async function cachedExtendedSystemMetrics(): Promise<Awaited<ReturnType<typeof readExtendedSystemMetrics>>> {
+  if (extendedMetricsCache && extendedMetricsCache.expiresAt > Date.now()) return extendedMetricsCache.value;
+  if (extendedMetricsInFlight) return extendedMetricsInFlight;
+  extendedMetricsInFlight = readExtendedSystemMetrics().then((value) => {
+    extendedMetricsCache = { value, expiresAt: Date.now() + 5_000 };
+    return value;
+  }).finally(() => {
+    extendedMetricsInFlight = null;
+  });
+  return extendedMetricsInFlight;
+}
 
 function sampleCpus(): { idle: number; total: number } {
   let idle = 0;
@@ -272,7 +287,7 @@ export function createElectronPluginHostCapabilities(userDataPath: string): Elec
       async metrics() {
         const memory = process.getSystemMemoryInfo();
         const memUsedPercent = memory.total > 0 ? Math.round(Math.min(100, Math.max(0, (1 - memory.free / memory.total) * 100))) : 0;
-        return { cpuPercent: cpuPercent(), memUsedPercent };
+        return { cpuPercent: cpuPercent(), memUsedPercent, ...(await cachedExtendedSystemMetrics()) };
       },
       async openExternal(url) {
         let host: string | undefined;
