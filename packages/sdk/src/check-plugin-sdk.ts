@@ -99,6 +99,8 @@ const plugin: OpenPetsPluginDefinition = {
 
 const { ctx, calls, harness } = createMockContext();
 harness.files.provide([{ name: "bell.wav", bytes: new Uint8Array([1, 2, 3]) }]);
+harness.system.setMetrics({ cpuPercent: 12, memUsedPercent: 34, gpuPercent: 56, diskUsedPercent: 78 });
+assert.deepEqual(await ctx.system.metrics(), { cpuPercent: 12, memUsedPercent: 34, gpuPercent: 56, diskUsedPercent: 78 });
 await plugin.start(ctx);
 
 assert.deepEqual(calls.speak, ["Hello!", "Heads up", "Break in 5:00"]);

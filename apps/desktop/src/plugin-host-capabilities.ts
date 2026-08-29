@@ -47,16 +47,18 @@ let cpuSample: { idle: number; total: number } | null = null;
 let extendedMetricsCache: { expiresAt: number; value: Awaited<ReturnType<typeof readExtendedSystemMetrics>> } | null = null;
 let extendedMetricsInFlight: Promise<Awaited<ReturnType<typeof readExtendedSystemMetrics>>> | null = null;
 
-async function cachedExtendedSystemMetrics(): Promise<Awaited<ReturnType<typeof readExtendedSystemMetrics>>> {
+function cachedExtendedSystemMetrics(): Awaited<ReturnType<typeof readExtendedSystemMetrics>> {
   if (extendedMetricsCache && extendedMetricsCache.expiresAt > Date.now()) return extendedMetricsCache.value;
-  if (extendedMetricsInFlight) return extendedMetricsInFlight;
-  extendedMetricsInFlight = readExtendedSystemMetrics().then((value) => {
-    extendedMetricsCache = { value, expiresAt: Date.now() + 5_000 };
-    return value;
-  }).finally(() => {
-    extendedMetricsInFlight = null;
-  });
-  return extendedMetricsInFlight;
+  if (!extendedMetricsInFlight) {
+    extendedMetricsInFlight = readExtendedSystemMetrics().then((value) => {
+      extendedMetricsCache = { value, expiresAt: Date.now() + 5_000 };
+      return value;
+    }).catch(() => ({})).finally(() => {
+      extendedMetricsInFlight = null;
+    });
+  }
+  // CPU and memory are always immediate; optional probes populate the next read.
+  return {};
 }
 
 function sampleCpus(): { idle: number; total: number } {
@@ -287,7 +289,7 @@ export function createElectronPluginHostCapabilities(userDataPath: string): Elec
       async metrics() {
         const memory = process.getSystemMemoryInfo();
         const memUsedPercent = memory.total > 0 ? Math.round(Math.min(100, Math.max(0, (1 - memory.free / memory.total) * 100))) : 0;
-        return { cpuPercent: cpuPercent(), memUsedPercent, ...(await cachedExtendedSystemMetrics()) };
+        return { cpuPercent: cpuPercent(), memUsedPercent, ...cachedExtendedSystemMetrics() };
       },
       async openExternal(url) {
         let host: string | undefined;

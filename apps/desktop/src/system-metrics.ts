@@ -22,10 +22,10 @@ function clampPercent(value: number): number | undefined {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
-function percentFromText(text: string): number | undefined {
+function averagePercentFromText(text: string): number | undefined {
   const values = text.match(/\d+(?:\.\d+)?/g)?.map(Number).filter(Number.isFinite) ?? [];
   if (values.length === 0) return undefined;
-  return clampPercent(Math.max(...values));
+  return clampPercent(values.reduce((sum, value) => sum + value, 0) / values.length);
 }
 
 export function gpuPercentFromIoreg(text: string): number | undefined {
@@ -45,6 +45,20 @@ async function defaultRun(command: string, args: string[], timeoutMs = commandTi
   return String(stdout ?? "");
 }
 
+async function linuxGpuPercent(readFile: TextFileReader, readDirectory: DirectoryReader): Promise<number | undefined> {
+  try {
+    const percents = await Promise.all(
+      (await readDirectory("/sys/class/drm"))
+        .filter((entry) => /^card\d+$/.test(entry))
+        .map((entry) => readFile(`/sys/class/drm/${entry}/device/gpu_busy_percent`).then(averagePercentFromText).catch(() => undefined)),
+    );
+    const available = percents.filter((percent): percent is number => percent !== undefined);
+    return available.length > 0 ? Math.round(available.reduce((sum, percent) => sum + percent, 0) / available.length) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function gpuPercentForPlatform(
   platform: NodeJS.Platform,
   run: CommandRunner,
@@ -52,21 +66,16 @@ async function gpuPercentForPlatform(
   readDirectory: DirectoryReader,
 ): Promise<number | undefined> {
   if (platform === "darwin") {
-    try {
-      const percent = gpuPercentFromIoreg(await run("ioreg", ["-r", "-d", "2", "-w", "0", "-c", "IOGPU"]));
-      if (percent !== undefined) return percent;
-    } catch {}
-    try {
-      return gpuPercentFromIoreg(await run("ioreg", ["-r", "-d", "2", "-w", "0", "-c", "IOAccelerator"]));
-    } catch {
-      return undefined;
-    }
+    const [ioGpu, ioAccelerator] = await Promise.all([
+      run("ioreg", ["-r", "-d", "2", "-w", "0", "-c", "IOGPU"]).then(gpuPercentFromIoreg).catch(() => undefined),
+      run("ioreg", ["-r", "-d", "2", "-w", "0", "-c", "IOAccelerator"]).then(gpuPercentFromIoreg).catch(() => undefined),
+    ]);
+    return ioGpu ?? ioAccelerator;
   }
 
-  try {
-    const nvidia = percentFromText(await run("nvidia-smi", ["--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"]));
-    if (nvidia !== undefined) return nvidia;
-  } catch {}
+  const nvidia = run("nvidia-smi", ["--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"])
+    .then(averagePercentFromText)
+    .catch(() => undefined);
 
   if (platform === "win32") {
     const command = [
@@ -74,29 +83,18 @@ async function gpuPercentForPlatform(
       "if (-not $c) { exit 0 };",
       "$samples = $c.CounterSamples | Where-Object { $_.InstanceName -match 'engtype_3D' };",
       "if (-not $samples) { $samples = $c.CounterSamples };",
-      "($samples | Measure-Object -Property CookedValue -Maximum).Maximum",
+      "($samples | Measure-Object -Property CookedValue -Average).Average",
     ].join(" ");
-    try {
-      return percentFromText(await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], 4_000));
-    } catch {
-      return undefined;
-    }
+    const windows = run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command])
+      .then(averagePercentFromText)
+      .catch(() => undefined);
+    const [nvidiaPercent, windowsPercent] = await Promise.all([nvidia, windows]);
+    return nvidiaPercent ?? windowsPercent;
   }
 
   if (platform !== "linux") return undefined;
-  try {
-    const percents: number[] = [];
-    for (const entry of await readDirectory("/sys/class/drm")) {
-      if (!/^card\d+$/.test(entry)) continue;
-      try {
-        const percent = percentFromText(await readFile(`/sys/class/drm/${entry}/device/gpu_busy_percent`));
-        if (percent !== undefined) percents.push(percent);
-      } catch {}
-    }
-    return percents.length > 0 ? Math.max(...percents) : undefined;
-  } catch {
-    return undefined;
-  }
+  const [nvidiaPercent, linuxPercent] = await Promise.all([nvidia, linuxGpuPercent(readFile, readDirectory)]);
+  return nvidiaPercent ?? linuxPercent;
 }
 
 export async function readExtendedSystemMetrics(

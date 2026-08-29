@@ -13,13 +13,14 @@ assert.equal(gpuPercentFromIoreg("unavailable"), undefined);
     platform: "linux",
     run: async () => { throw new Error("nvidia-smi is unavailable"); },
     statfs: async () => ({ blocks: 200, bfree: 50 }),
-    readDirectory: async () => ["card0", "renderD128"],
+    readDirectory: async () => ["card0", "card1", "renderD128"],
     readFile: async (path) => {
-      assert.equal(path, "/sys/class/drm/card0/device/gpu_busy_percent");
-      return "37\n";
+      if (path === "/sys/class/drm/card0/device/gpu_busy_percent") return "37\n";
+      if (path === "/sys/class/drm/card1/device/gpu_busy_percent") return "63\n";
+      throw new Error(`Unexpected path: ${path}`);
     },
   });
-  assert.deepEqual(metrics, { gpuPercent: 37, diskUsedPercent: 75 });
+  assert.deepEqual(metrics, { gpuPercent: 50, diskUsedPercent: 75 });
 }
 
 {
