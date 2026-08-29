@@ -1,0 +1,20 @@
+{
+  "name": "openpets-system-resources",
+  "version": "1.4.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "OpenPets plugin: live CPU and RAM to the left of the pet, without replacing the Virtual Pet HUD.",
+  "scripts": {
+    "test": "node test.js && node sidecar/collect.test.js && node scripts/install-sidecar.test.js && node scripts/package-catalog.test.js",
+    "sidecar": "node sidecar/metrics-server.mjs",
+    "install-sidecar": "node scripts/install-sidecar.mjs",
+    "install-sidecar:mac": "bash scripts/install-sidecar.sh",
+    "install-sidecar:linux": "bash scripts/install-sidecar-linux.sh",
+    "install-sidecar:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-sidecar.ps1",
+    "package:catalog": "node scripts/package-catalog.mjs"
+  },
+  "devDependencies": {
+    "@open-pets/plugin-sdk": "^3.3.0"
+  }
+}

@@ -1,0 +1,84 @@
+{
+  "manifestVersion": 3,
+  "id": "openpets.system-resources",
+  "name": "$t:plugin.name",
+  "description": "$t:plugin.description",
+  "version": "1.4.0",
+  "runtime": "javascript",
+  "icon": "plugin",
+  "sdkVersion": "3.0.0",
+  "entry": "index.js",
+  "assets": {
+    "icons": {
+      "system-resources": "assets/system-resources.svg",
+      "cpu": "assets/cpu.svg",
+      "ram": "assets/ram.svg",
+      "gpu": "assets/gpu.svg",
+      "ssd": "assets/ssd.svg"
+    }
+  },
+  "permissions": [
+    "pet:speak",
+    "pet:reaction",
+    "pet:pin",
+    "pet:interact",
+    "pet:move",
+    "pet:animate",
+    "pets:read",
+    "pets:manage",
+    "schedule",
+    "storage",
+    "commands",
+    "status",
+    "events",
+    "system:metrics",
+    "network",
+    "network:local"
+  ],
+  "network": {
+    "hosts": ["127.0.0.1:37647", "localhost:37647"]
+  },
+  "configSchema": {
+    "language": {
+      "type": "select",
+      "default": "auto",
+      "label": "$t:config.language.label",
+      "description": "$t:config.language.description",
+      "options": [
+        { "value": "auto", "label": "$t:config.language.auto" },
+        { "value": "nl", "label": "$t:config.language.nl" },
+        { "value": "en", "label": "$t:config.language.en" },
+        { "value": "fr", "label": "$t:config.language.fr" },
+        { "value": "de", "label": "$t:config.language.de" }
+      ]
+    },
+    "showHud": {
+      "type": "boolean",
+      "default": true,
+      "label": "$t:config.showHud.label",
+      "description": "$t:config.showHud.description"
+    },
+    "pollSeconds": {
+      "type": "number",
+      "default": 10,
+      "min": 5,
+      "max": 60,
+      "label": "$t:config.pollSeconds.label",
+      "description": "$t:config.pollSeconds.description"
+    },
+    "alertPercent": {
+      "type": "number",
+      "default": 90,
+      "min": 70,
+      "max": 99,
+      "label": "$t:config.alertPercent.label",
+      "description": "$t:config.alertPercent.description"
+    },
+    "speakAlerts": {
+      "type": "boolean",
+      "default": true,
+      "label": "$t:config.speakAlerts.label",
+      "description": "$t:config.speakAlerts.description"
+    }
+  }
+}
