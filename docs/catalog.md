@@ -19,23 +19,23 @@ when they disagree with the generated catalog.
 
 - **Pet catalog v3 is the source of truth.** v2 exists only for old app versions
   and as a fallback. New work targets v3.
-- **Plugin catalog v2 is active.** v1 is kept as an *empty compatibility shim*
+- **Plugin catalog v2 is active.** v1 is kept as an _empty compatibility shim_
   for older desktop builds. (Verified URLs in `apps/desktop/src/plugin-catalog.ts`.)
 - This matches the forward-only direction in `AGENTS.md`: don't optimize new
   behavior for legacy catalog versions.
 
 ## Endpoints the app fetches
 
-| Data | URL | Owner in app |
-|------|-----|--------------|
-| Pet catalog v3 (index) | `https://openpets.dev/pets/catalog.v3.json` | `apps/desktop/src/catalog.ts` |
-| Pet catalog v3 pages | `…/pets/catalog.v3/page-NNN.json` | `catalog.ts` |
-| Pet catalog v3 search | `…/pets/catalog.v3/search.json` (+ search pages) | `catalog.ts` |
-| Pet catalog v2 (legacy/fallback) | `https://openpets.dev/pets/catalog.v2.json` | `catalog.ts` |
-| Pet ZIPs | `https://zip.openpets.dev/pets/{slug}/{installId}.zip` | `pet-installation.ts` |
-| Plugin catalog v2 (active) | `https://openpets.dev/plugins/catalog.v2.json` | `plugin-catalog.ts` |
-| Plugin catalog v1 (empty compat) | `https://openpets.dev/plugins/catalog.v1.json` | `plugin-catalog.ts` |
-| Plugin ZIPs | `https://zip.openpets.dev/plugins/{plugin-id}.zip` | `plugin-package.ts` |
+| Data                             | URL                                                    | Owner in app                  |
+| -------------------------------- | ------------------------------------------------------ | ----------------------------- |
+| Pet catalog v3 (index)           | `https://openpets.dev/pets/catalog.v3.json`            | `apps/desktop/src/catalog.ts` |
+| Pet catalog v3 pages             | `…/pets/catalog.v3/page-NNN.json`                      | `catalog.ts`                  |
+| Pet catalog v3 search            | `…/pets/catalog.v3/search.json` (+ search pages)       | `catalog.ts`                  |
+| Pet catalog v2 (legacy/fallback) | `https://openpets.dev/pets/catalog.v2.json`            | `catalog.ts`                  |
+| Pet ZIPs                         | `https://zip.openpets.dev/pets/{slug}/{installId}.zip` | `pet-installation.ts`         |
+| Plugin catalog v2 (active)       | `https://openpets.dev/plugins/catalog.v2.json`         | `plugin-catalog.ts`           |
+| Plugin catalog v1 (empty compat) | `https://openpets.dev/plugins/catalog.v1.json`         | `plugin-catalog.ts`           |
+| Plugin ZIPs                      | `https://zip.openpets.dev/plugins/{plugin-id}.zip`     | `plugin-package.ts`           |
 
 ## Pet catalog v3 contract
 
@@ -109,20 +109,21 @@ Community entries are public catalog plugins but cannot be bundled/default-on.
 To secure community-contributed plugins without changing the app-facing
 `catalog.v2.json` schema, the website serves sidecar metadata files:
 
-| File | Purpose |
-|------|---------|
-| `https://openpets.dev/plugins/provenance.json` | Reviewed provenance for installable community plugins. |
+| File                                            | Purpose                                                                       |
+| ----------------------------------------------- | ----------------------------------------------------------------------------- |
+| `https://openpets.dev/plugins/provenance.json`  | Reviewed provenance for installable community plugins.                        |
 | `https://openpets.dev/plugins/submissions.json` | Pending external GitHub submissions shown on the website but not installable. |
 
 These files are only used by the website/CI environment for provenance display,
 validation, and automated owner-publishing policy. `provenance.json` is keyed by
 plugin ID and defines:
-* `publisher`: GitHub user/organization owner.
-* `sourceUrl`: Upstream GitHub repository.
-* `sourceSubdirectory`: Optional subdirectory under the repository root.
-* `sourceCommit`: The reviewed and approved commit SHA.
-* `reviewedAt`: ISO date/time of review.
-* `updatePolicy`: `safe-auto` (safe for automated release updates) or `manual-review`.
+
+- `publisher`: GitHub user/organization owner.
+- `sourceUrl`: Upstream GitHub repository.
+- `sourceSubdirectory`: Optional subdirectory under the repository root.
+- `sourceCommit`: The reviewed and approved commit SHA.
+- `reviewedAt`: ISO date/time of review.
+- `updatePolicy`: `safe-auto` (safe for automated release updates) or `manual-review`.
 
 `submissions.json` is also keyed by plugin ID, but entries are candidates only:
 they must not appear in the installable catalog until promoted into
@@ -133,13 +134,32 @@ rejection, response-size cap, and caching with refresh. Install/verification of
 the downloaded ZIP (SHA-256, host/path allowlist, entry restrictions, manifest
 ↔ catalog consistency) is `plugin-package.ts`. See [Plugin platform](/plugins).
 
+## Pet ZIP archive contract
+
+The desktop installer accepts a pet ZIP only when its final non-directory file
+set is exactly:
+
+```txt
+pet.json
+spritesheet.webp
+```
+
+Those files may be at the archive root or below exactly one top-level directory.
+Optional directory entries for that one directory are allowed. Paths must be
+safe, layouts cannot be mixed, and QA artifacts such as `validation.json`,
+contact sheets, and motion previews must stay outside the staged pet directory.
+The release verifier checks this contract from ZIP central-directory range
+reads, without downloading the spritesheet payload.
+
 ## ZIP hosting (R2)
 
 Both pet and plugin ZIPs live on the R2 bucket (default `openpets`) backing
-`zip.openpets.dev`. The hard rule: **never ship a catalog entry whose ZIP isn't
-live on R2.** The verification commands HEAD-check every ZIP for exactly this
-reason. Override the bucket with `OPENPETS_R2_BUCKET`; `--skip-r2` is for local
-testing only.
+`zip.openpets.dev`. The hard rule: **never ship a catalog entry whose ZIP is
+missing or fails the pet ZIP archive contract.** `verify:catalog:remote` validates
+every ZIP URL in the local v3 catalog, while `verify:catalog:prod` validates
+every ZIP referenced by the deployed v3 catalog and also reports local-vs-prod
+drift. Both checks use bounded central-directory range reads. Override the
+bucket with `OPENPETS_R2_BUCKET`; `--skip-r2` is for local testing only.
 
 ## How the app uses all this
 

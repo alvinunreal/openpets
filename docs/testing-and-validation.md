@@ -20,7 +20,7 @@ From fastest/narrowest to broadest:
    against fixtures so producers and consumers can't drift apart.
 3. **Runtime checks** (`check-*.ts`) - assertions about packaging, CSP, SDK
    conformance, and integration previews that run as part of `check`/`test`.
-4. **Release validators** - the gates that catch *production-breaking* mistakes
+4. **Release validators** - the gates that catch _production-breaking_ mistakes
    the test suite alone misses (catalog/package drift, missing ZIPs, SHA
    mismatches, unresolved `$t:`).
 5. **Live validation** - post-deploy checks against the real origin.
@@ -62,7 +62,7 @@ dist checks. Three buckets:
   - `check-packaging-contract.ts` - asserts the packaged app includes bundled
     official plugins as extra resources, every bundled plugin's manifest + entry
     exist, the pet-window CSP allows the bundled emoji font, etc. This is the
-    guard that a *packaged* build is actually shippable.
+    guard that a _packaged_ build is actually shippable.
   - `check-opencode-desktop-setup.ts` - verifies the bundled OpenCode setup
     preview matches expectations.
 
@@ -118,16 +118,17 @@ Each package runs its own `check`/`test`. Notable contract/boundary coverage:
 `plugins:check` alone is **not** release-readiness. The dedicated validators are
 the production gate (`scripts/validate-plugin-release.mjs`):
 
-| Command | When | Catches |
-|---------|------|---------|
-| `pnpm plugins:package` | build artifacts | (produces catalog + ZIP staging) |
-| `pnpm plugins:validate-release` | **before deploy** | unresolved `$t:` names/descriptions in catalog cards, missing plugin ZIPs, SHA mismatches, missing `locales/en.json`, missing declared assets/entry files (including courier sprites), catalog/package drift, and **community plugin sidecar validation** (`provenance.json`, `submissions.json`) |
-| `pnpm plugins:validate-live` | **after deploy/R2 upload** | the same, against the live catalog + live ZIPs & live sidecars |
+| Command                         | When                       | Catches                                                                                                                                                                                                                                                                                           |
+| ------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm plugins:package`          | build artifacts            | (produces catalog + ZIP staging)                                                                                                                                                                                                                                                                  |
+| `pnpm plugins:validate-release` | **before deploy**          | unresolved `$t:` names/descriptions in catalog cards, missing plugin ZIPs, SHA mismatches, missing `locales/en.json`, missing declared assets/entry files (including courier sprites), catalog/package drift, and **community plugin sidecar validation** (`provenance.json`, `submissions.json`) |
+| `pnpm plugins:validate-live`    | **after deploy/R2 upload** | the same, against the live catalog + live ZIPs & live sidecars                                                                                                                                                                                                                                    |
 
 ### Plugin sidecar validation
 
 The release validator automatically loads `web/public/plugins/provenance.json`
 and `web/public/plugins/submissions.json` and asserts:
+
 1. Every community plugin mapped in the catalog has a matching provenance entry.
 2. All provenance entries contain valid URLs, hex SHAs (40 characters), and formatted dates.
 3. Update policy is strictly limited to either `safe-auto` or `manual-review`.
@@ -146,16 +147,19 @@ catalog, then validates the live catalog.
 Pet catalogs have a parallel "doctor" run from `web/` (read-only; safe anytime).
 The gate in brief:
 
-| Command | Adds |
-|---------|------|
-| `bun run verify:catalog` | manifest integrity, artifact freshness vs manifest, on-disk assets, orphan dirs |
-| `bun run verify:catalog:remote` | HEAD-checks every ZIP on R2 - catches "not installable" pets |
-| `bun run verify:catalog:prod` | diffs local vs the deployed prod catalog (pending/removed) |
-| `bun run verify:catalog:all` | all of the above |
+| Command                         | Adds                                                                                               |
+| ------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `bun run verify:catalog`        | manifest integrity, artifact freshness vs manifest, on-disk assets, orphan dirs                    |
+| `bun run verify:catalog:remote` | range-validates every ZIP referenced by the local v3 catalog against the desktop install contract  |
+| `bun run verify:catalog:prod`   | fetches deployed v3 pages, validates every deployed ZIP, and diffs local vs prod (pending/removed) |
+| `bun run verify:catalog:all`    | all local, local-catalog remote, deployed-prod ZIP, and drift checks                               |
 
-The non-negotiable rule: **never ship a catalog entry whose ZIP isn't live on
-R2.** Run `verify:catalog:remote` before deploying and `verify:catalog:prod`
-after to confirm the deploy landed. See [Catalogs](/catalog).
+The non-negotiable rule: **never ship a catalog entry whose ZIP is missing or
+fails the desktop install contract.** Run `verify:catalog:remote` before
+deploying and `verify:catalog:prod` after to confirm both the deployed catalog
+and its ZIPs are valid. The ZIP checks use bounded HTTP range reads of the
+central directory; they do not download spritesheet payloads. See
+[Catalogs](/catalog).
 
 ## What "production-valid" means
 
@@ -170,7 +174,7 @@ Before shipping, the relevant gate must be green:
   the desktop bridge/static checks and the targeted Electron smoke above.
 - **A plugin release** → `validate-release` before deploy, `validate-live` after.
 - **A pet catalog change** → `verify:catalog:remote` before, `verify:catalog:prod`
-  after.
+  after; both validate the relevant v3 ZIP archive contracts.
 - **Linux-specific behavior** → validated on the Ubuntu VM
   ([Development](/development)).
 
