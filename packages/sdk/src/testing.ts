@@ -309,7 +309,7 @@ export interface MockHarnessCore {
   files: { provide(files: Array<{ name: string; text?: string; bytes?: Uint8Array }>): void };
   auth: { mock(tokens: { accessToken: string; refreshToken?: string; expiresAt?: number }): void };
   voice: { mockListen(text: string): void };
-  system: { set(info: Partial<{ platform: "mac" | "win" | "linux"; locale: string; timezone: string; theme: "light" | "dark"; online: boolean }>): void; setMetrics(metrics: { cpuPercent: number; memUsedPercent: number; battery?: { percent: number; charging: boolean } }): void; setClipboard(text: string): void };
+  system: { set(info: Partial<{ platform: "mac" | "win" | "linux"; locale: string; timezone: string; theme: "light" | "dark"; online: boolean }>): void; setMetrics(metrics: { cpuPercent: number; memUsedPercent: number; gpuPercent?: number; diskUsedPercent?: number; battery?: { percent: number; charging: boolean } }): void; setClipboard(text: string): void };
   panel: { sendToPlugin(msg: unknown): void };
 }
 
@@ -342,7 +342,7 @@ export function createMockContext(optionsOrConfig: MockContextOptions | Record<s
   let listenText: string | null = null;
   let clipboardText = "";
   let systemInfo: { platform: "mac" | "win" | "linux"; locale: string; timezone: string; theme: "light" | "dark"; appVersion: string; online: boolean } = { platform: "mac", locale: "en-US", timezone: "UTC", theme: "light", appVersion: "0.0.0-test", online: true };
-  let systemMetrics: { cpuPercent: number; memUsedPercent: number; battery?: { percent: number; charging: boolean } } = { cpuPercent: 5, memUsedPercent: 40 };
+  let systemMetrics: { cpuPercent: number; memUsedPercent: number; gpuPercent?: number; diskUsedPercent?: number; battery?: { percent: number; charging: boolean } } = { cpuPercent: 5, memUsedPercent: 40 };
   let nextId = 0;
   const newId = (prefix: string) => `${prefix}-${++nextId}`;
 

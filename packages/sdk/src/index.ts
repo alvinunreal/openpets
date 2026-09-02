@@ -889,6 +889,10 @@ export interface OpenPetsSystemMetrics {
   cpuPercent: number;
   /** 0–100. */
   memUsedPercent: number;
+  /** Optional aggregate GPU utilization (0–100) when supported by the host OS and hardware. */
+  gpuPercent?: number;
+  /** Optional used capacity (0–100) of the system volume when supported by the host OS. */
+  diskUsedPercent?: number;
   battery?: { percent: number; charging: boolean };
 }
 
