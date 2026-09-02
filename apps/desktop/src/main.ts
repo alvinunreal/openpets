@@ -185,6 +185,9 @@ if (!gotSingleInstanceLock) {
       const service = pluginService;
       await service.start();
       const assistant = startPetAssistantHost(service, pluginCapabilities.secretsStore, {
+        // App state is host-owned and synchronous; the service snapshots this
+        // profile before each turn.
+        compositionProvider: () => ({ personality: getAppStateSnapshot().preferences.personality }),
         providerOperations: pluginCapabilities.providerService,
         conversationArchive: openLocalPetAssistantConversationArchive({
           userDataPath: app.getPath("userData"),

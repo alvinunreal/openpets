@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { createProviderProfile, getPluginPlatformSettings, initializePluginPlatformSettings } from "../src/plugin-platform-settings.js";
-import { deleteProviderCredentialForProfile } from "../src/windows.js";
+import { deleteProviderCredentialForProfile } from "../src/provider-service.js";
 
 const dir = mkdtempSync(join(tmpdir(), "openpets-provider-credential-delete-"));
 

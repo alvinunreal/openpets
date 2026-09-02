@@ -1,5 +1,4 @@
 import { info, warn } from "./logger.js";
-import { getAppStateSnapshot } from "./app-state.js";
 import type { PluginAssistantCapabilityExecutionOutcome, PluginAssistantCapabilityHandle } from "./plugin-sdk-assistant.js";
 import type { PluginService } from "./plugin-service.js";
 import type { PluginSecretsStore } from "./plugin-secrets.js";
@@ -24,13 +23,14 @@ const conversationControllerReadyListeners = new Set<(controller: PetAssistantCo
 
 type HostCapabilityHandle = PetAssistantGenerationHandle & { readonly pluginHandle: PluginAssistantCapabilityHandle };
 export type PetAssistantHostOptions = {
-  readonly compositionProvider?: () => PetAssistantComposition;
+  /** Host-owned composition snapshot (personality etc.); the caller supplies it so this module stays free of Electron app state. */
+  readonly compositionProvider: () => PetAssistantComposition;
   readonly providerOperations?: HostProviderOperations;
   readonly conversationArchive?: PetAssistantConversationArchive;
 };
 
 /** Construct the host assistant only after the plugin runtime has started. */
-export function startPetAssistantHost(pluginService: PluginService, secrets: PluginSecretsStore, options: PetAssistantHostOptions = {}): PetAssistantService {
+export function startPetAssistantHost(pluginService: PluginService, secrets: PluginSecretsStore, options: PetAssistantHostOptions): PetAssistantService {
   if (assistantService) return assistantService;
   if (stopping) throw new Error("Pet Assistant shutdown is in progress.");
   const runtime: PetAssistantCapabilityRuntime = {
@@ -47,9 +47,7 @@ export function startPetAssistantHost(pluginService: PluginService, secrets: Plu
     execute: (handle, input, signal) => executeCapability(pluginService, handle, input, signal),
   };
   const service = new PetAssistantService(new TextModelClient(options.providerOperations ?? secrets), runtime, {
-    // App state is host-owned and synchronous; the service snapshots this
-    // profile before each turn without coupling itself to Electron state.
-    compositionProvider: options.compositionProvider ?? (() => ({ personality: getAppStateSnapshot().preferences.personality })),
+    compositionProvider: options.compositionProvider,
     conversationArchive: options.conversationArchive,
     onConversationArchiveError: (error) => warn("app", "Pet Assistant conversation archive write failed", { reason: error instanceof Error ? error.message : "unknown" }),
   });

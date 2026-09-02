@@ -165,3 +165,14 @@ async function boundedText(response: Response, maxBytes: number, abortPromise: P
 async function readBoundedBytes(response: Response, maxBytes: number, abortPromise: Promise<never>, message: string): Promise<Uint8Array> { const length = Number(response.headers.get("content-length")); if (Number.isFinite(length) && length > maxBytes) throw providerError(message, "provider.response.too_large"); if (!response.body) return new Uint8Array(); const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let bytes = 0; try { for (;;) { const { done, value } = await Promise.race([reader.read(), abortPromise]); if (done) break; bytes += value.byteLength; if (bytes > maxBytes) throw providerError(message, "provider.response.too_large"); chunks.push(value); } } finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); } const result = new Uint8Array(bytes); let offset = 0; for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.byteLength; } return result; }
 async function readSseStream(body: ReadableStream<Uint8Array>, onData: (data: string) => void, abortPromise: Promise<never>): Promise<void> { const reader = body.getReader(); const decoder = new TextDecoder(); let buffer = ""; let bytes = 0; try { for (;;) { const { done, value } = await Promise.race([reader.read(), abortPromise]); if (done) break; bytes += value.byteLength; if (bytes > 32 * 1024 * 1024) throw providerError("Provider stream is too large.", "provider.response.too_large"); buffer += decoder.decode(value, { stream: true }); const lines = buffer.split("\n"); buffer = lines.pop() ?? ""; for (const line of lines) { const item = line.trim(); if (item.startsWith("data:")) onData(item.slice(5).trim()); } } } finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); } }
 function extension(mime: string): string { const base = mime.toLowerCase().split(";", 1)[0] ?? ""; return base.includes("ogg") ? "ogg" : base.includes("wav") ? "wav" : base.includes("mp4") ? "mp4" : "webm"; }
+
+export async function deleteProviderCredentialForProfile(
+  secretsStore: { delete(owner: string, key: string): Promise<void> },
+  profile: { readonly id?: string; readonly secretRef?: string },
+  profiles: readonly { readonly id?: string; readonly secretRef?: string }[],
+): Promise<void> {
+  if (!profile.secretRef) return;
+  const otherProfile = profiles.find((candidate) => candidate !== profile && candidate.secretRef === profile.secretRef);
+  if (otherProfile) throw new Error(`Cannot remove this credential because profile "${otherProfile.id ?? "another profile"}" still references it. Replace or remove the other profile's secret reference first.`);
+  await secretsStore.delete(hostSecretsOwner, providerSecretKey(profile.secretRef));
+}
