@@ -73,6 +73,14 @@ re-arms forwarding from the main process (`screen.getCursorScreenPoint()`), whic
 keeps working even when forwarding is dead. The platform predicates live in
 `mouse-forwarding.ts`.
 
+Right-clicking any pet offers **Flip horizontally**, a checked menu item that
+mirrors that pet's sprite left/right. Speech bubbles, status badges, controls,
+and the hit area stay unmirrored and readable. The orientation is stored per
+underlying pet ID in app state (`preferences.petHorizontalFlip`) and survives
+restart; toggling one pet updates every live window of that pet (default, agent,
+plugin-spawned, and LAN visitor) and leaves other pets unchanged. There is no
+vertical or upside-down flip.
+
 ## Reactions → animations → speech
 
 A **reaction** is a categorical pet state (thinking, editing, testing, waiting
@@ -295,7 +303,7 @@ images silently fall back to the default pet. This is the single most common
 |---------------------|----------|
 | How a reaction looks | `reaction-animation-mapping.ts` |
 | What a pet says | `reaction-messages.ts` + `i18n/reactions/` |
-| Window behavior (drag, click-through) | `pet-window.ts`, `pet-preload.cjs` |
+| Window behavior (drag, click-through, horizontal flip) | `pet-window.ts`, `pet-preload.cjs` |
 | Default vs agent visibility | `default-pet-controller.ts`, `agent-pet-controller.ts` |
 | Installing / extracting | `pet-installation.ts`, `zip-safety.ts` |
 | Standalone install | `packages/install-pet/` |

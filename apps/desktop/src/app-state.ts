@@ -3,7 +3,7 @@ import { dirname, isAbsolute, join } from "node:path";
 
 import { app } from "electron";
 
-import { defaultAppearanceTheme, defaultPetScale, defaultWaitingAnimationDurationMs, markOnboardingCompleted, normalizeAppearanceTheme, normalizeOnboardingCompleted, normalizePetConfinementEnabled, normalizePetCrossDisplayEnabled, normalizePetGravityEnabled, normalizePetScale, normalizeWaitingAnimationDurationMs, petScaleOptions, waitingAnimationDurationOptions, type AppearanceTheme, type PetScaleValue, type WaitingAnimationDurationMs } from "./app-state-core.js";
+import { defaultAppearanceTheme, defaultPetScale, defaultWaitingAnimationDurationMs, markOnboardingCompleted, normalizeAppearanceTheme, normalizeOnboardingCompleted, normalizePetConfinementEnabled, normalizePetCrossDisplayEnabled, normalizePetGravityEnabled, normalizePetHorizontalFlip, normalizePetScale, normalizeWaitingAnimationDurationMs, petScaleOptions, togglePetHorizontalFlipMap, waitingAnimationDurationOptions, type AppearanceTheme, type PetScaleValue, type WaitingAnimationDurationMs } from "./app-state-core.js";
 import { builtInPet } from "./built-in-pet.js";
 import type { Point } from "./display.js";
 import { isSupportedLocale, type LocalePreference } from "./i18n/catalog.js";
@@ -79,6 +79,8 @@ export interface OpenPetsStateV1 {
     readonly personality: PetAssistantPersonality;
     /** Canonical Electron accelerator used to start the bounded Talk session. */
     readonly voiceAssistantShortcut: string;
+    /** Per-pet horizontal flip (mirroring) state. Persisted per pet ID. */
+    readonly petHorizontalFlip?: Readonly<Record<string, boolean>>;
   };
   readonly pets: {
     readonly installed: readonly InstalledPetState[];
@@ -108,7 +110,7 @@ export type OpenPetsActivityRecord =
   | { readonly kind: "say"; readonly reaction?: OpenPetsReaction; readonly petId?: string; readonly surface?: "default" | "agent" }
   | { readonly kind: "react"; readonly reaction: OpenPetsReaction; readonly petId?: string; readonly surface?: "default" | "agent" };
 
-export { defaultAppearanceTheme, defaultPetScale, defaultWaitingAnimationDurationMs, normalizeAppearanceTheme, normalizePetScale, normalizeWaitingAnimationDurationMs, petScaleOptions, waitingAnimationDurationOptions, type AppearanceTheme, type PetScaleValue, type WaitingAnimationDurationMs };
+export { defaultAppearanceTheme, defaultPetScale, defaultWaitingAnimationDurationMs, normalizeAppearanceTheme, normalizePetHorizontalFlip, normalizePetScale, normalizeWaitingAnimationDurationMs, petScaleOptions, waitingAnimationDurationOptions, type AppearanceTheme, type PetScaleValue, type WaitingAnimationDurationMs };
 export { defaultPetAssistantPersonality, normalizePetAssistantPersonality, type PetAssistantPersonality, type PetAssistantPersonalityPatch } from "./pet-assistant-personality.js";
 
 export type OpenPetsPreferencePatch = Omit<Partial<OpenPetsStateV1["preferences"]>, "personality"> & {
@@ -195,6 +197,23 @@ export function setDefaultPet(defaultPetId: string): OpenPetsStateV1 {
 
   commitState(nextState);
   return getAppStateSnapshot();
+}
+
+export function isPetFlippedHorizontally(petId: string): boolean {
+  return Boolean(getInitializedState().preferences.petHorizontalFlip?.[petId]);
+}
+
+export function togglePetHorizontalFlip(petId: string): boolean {
+  const state = getInitializedState();
+  const nextFlip = togglePetHorizontalFlipMap(state.preferences.petHorizontalFlip, petId);
+  commitState(normalizeState({
+    ...state,
+    preferences: normalizePreferences({
+      ...state.preferences,
+      petHorizontalFlip: nextFlip,
+    }),
+  }));
+  return Boolean(nextFlip?.[petId]);
 }
 
 /**
@@ -556,6 +575,7 @@ function normalizePreferences(value: Partial<OpenPetsStateV1["preferences"]>): O
     petGravityEnabled: normalizePetGravityEnabled(value.petGravityEnabled, defaultState.preferences.petGravityEnabled),
     personality: normalizePetAssistantPersonality(value.personality),
     voiceAssistantShortcut: isCanonicalVoiceAssistantShortcut(value.voiceAssistantShortcut) ? value.voiceAssistantShortcut : defaultState.preferences.voiceAssistantShortcut,
+    petHorizontalFlip: normalizePetHorizontalFlip(value.petHorizontalFlip),
   };
 }
 
@@ -639,6 +659,7 @@ function createDefaultState(): OpenPetsStateV1 {
       petGravityEnabled: false,
       personality: defaultPetAssistantPersonality,
       voiceAssistantShortcut: DEFAULT_VOICE_ASSISTANT_SHORTCUT,
+      petHorizontalFlip: undefined,
     },
     pets: {
       installed: [builtInPet],

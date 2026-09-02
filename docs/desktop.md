@@ -115,8 +115,9 @@ pet keeps rendering during fullscreen video and games.
 
 ### Control Center (renderer)
 
-The React/Tailwind UI under `src/renderer/`. Pages: **Dashboard, Conversation,
-Pets, Integrations, Plugins, Settings**. It is a pure consumer of main-process
+The React/Tailwind UI under `src/renderer/`. Pages: **Dashboard,
+Pets, Integrations, Plugins, Settings** (the **Conversation** route is currently
+internal/experimental and not exposed in Control Center navigation). It is a pure consumer of main-process
 snapshots and actions exposed over the preload bridge - it holds no privileged
 capability of its own. The renderer is the only "frontend" in scope for these
 docs (the `web/` marketing site is out of scope). See

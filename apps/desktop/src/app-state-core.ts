@@ -87,3 +87,37 @@ export function normalizePetCrossDisplayEnabled(value: unknown, defaultValue = f
 export function normalizePetGravityEnabled(value: unknown, defaultValue = false): boolean {
   return typeof value === "boolean" ? value : defaultValue;
 }
+
+const safePetIdPattern = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+function isSafeFlipPetId(petId: string): boolean {
+  return safePetIdPattern.test(petId);
+}
+
+/**
+ * Normalize per-pet horizontal flip preferences.
+ * Only `true` values for valid pet IDs are retained; false is the default and is omitted.
+ */
+export function normalizePetHorizontalFlip(value: unknown): Readonly<Record<string, boolean>> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const normalized: Record<string, boolean> = {};
+  for (const [key, rawVal] of Object.entries(value)) {
+    if (!isSafeFlipPetId(key) || rawVal !== true) continue;
+    normalized[key] = true;
+  }
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+/**
+ * Toggle one pet's horizontal flip without affecting other pets.
+ * Returns the next persisted map, or undefined when no pets remain flipped.
+ */
+export function togglePetHorizontalFlipMap(current: unknown, petId: string): Readonly<Record<string, boolean>> | undefined {
+  if (!isSafeFlipPetId(petId)) {
+    throw new Error(`Invalid pet id for horizontal flip: ${petId}`);
+  }
+  const next: Record<string, boolean> = { ...(normalizePetHorizontalFlip(current) ?? {}) };
+  if (next[petId]) delete next[petId];
+  else next[petId] = true;
+  return normalizePetHorizontalFlip(next);
+}

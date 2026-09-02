@@ -69,6 +69,15 @@ export function applyLanVisitingPetSay(ownerHost: string, message: string, react
   return true;
 }
 
+export function refreshLanVisitingPetsForPetId(petId: string): void {
+  for (const entry of visitingPetWindows.values()) {
+    if (entry.renderedPetId === petId && !entry.window.isDestroyed()) {
+      const display = activeDisplays.get(entry.ownerHost) ?? null;
+      void loadExplicitPetContent(entry.window, entry.renderedPetId, display, null, display?.dismissToken, getAppStateSnapshot().preferences.petScale as PetScaleValue);
+    }
+  }
+}
+
 export function reclampLanVisitingPetWindows(): void {
   for (const entry of visitingPetWindows.values()) {
     if (entry.window.isDestroyed()) continue;

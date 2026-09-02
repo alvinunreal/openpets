@@ -35,6 +35,7 @@ export const zhHans: Partial<Messages> = {
   "pet.status.hi": "你好",
   "pet.menu.hidePet": "隐藏宠物",
   "pet.menu.closePet": "关闭宠物",
+  "pet.menu.flipHorizontally": "水平翻转",
   "pet.menu.openControlCenter": "打开控制中心",
   "pet.menu.focusSessionWindow": "聚焦会话窗口",
   "pet.menu.focusSessionWindowNoA11y": "聚焦会话窗口（需要辅助功能权限）",

@@ -118,10 +118,11 @@ export function closeAllAgentPets(): void {
   clearAllAgentDisplayTimers();
 }
 
-export function refreshAgentPetContent(): void {
-  debug("pet.agent", "refresh all content", { activeWindows: agentPetWindows.size, petIds: [...agentPetWindows.keys()] });
+export function refreshAgentPetContent(targetPetId?: string): void {
+  debug("pet.agent", "refresh content", { targetPetId, activeWindows: agentPetWindows.size, petIds: [...agentPetWindows.keys()] });
   const scale = getPreferredPetScale();
   for (const [petId, window] of agentPetWindows.entries()) {
+    if (targetPetId && petId !== targetPetId) continue;
     if (!window.isDestroyed()) {
       const display = transientDisplays.get(petId) ?? null;
       const badge = statusBadges.get(petId) ?? null;

@@ -84,6 +84,7 @@ const behaviorTests = [
   ".test-dist/tests/window-tracker-reentry.test.js",
   ".test-dist/tests/confinement-manager.test.js",
   ".test-dist/tests/pet-confinement-enabled.test.js",
+  ".test-dist/tests/pet-horizontal-flip.test.js",
   ".test-dist/tests/pet-motion-gravity.test.js",
   ".test-dist/tests/pet-motion-engine-clamp.test.js",
   ".test-dist/tests/pet-motion-engine-shared-ticker.test.js",

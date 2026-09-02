@@ -42,6 +42,7 @@ export const en = {
   "pet.status.hi": "Hi",
   "pet.menu.hidePet": "Hide pet",
   "pet.menu.closePet": "Close pet",
+  "pet.menu.flipHorizontally": "Flip horizontally",
   "pet.menu.openControlCenter": "Open Control Center",
   "pet.menu.talk": "Talk to your pet",
   "pet.menu.focusSessionWindow": "Focus session window",

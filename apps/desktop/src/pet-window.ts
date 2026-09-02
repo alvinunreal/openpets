@@ -4,7 +4,7 @@ import { mkdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { getAppStateSnapshot, markPetBroken, type PetScaleValue } from "./app-state.js";
+import { getAppStateSnapshot, isPetFlippedHorizontally, markPetBroken, togglePetHorizontalFlip, type PetScaleValue } from "./app-state.js";
 import { getCodexPetSpritePosition, type CodexPetSpriteLayout } from "./codex-pets-core.js";
 import { clampToNearestDisplayIfOffscreen, clampToVisibleWorkArea, defaultPetWindowSize, getDefaultPetInitialPosition, isCrossDisplayRoamingEnabled, type Point } from "./display.js";
 import { builtInPet } from "./built-in-pet.js";
@@ -230,7 +230,7 @@ function installAgentPetWindow(window: BrowserWindow, options: AgentPetWindowOpt
   info("pet.window", "agent window create", { windowId: window.id, petId: options.petId, displayName: options.displayName, position: options.position, hasDisplay: Boolean(options.display), badge: options.badge });
   installMousePassthroughAndDrag(window, options);
   installMotionStatePublisher(window);
-  installPetContextMenu(window, { label: t("pet.menu.closePet"), click: options.onCloseRequested, focusSessionWindow: options.onFocusSessionWindow });
+  installPetContextMenu(window, { label: t("pet.menu.closePet"), click: options.onCloseRequested, focusSessionWindow: options.onFocusSessionWindow, petId: options.petId });
   void loadExplicitPetContent(window, options.petId, options.display, options.badge, dismissToken, options.scale);
 }
 
@@ -245,7 +245,7 @@ export function recoverPetMouseInterop(window: BrowserWindow, reason: string): v
   debug("pet.window", "mouse interop recovery skipped", { windowId: window.id, reason, skippedReason: "unregistered-window" });
 }
 
-function installPetContextMenu(window: BrowserWindow, action: { readonly label: string; readonly click: () => void; readonly defaultPet?: boolean; readonly focusSessionWindow?: () => void; readonly talk?: () => void; readonly talkLabel?: () => Promise<string> }): void {
+function installPetContextMenu(window: BrowserWindow, action: { readonly label: string; readonly click: () => void; readonly defaultPet?: boolean; readonly petId?: string; readonly focusSessionWindow?: () => void; readonly talk?: () => void; readonly talkLabel?: () => Promise<string> }): void {
   const webContents = window.webContents;
   let layerShellClicks: Array<() => void> = [];
 
@@ -259,7 +259,12 @@ function installPetContextMenu(window: BrowserWindow, action: { readonly label: 
         const flatten = (items: readonly Electron.MenuItemConstructorOptions[]): unknown[] =>
           items.map((item) => {
             if (item.type === "separator") return { type: "separator" };
-            const out: { label?: string; submenu?: unknown[]; clickIndex?: number } = { label: item.label };
+            const label = item.type === "checkbox" ? `${item.checked ? "✓ " : "  "}${item.label ?? ""}` : item.label;
+            const out: { label?: string; submenu?: unknown[]; clickIndex?: number; type?: string; checked?: boolean } = {
+              label,
+              ...(item.type ? { type: item.type } : {}),
+              ...(item.checked !== undefined ? { checked: item.checked } : {}),
+            };
             if (item.submenu) out.submenu = flatten(item.submenu as readonly Electron.MenuItemConstructorOptions[]);
             if (typeof item.click === "function") {
               out.clickIndex = nextClickIndex++;
@@ -291,7 +296,42 @@ function installPetContextMenu(window: BrowserWindow, action: { readonly label: 
   });
 }
 
-async function buildPetContextMenuTemplate(action: { readonly label: string; readonly click: () => void; readonly defaultPet?: boolean; readonly focusSessionWindow?: () => void; readonly talk?: () => void; readonly talkLabel?: () => Promise<string> }): Promise<Electron.MenuItemConstructorOptions[]> {
+function handlePetHorizontalFlipToggle(petId: string): void {
+  const flipped = togglePetHorizontalFlip(petId);
+  info("pet.window", "pet horizontal flip toggled", { petId, flipped });
+  const defaultPetId = getAppStateSnapshot().preferences.defaultPetId;
+  if (petId === defaultPetId) {
+    void import("./default-pet-controller.js").then(({ refreshDefaultPetContent }) => refreshDefaultPetContent()).catch((error) => {
+      logError("pet.window", "refresh default pet on flip failed", error instanceof Error ? error : { error });
+    });
+  }
+  void import("./agent-pet-controller.js").then(({ refreshAgentPetContent }) => refreshAgentPetContent(petId)).catch((error) => {
+    logError("pet.window", "refresh agent pet on flip failed", error instanceof Error ? error : { error });
+  });
+  void import("./plugin-pet-registry.js").then(({ refreshPluginPetsForPetId }) => refreshPluginPetsForPetId(petId)).catch((error) => {
+    logError("pet.window", "refresh plugin pet on flip failed", error instanceof Error ? error : { error });
+  });
+  void import("./lan-pet-controller.js").then(({ refreshLanVisitingPetsForPetId }) => refreshLanVisitingPetsForPetId(petId)).catch((error) => {
+    logError("pet.window", "refresh lan pet on flip failed", error instanceof Error ? error : { error });
+  });
+}
+
+function petFlipCacheToken(petId: string): string {
+  return isPetFlippedHorizontally(petId) ? "flipx" : "noflip";
+}
+
+async function buildPetContextMenuTemplate(action: { readonly label: string; readonly click: () => void; readonly defaultPet?: boolean; readonly petId?: string; readonly focusSessionWindow?: () => void; readonly talk?: () => void; readonly talkLabel?: () => Promise<string> }): Promise<Electron.MenuItemConstructorOptions[]> {
+  const currentPetId = action.petId ?? getAppStateSnapshot().preferences.defaultPetId;
+  const isFlipped = isPetFlippedHorizontally(currentPetId);
+  const flipMenuItem: Electron.MenuItemConstructorOptions = {
+    label: t("pet.menu.flipHorizontally"),
+    type: "checkbox",
+    checked: isFlipped,
+    click: () => {
+      handlePetHorizontalFlipToggle(currentPetId);
+    },
+  };
+
   if (!action.defaultPet) {
     const template: Electron.MenuItemConstructorOptions[] = [];
     if (action.focusSessionWindow) {
@@ -301,7 +341,7 @@ async function buildPetContextMenuTemplate(action: { readonly label: string; rea
         : t("pet.menu.focusSessionWindowNoA11y");
       template.push({ label: focusLabel, click: action.focusSessionWindow }, { type: "separator" });
     }
-    template.push({ label: action.label, click: action.click });
+    template.push(flipMenuItem, { type: "separator" }, { label: action.label, click: action.click });
     return template;
   }
   const commands = await getDefaultPetPluginCommands();
@@ -332,6 +372,8 @@ async function buildPetContextMenuTemplate(action: { readonly label: string; rea
   template.push(
     { label: t("tray.plugins"), click: () => openControlCenter("plugins") },
     { label: t("pet.menu.openControlCenter"), click: () => openControlCenter("dashboard") },
+    flipMenuItem,
+    { type: "separator" },
     { label: action.label, click: action.click },
   );
   return template;
@@ -927,7 +969,7 @@ export async function loadExplicitPetContent(window: BrowserWindow, petId: strin
     debug("pet.window", "explicit content render begin", { windowId: window.id, sequence, petId, displayName: pet.displayName, hasDisplay: Boolean(display), reaction: display?.reaction, hasMessage: Boolean(display?.message), badge });
     const scale = scaleOverride ?? state.preferences.petScale as PetScaleValue;
     const render = pet.id === builtInPet.id
-      ? createBuiltInPetRender(false, display, badge, scale, `explicit:${pet.id}`, dismissToken, pluginBubbles)
+      ? createBuiltInPetRender(false, display, badge, scale, `explicit:${pet.id}`, pet.id, dismissToken, pluginBubbles)
       : await createInstalledPetRender(pet.id, pet.displayName, false, display, scale, badge, `explicit:${pet.id}`, dismissToken, pluginBubbles);
     applyLinuxPetWindowShape(window, scale, Boolean(display?.message || display?.reactionMessage || display?.reaction || display?.mediaPath || badge || pluginBubbles?.transient || pluginBubbles?.pinned));
     if (tryUpdateLoadedPetContent(window, render, `explicit-${pet.id}`, sequence)) return;
@@ -1106,11 +1148,12 @@ async function createDefaultPetRender(paused: boolean, display: PetTransientDisp
     return installedPetRender;
   }
 
-  const scale = getAppStateSnapshot().preferences.petScale as PetScaleValue;
-  return createBuiltInPetRender(paused, display, badge, scale, "default:builtin", dismissToken, pluginBubbles);
+  const state = getAppStateSnapshot();
+  const scale = state.preferences.petScale as PetScaleValue;
+  return createBuiltInPetRender(paused, display, badge, scale, "default:builtin", state.preferences.defaultPetId, dismissToken, pluginBubbles);
 }
 
-function createBuiltInPetRender(paused: boolean, display: PetTransientDisplay | null, badge: PetStatusBadgeReaction | null, scale: PetScaleValue, cachePrefix: string, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null): PetContentRender {
+function createBuiltInPetRender(paused: boolean, display: PetTransientDisplay | null, badge: PetStatusBadgeReaction | null, scale: PetScaleValue, cachePrefix: string, petId: string, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null): PetContentRender {
   const spriteUrl = pathToFileURL(join(app.getAppPath(), "assets", defaultPetSprite.fileName)).toString();
   const hasPinned = Boolean(pluginBubbles?.pinned);
   const bodyHtml = createPetBodyMarkup("OpenPets default pet", createBubbleMarkup(display, paused, badge, dismissToken, pluginBubbles), `<div class="sprite" role="img" aria-label="Claude animated default pet"></div>`, createPinnedBubbleMarkup(pluginBubbles), hasPinned);
@@ -1119,11 +1162,11 @@ function createBuiltInPetRender(paused: boolean, display: PetTransientDisplay | 
   const stateRows = getConfiguredSpriteStates(waitingAnimationDurationMs);
 
   return {
-    cacheKey: `${cachePrefix}:${paused}:${scale}:${getConfiguredSpriteCacheKey(waitingAnimationDurationMs)}:${getActiveLocale()}`,
+    cacheKey: `${cachePrefix}:${paused}:${scale}:${getConfiguredSpriteCacheKey(waitingAnimationDurationMs)}:${getActiveLocale()}:${petFlipCacheToken(petId)}`,
     bodyHtml,
     reactionState,
     html: `<!doctype html>
-    <html lang="${getActiveLocaleLang()}" data-reaction-state="${reactionState}" data-motion-state="idle" data-native-pet-drag="${shouldUseWaylandNativePetDrag() ? "wayland" : "manual"}">
+    <html lang="${getActiveLocaleLang()}" data-reaction-state="${reactionState}" data-motion-state="idle" data-native-pet-drag="${shouldUseWaylandNativePetDrag() ? "wayland" : "manual"}" data-flip-x="${isPetFlippedHorizontally(petId) ? "true" : "false"}">
       <head>
         <meta charset="utf-8" />
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src file: data:; media-src data:; font-src file:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-src 'none'" />
@@ -1198,11 +1241,11 @@ async function createInstalledPetRender(petId: string, displayName: string, paus
   const stateRows = getConfiguredSpriteStates(waitingAnimationDurationMs);
 
   return {
-    cacheKey: `${cachePrefix}:${paused}:${scale}:v${spriteLayout.version}:${spritesheet.mtimeMs}:${spritesheet.size}:${getConfiguredSpriteCacheKey(waitingAnimationDurationMs)}:${getActiveLocale()}`,
+    cacheKey: `${cachePrefix}:${paused}:${scale}:v${spriteLayout.version}:${spritesheet.mtimeMs}:${spritesheet.size}:${getConfiguredSpriteCacheKey(waitingAnimationDurationMs)}:${getActiveLocale()}:${petFlipCacheToken(petId)}`,
     bodyHtml,
     reactionState,
     html: `<!doctype html>
-      <html lang="${getActiveLocaleLang()}" data-reaction-state="${reactionState}" data-motion-state="idle" data-native-pet-drag="${shouldUseWaylandNativePetDrag() ? "wayland" : "manual"}">
+      <html lang="${getActiveLocaleLang()}" data-reaction-state="${reactionState}" data-motion-state="idle" data-native-pet-drag="${shouldUseWaylandNativePetDrag() ? "wayland" : "manual"}" data-flip-x="${isPetFlippedHorizontally(petId) ? "true" : "false"}">
         <head>
           <meta charset="utf-8" />
           <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src file: data:; media-src data:; font-src file:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-src 'none'" />
@@ -1279,6 +1322,7 @@ function createPetWindowCss(paused: boolean, scale: PetScaleValue): string {
     .stage { width: 100%; height: 100%; position: relative; box-sizing: border-box; overflow: visible; }
     .pet-hitbox { position: absolute; left: 50%; bottom: ${Math.max(0, petBottom - hitPadding)}px; z-index: 1; width: ${scaledWidth + hitPadding * 2}px; height: ${scaledHeight + hitPadding * 2}px; display: grid; place-items: center; transform: translateX(-50%); pointer-events: auto; -webkit-app-region: ${petDragRegion}; cursor: grab; }
     .pet-shell { position: relative; width: ${scaledWidth}px; height: ${scaledHeight}px; display: block; opacity: var(--pet-opacity); filter: ${petShellFilter}; transition-property: opacity, filter; transition-duration: 180ms; transition-timing-function: cubic-bezier(0.2, 0, 0, 1); pointer-events: auto; -webkit-app-region: ${petDragRegion}; cursor: grab; }
+    html[data-flip-x="true"] .pet-shell { transform: scaleX(-1); }
     .bubble { position: absolute; left: 50%; bottom: ${bubbleBottom}px; z-index: 4; box-sizing: border-box; display: inline-flex; flex-direction: column; width: fit-content; min-width: 92px; max-width: min(220px, calc(100vw - 18px)); max-height: 128px; padding: 10px 12px; background: linear-gradient(135deg, rgba(239, 246, 255, 0.97), rgba(237, 233, 254, 0.96)); color: #172033; font: 760 11px/14px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; text-align: left; border: 1px solid rgba(255, 255, 255, 0.78); border-radius: 14px; box-shadow: 0 12px 24px rgba(15, 23, 42, 0.16), 0 2px 5px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.82); white-space: normal; overflow-wrap: break-word; word-break: normal; overflow: visible; pointer-events: auto; -webkit-app-region: no-drag; opacity: 1; backdrop-filter: ${bubbleBackdropFilter}; transform: translateX(-50%); transform-origin: 64% 100%; animation: bubble-in 180ms cubic-bezier(0.2, 0, 0, 1); }
     .bubble[data-dismiss-token] { cursor: pointer; }
     .bubble::after { content: ""; position: absolute; left: 64%; bottom: -7px; width: 12px; height: 12px; background: inherit; border-right: 1px solid rgba(255, 255, 255, 0.56); border-bottom: 1px solid rgba(255, 255, 255, 0.56); border-bottom-right-radius: 3px; transform: translateX(-50%) rotate(45deg); box-shadow: 3px 3px 7px rgba(15, 23, 42, 0.08); }

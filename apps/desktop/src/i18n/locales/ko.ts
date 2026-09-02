@@ -35,6 +35,7 @@ export const ko: Partial<Messages> = {
   "pet.status.hi": "안녕",
   "pet.menu.hidePet": "펫 숨기기",
   "pet.menu.closePet": "펫 닫기",
+  "pet.menu.flipHorizontally": "좌우 반전",
   "pet.menu.openControlCenter": "컨트롤 센터 열기",
   "pet.menu.focusSessionWindow": "세션 창 포커스",
   "pet.menu.focusSessionWindowNoA11y": "세션 창 포커스 (접근성 필요)",

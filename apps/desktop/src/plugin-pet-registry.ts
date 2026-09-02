@@ -76,6 +76,14 @@ export function onPluginPetsChange(listener: (pets: PluginPetInfo[]) => void): (
   return () => changeListeners.delete(listener);
 }
 
+export function refreshPluginPetsForPetId(petId: string): void {
+  for (const pet of spawnedPets.values()) {
+    if (pet.petId === petId) {
+      refreshSpawnedPet(pet);
+    }
+  }
+}
+
 function refreshSpawnedPet(pet: SpawnedPet): void {
   if (!pet.window || pet.window.isDestroyed()) return;
   void loadExplicitPetContent(pet.window, pet.petId, null, pet.statusReaction, undefined, pet.scale, pet.bubbles.transient || pet.bubbles.pinned ? pet.bubbles : null).then(() => {

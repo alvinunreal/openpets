@@ -35,6 +35,7 @@ export const es419: Partial<Messages> = {
   "pet.status.hi": "Hola",
   "pet.menu.hidePet": "Ocultar mascota",
   "pet.menu.closePet": "Cerrar mascota",
+  "pet.menu.flipHorizontally": "Voltear horizontalmente",
   "pet.menu.openControlCenter": "Abrir Centro de control",
   "pet.menu.focusSessionWindow": "Enfocar ventana de sesión",
   "pet.menu.focusSessionWindowNoA11y": "Enfocar ventana de sesión (requiere Accesibilidad)",

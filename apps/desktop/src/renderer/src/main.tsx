@@ -598,7 +598,6 @@ const IntegrationsIcon = () => (
 
 const navTabs = [
   { id: "dashboard" as const, labelKey: "nav.dashboard", icon: <DashboardIcon /> },
-  { id: "conversation" as const, labelKey: "nav.conversation", icon: <MessageIcon /> },
   { id: "pets" as const, labelKey: "nav.pets", icon: <PetsIcon /> },
   { id: "settings" as const, labelKey: "nav.settings", icon: <SettingsIcon /> },
   { id: "plugins" as const, labelKey: "nav.plugins", icon: <PluginsIcon /> },
