@@ -187,7 +187,7 @@ function installDefaultPetWindow(window: BrowserWindow, options: DefaultPetWindo
   info("pet.window", "default window create", { windowId: window.id, position: options.position, paused: options.paused, hasDisplay: Boolean(options.display), badge: options.badge });
   installMousePassthroughAndDrag(window, options);
   installMotionStatePublisher(window);
-  installPetContextMenu(window, { label: t("pet.menu.hidePet"), click: options.onHideRequested, talk: options.onTalkRequested, talkLabel: options.onTalkLabelRequested, defaultPet: true });
+  installPetContextMenu(window, { label: t("pet.menu.hidePet"), click: options.onHideRequested, defaultPet: true });
 
   const savePosition = debounce(() => {
     if (window.isDestroyed()) {
@@ -245,7 +245,7 @@ export function recoverPetMouseInterop(window: BrowserWindow, reason: string): v
   debug("pet.window", "mouse interop recovery skipped", { windowId: window.id, reason, skippedReason: "unregistered-window" });
 }
 
-function installPetContextMenu(window: BrowserWindow, action: { readonly label: string; readonly click: () => void; readonly defaultPet?: boolean; readonly petId?: string; readonly focusSessionWindow?: () => void; readonly talk?: () => void; readonly talkLabel?: () => Promise<string> }): void {
+function installPetContextMenu(window: BrowserWindow, action: { readonly label: string; readonly click: () => void; readonly defaultPet?: boolean; readonly petId?: string; readonly focusSessionWindow?: () => void }): void {
   const webContents = window.webContents;
   let layerShellClicks: Array<() => void> = [];
 
@@ -320,7 +320,7 @@ function petFlipCacheToken(petId: string): string {
   return isPetFlippedHorizontally(petId) ? "flipx" : "noflip";
 }
 
-async function buildPetContextMenuTemplate(action: { readonly label: string; readonly click: () => void; readonly defaultPet?: boolean; readonly petId?: string; readonly focusSessionWindow?: () => void; readonly talk?: () => void; readonly talkLabel?: () => Promise<string> }): Promise<Electron.MenuItemConstructorOptions[]> {
+async function buildPetContextMenuTemplate(action: { readonly label: string; readonly click: () => void; readonly defaultPet?: boolean; readonly petId?: string; readonly focusSessionWindow?: () => void }): Promise<Electron.MenuItemConstructorOptions[]> {
   const currentPetId = action.petId ?? getAppStateSnapshot().preferences.defaultPetId;
   const isFlipped = isPetFlippedHorizontally(currentPetId);
   const flipMenuItem: Electron.MenuItemConstructorOptions = {
@@ -367,7 +367,6 @@ async function buildPetContextMenuTemplate(action: { readonly label: string; rea
     import("./windows.js").then(({ openControlCenterWindow }) => openControlCenterWindow(route)).catch((error) => logError("pet.window", "open control center failed", error));
   };
   if (topLevel.length > 0) template.push(...topLevel.slice(0, 8), { type: "separator" });
-  if (action.talk) template.push({ label: action.talkLabel ? await action.talkLabel() : t("pet.menu.talk"), click: action.talk }, { type: "separator" });
   if (plugins.size > 0) template.push(...[...plugins.values()].map((plugin) => ({ label: plugin.name, submenu: plugin.commands })), { type: "separator" });
   template.push(
     { label: t("tray.plugins"), click: () => openControlCenter("plugins") },
