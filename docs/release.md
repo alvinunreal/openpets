@@ -445,8 +445,10 @@ packages/claude/package.json
 packages/cli/package.json
 packages/client/package.json
 packages/cursor/package.json
+packages/dsh/package.json
 packages/install-pet/package.json
 packages/mcp/package.json
+packages/openclaw/package.json
 packages/opencode/package.json
 packages/pet-format/package.json
 packages/pi/package.json
@@ -915,9 +917,11 @@ OpenPets publishes these public npm packages, in dependency order:
 @open-pets/plugin-sdk
 @open-pets/client
 @open-pets/agent-events
+@open-pets/dsh
 @open-pets/mcp
 @open-pets/claude
 @open-pets/opencode
+@open-pets/openclaw
 @open-pets/cursor
 @open-pets/pi
 @open-pets/cli
@@ -956,9 +960,11 @@ After publishing, verify the npm dependency set resolves:
 npm view @open-pets/plugin-sdk@<version> version
 npm view @open-pets/client@<version> version
 npm view @open-pets/agent-events@<version> version
+npm view @open-pets/dsh@<version> version
 npm view @open-pets/mcp@<version> version
 npm view @open-pets/claude@<version> version
 npm view @open-pets/opencode@<version> version
+npm view @open-pets/openclaw@<version> version
 npm view @open-pets/cursor@<version> version
 npm view @open-pets/pi@<version> version
 npm view @open-pets/cli@<version> version

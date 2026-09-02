@@ -1,6 +1,6 @@
 {
   "name": "@open-pets/openclaw",
-  "version": "3.3.0",
+  "version": "3.5.0",
   "description": "A local-only OpenClaw companion plugin for OpenPets.",
   "license": "MIT",
   "repository": {
