@@ -99,6 +99,7 @@ const behaviorTests = [
   ".test-dist/tests/plugin-agent-activity.test.js",
   ".test-dist/tests/pet-window-wayland-predicate.test.js",
   ".test-dist/tests/pet-window-mouse-forwarding-predicate.test.js",
+  ".test-dist/tests/pet-render-lifecycle.test.js",
 ];
 const contractTests = [
   ".test-dist/contracts/local-ipc-protocol.contract.js",

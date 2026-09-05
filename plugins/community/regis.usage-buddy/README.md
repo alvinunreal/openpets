@@ -27,6 +27,10 @@ The pet:
 - Tracks **both providers**; the mood follows whichever window is closest to its limit.
 - Shows the current summary in the Plugins-window **status line** every poll.
 
+The companion app is a separate **Windows-only** application (Windows 10/11).
+On macOS or Linux, Usage Buddy remains offline unless another compatible local
+endpoint is provided; it has no cloud fallback.
+
 Because the OpenPets host caps recurring `schedule.every` timers at a 10-minute
 minimum, Usage Buddy runs its own faster loop with `schedule.once`
 (default 60s, minimum 15s).
@@ -41,7 +45,7 @@ minimum, Usage Buddy runs its own faster loop with `schedule.once`
 | Setting | Default | Notes |
 |---|---|---|
 | `pollSeconds` | `60` | How often to read the endpoint. Minimum 15. |
-| `port` | `45455` | Must match the companion app. Only applies to **local/dev (Load Folder) installs** — a catalog-installed package can reach only its declared host, so changing it also requires editing `network.hosts` in `openpets.plugin.json` to `127.0.0.1:<port>`. |
+| `port` | `45455` | Must be an integer from 1–65535 and match the companion app. Only applies to **local/dev (Load Folder) installs** — a catalog-installed package can reach only its exact declared host and port, so changing it also requires editing `network.hosts` in `openpets.plugin.json` to `127.0.0.1:<port>` and re-approving that permission. |
 | `providerFilter` | `both` | `both`, `claude`, or `codex`. |
 | `thresholds` | `50,75,90,100` | Comma-separated band boundaries (%). |
 | `quietStatus` | `false` | Only update the status line on warning/error tones. |
@@ -54,7 +58,8 @@ minimum, Usage Buddy runs its own faster loop with `schedule.once`
 - `status` — the Plugins-window status line.
 - `schedule` — the polling loop.
 - `network`, `network:local` — fetch the declared loopback endpoint. The exact
-  host is declared under `network.hosts` (`127.0.0.1:45455`).
+  host and port are declared under `network.hosts` (`127.0.0.1:45455`). The
+  plugin never broadens this allowlist from its configurable port.
 - `storage` — remember each window's alert band so it only warns on upward crossings.
 
 ## Files

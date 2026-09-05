@@ -12,6 +12,30 @@ export type ExtendedSystemMetrics = {
   diskUsedPercent?: number;
 };
 
+export function createStaleWhileRevalidateCache(
+  read: () => Promise<ExtendedSystemMetrics>,
+  options: { ttlMs: number; now?: () => number },
+): () => ExtendedSystemMetrics {
+  const clock = options.now ?? Date.now;
+  let cached: { expiresAt: number; value: ExtendedSystemMetrics } | undefined;
+  let inFlight: Promise<void> | undefined;
+
+  return () => {
+    if (cached && cached.expiresAt > clock()) return cached.value;
+    if (!inFlight) {
+      inFlight = read()
+        .then((value) => {
+          cached = { value, expiresAt: clock() + options.ttlMs };
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          inFlight = undefined;
+        });
+    }
+    return cached?.value ?? {};
+  };
+}
+
 type CommandRunner = (command: string, args: string[], timeoutMs?: number) => Promise<string>;
 type StatFsReader = (path: string) => Promise<{ blocks: number | bigint; bfree: number | bigint }>;
 type TextFileReader = (path: string) => Promise<string>;
@@ -22,6 +46,11 @@ function clampPercent(value: number): number | undefined {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
+function parseIoregPercent(value: number): number | undefined {
+  if (!Number.isFinite(value) || value < 0 || value > 100) return undefined;
+  return Math.round(value);
+}
+
 function averagePercentFromText(text: string): number | undefined {
   const values = text.match(/\d+(?:\.\d+)?/g)?.map(Number).filter(Number.isFinite) ?? [];
   if (values.length === 0) return undefined;
@@ -30,7 +59,7 @@ function averagePercentFromText(text: string): number | undefined {
 
 export function gpuPercentFromIoreg(text: string): number | undefined {
   const match = text.match(/(?:Device|Renderer) Utilization %"?\s*=\s*(\d+(?:\.\d+)?)/);
-  return match ? clampPercent(Number(match[1])) : undefined;
+  return match ? parseIoregPercent(Number(match[1])) : undefined;
 }
 
 export function diskUsedPercentFromStatFs(stat: { blocks: number | bigint; bfree: number | bigint }): number | undefined {
