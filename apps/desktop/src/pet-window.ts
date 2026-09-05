@@ -22,6 +22,7 @@ import { isFocusActionAvailable } from "./capabilities.js";
 import { canForwardMouseEvents as platformCanForwardMouseEvents, shouldWatchForwardedMouseEvents } from "./mouse-forwarding.js";
 import { computeEffectiveWaylandBackend, isLayerShellBackendRequested, shouldPetWindowBeFocusable } from "./wayland-backend.js";
 import { adoptPetWindowForLayerShell, isLayerShellHelperAvailable } from "./wayland-layer-backend.js";
+import { isLatestPetRenderSequence } from "./pet-render-lifecycle.js";
 
 export interface PetWindowInteractionHooks {
   readonly onBubbleDismissed?: (dismissToken: string) => void;
@@ -1085,6 +1086,10 @@ export function stopPetWindowTtsAudio(window: BrowserWindow, requestId?: string)
 
 function tryUpdateLoadedPetContent(window: BrowserWindow, render: PetContentRender, name: string, sequence: number): boolean {
   if (window.isDestroyed() || window.webContents.isDestroyed()) return false;
+  if (!isLatestPetRenderSequence(windowLoadSequences.get(window), sequence)) {
+    debug("pet.window", "content update skipped", { windowId: window.id, name, sequence, latestSequence: windowLoadSequences.get(window), reason: "superseded" });
+    return false;
+  }
   if (petWindowRenderCache.get(window) !== render.cacheKey) return false;
   const url = window.webContents.getURL();
   if (!isAllowedPetDocumentUrl(url)) return false;

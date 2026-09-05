@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import {
   register,
   summaryLine,
@@ -6,6 +7,7 @@ import {
   bandFor,
   prettyWindow,
   parseThresholds,
+  normalizeConfig,
 } from "./index.js";
 
 let createTestHarness;
@@ -102,6 +104,12 @@ assert.deepEqual(parseThresholds("90, 50 ,75,100"), [50, 75, 90, 100], "parseThr
 assert.equal(bandFor(12, "50,75,90,100"), 0, "12% is band 0 (chill)");
 assert.equal(bandFor(80, "50,75,90,100"), 2, "80% is band 2 (toasty)");
 assert.equal(bandFor(100, "50,75,90,100"), 4, "100% is band 4 (empty)");
+assert.equal(normalizeConfig({ port: 45456 }).port, 45456, "valid custom ports remain configurable");
+assert.equal(normalizeConfig({ port: 0 }).port, 45455, "zero falls back to the companion port");
+assert.equal(normalizeConfig({ port: 65536 }).port, 45455, "out-of-range ports fall back safely");
+assert.equal(normalizeConfig({ port: 45455.5 }).port, 45455, "fractional ports fall back safely");
+const manifest = JSON.parse(await readFile(new URL("./openpets.plugin.json", import.meta.url), "utf8"));
+assert.deepEqual(manifest.network?.hosts, ["127.0.0.1:45455"], "the manifest keeps one exact loopback host:port");
 
 // --- (a) First tick: informative summary + status, no band personality line -
 
@@ -126,7 +134,7 @@ assert.ok(
 assert.equal(h.calls.react.length, 0, "first run does not react on a crossing");
 assert.ok(h.calls.storage.has("band:claude:five_hour"), "first run seeds bands");
 
-// --- (b) Upward crossing pushes a speak (with display name) AND a react ------
+// --- (b) Upward crossings for every window push speaks and reactions ---------
 
 h.net.mock(USAGE_URL, { json: contract({ claude5h: 80, claude7d: 1, codex7d: 3 }) });
 await h.clock.advance("60s");
@@ -137,6 +145,15 @@ assert.match(h.calls.speak[1], /toasty/i, "band line uses the toasty template");
 assert.match(h.calls.speak[1], /80% 5h/, "band line includes pct and window tokens");
 assert.ok(h.calls.react.includes("working"), "upward crossing triggers a reaction");
 
+// The lower Codex window crosses 50% while Claude remains the highest window.
+// Tracking only maxEntry would miss this alert.
+h.net.mock(USAGE_URL, { json: contract({ claude5h: 80, claude7d: 1, codex7d: 60 }) });
+await h.clock.advance("60s");
+assert.equal(h.calls.speak.length, 3, "a non-top window crossing also speaks");
+assert.match(h.calls.speak[2], /^Codex/, "the non-top crossing names its provider");
+assert.match(h.calls.speak[2], /60% 7d/, "the non-top crossing cites its window");
+assert.ok(h.calls.react.includes("thinking"), "the non-top crossing triggers its reaction");
+
 // --- (c) No upward crossing stays quiet -------------------------------------
 
 const speakCountAfterCrossing = h.calls.speak.length;
@@ -146,6 +163,22 @@ assert.equal(h.calls.speak.length, speakCountAfterCrossing, "no new speak withou
 
 h.expectNoErrors();
 await h.stop();
+
+// A custom port changes only the requested URL. The desktop bridge still
+// applies the manifest's exact host:port approval to the real request.
+{
+  const custom = createTestHarness(register, {
+    permissions,
+    locales,
+    config: { ...config, port: 45456 },
+  });
+  const customUrl = "http://127.0.0.1:45456/usage";
+  custom.net.mock(customUrl, { json: contract({ claude5h: 12, claude7d: 1, codex7d: 3 }) });
+  await custom.start();
+  assert.equal(custom.calls.netCalls[0]?.url, customUrl, "custom port is used verbatim in the loopback URL");
+  custom.expectNoErrors();
+  await custom.stop();
+}
 
 // --- (d) Offline / thrown fetch sets warning status and does not speak -------
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.0
+
+- GPU and system-volume disk usage now come from the host's optional
+  `ctx.system.metrics()` fields.
+- Removed the local metrics sidecar, its installers, and its network
+  permissions.
+
 ## 1.4.0
 
 - Catalog package is CPU/RAM-only: HUD, copy, and Configure no longer advertise an uninstallable GPU/SSD sidecar.

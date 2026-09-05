@@ -1,12 +1,10 @@
 /// <reference types="@open-pets/plugin-sdk" />
 
 export const SCHEDULE_ID = "system-resources-tick";
-export const SIDECAR_URL = "http://127.0.0.1:37647/metrics";
 export const ALERT_COOLDOWN_MS = 10 * 60_000;
 export const DEFAULT_POLL_SECONDS = 10;
 export const DEFAULT_ALERT_PERCENT = 90;
 export const DEFAULT_LANGUAGE = "auto";
-export const DEFAULT_OS = "auto";
 
 export const CATALOGS = {
     "en": {
@@ -155,17 +153,6 @@ export const CATALOGS = {
     }
   }
 
-const OS_ALIASES = {
-  auto: "auto",
-  mac: "mac",
-  darwin: "mac",
-  macos: "mac",
-  windows: "windows",
-  win: "windows",
-  win32: "windows",
-  linux: "linux",
-};
-
 export function interpolate(template, vars = {}) {
   return String(template).replace(/\{(\w+)\}/g, (_, key) =>
     vars[key] == null ? `{${key}}` : String(vars[key]),
@@ -185,29 +172,14 @@ export function t(language, key, vars) {
   return interpolate(template, vars);
 }
 
-export function normalizeOsHint(value) {
-  const key = String(value ?? "")
-    .trim()
-    .toLowerCase();
-  return OS_ALIASES[key] ?? null;
-}
-
-export function resolveOs(raw, hostHint = "auto") {
-  const requested = normalizeOsHint(raw) ?? "auto";
-  if (requested !== "auto") return requested;
-  const detected = normalizeOsHint(hostHint);
-  if (detected && detected !== "auto") return detected;
-  return "mac";
-}
-
 export const SATELLITE_OFFSET_X = -180;
 export const SATELLITE_SCALE = 0.5;
-export const FALLBACK_PET_ID = "meowbyte";
-
 const pinnedBubbles = new WeakMap();
 const lastAlerts = new WeakMap();
 const hudSatellites = new WeakMap();
 const hudInflight = new WeakMap();
+const pollActive = new WeakMap();
+const scheduleGenerations = new WeakMap();
 
 export function clampPercent(value) {
   const n = typeof value === "number" ? value : Number(value);
@@ -241,19 +213,20 @@ export function hottestMetric(snapshot) {
   return hottest;
 }
 
-export function mergeSnapshot(hostMetrics = {}, sidecar = null, now = Date.now()) {
+export function mergeSnapshot(hostMetrics = {}, now = Date.now()) {
+  const gpu = clampPercent(hostMetrics.gpuPercent);
+  const ssd = clampPercent(hostMetrics.diskUsedPercent);
   return {
     cpu: clampPercent(hostMetrics.cpuPercent),
     ram: clampPercent(hostMetrics.memUsedPercent),
-    gpu: clampPercent(sidecar?.gpuPercent),
-    ssd: clampPercent(sidecar?.ssdUsedPercent),
-    sidecarOnline: Boolean(sidecar),
+    gpu,
+    ssd,
     battery: hostMetrics.battery,
     sampledAt: now,
   };
 }
 
-export function readConfig(raw = {}, hostLocale = "en", hostOs = "auto") {
+export function readConfig(raw = {}, hostLocale = "en") {
   const pollSeconds = Number(raw.pollSeconds ?? DEFAULT_POLL_SECONDS);
   const alertPercent = Number(raw.alertPercent ?? DEFAULT_ALERT_PERCENT);
   return {
@@ -262,16 +235,11 @@ export function readConfig(raw = {}, hostLocale = "en", hostOs = "auto") {
     pollSeconds: Math.max(5, Math.min(60, Number.isFinite(pollSeconds) ? pollSeconds : DEFAULT_POLL_SECONDS)),
     alertPercent: Math.max(70, Math.min(99, Number.isFinite(alertPercent) ? alertPercent : DEFAULT_ALERT_PERCENT)),
     language: resolveLanguage(raw.language ?? DEFAULT_LANGUAGE, hostLocale),
-    os: resolveOs("auto", hostOs),
   };
 }
 
 async function configOf(ctx) {
-  let hostOs = "auto";
-  try {
-    hostOs = (await ctx.system.info())?.platform ?? "auto";
-  } catch {}
-  return readConfig((await ctx.config.get()) ?? {}, ctx.locale, hostOs);
+  return readConfig((await ctx.config.get()) ?? {}, ctx.locale);
 }
 
 function getPinned(ctx) {
@@ -284,19 +252,22 @@ function setPinned(ctx, handle) {
 }
 
 function hudItem(ctx, language, key, percent) {
+  if (percent == null) return null;
   return {
     icon: ctx.assets.icon(key),
-    value: percent ?? 0,
+    value: percent,
     tone: toneFor(percent),
     label: percent == null ? `${t(language, `hud.${key}`)} ${t(language, "value.na")}` : t(language, `hud.${key}`),
   };
 }
 
 export function hudSpec(ctx, snapshot, language = "en") {
-  const items = [hudItem(ctx, language, "cpu", snapshot.cpu), hudItem(ctx, language, "ram", snapshot.ram)];
-  if (snapshot.sidecarOnline) {
-    items.push(hudItem(ctx, language, "gpu", snapshot.gpu), hudItem(ctx, language, "ssd", snapshot.ssd));
-  }
+  const items = [
+    hudItem(ctx, language, "cpu", snapshot.cpu),
+    hudItem(ctx, language, "ram", snapshot.ram),
+    hudItem(ctx, language, "gpu", snapshot.gpu),
+    hudItem(ctx, language, "ssd", snapshot.ssd),
+  ].filter((item) => item !== null);
   return {
     tone: "info",
     sticky: true,
@@ -314,7 +285,8 @@ export function snapshotCopy(language, snapshot, kind) {
     gpu: formatPercent(language, snapshot.gpu),
     ssd: formatPercent(language, snapshot.ssd),
   };
-  const key = snapshot.sidecarOnline
+  const hasExtendedMetrics = snapshot.gpu != null || snapshot.ssd != null;
+  const key = hasExtendedMetrics
     ? kind === "speech"
       ? "speech.snapshotFull"
       : "status.lineFull"
@@ -330,11 +302,10 @@ export function satellitePosition(state) {
   return { x: x + SATELLITE_OFFSET_X, y };
 }
 
-export function resolveCatalogPetId(ctx, listed = []) {
-  const def = listed.find((pet) => pet.kind === "default") ?? listed[0];
-  const candidate = def?.id || ctx.pets?.default?.id;
+export function resolveCatalogPetId(ctx, _listed = []) {
+  const candidate = ctx.pets?.default?.id;
   if (typeof candidate === "string" && candidate && candidate !== "default") return candidate;
-  return FALLBACK_PET_ID;
+  return undefined;
 }
 
 async function dismissPinned(ctx) {
@@ -371,6 +342,7 @@ async function ensureHudSatellite(ctx, language) {
       listed = await ctx.pets.list();
     } catch {}
     const petId = resolveCatalogPetId(ctx, listed);
+    if (!petId) return null;
     let position = { x: 80, y: 120 };
     try {
       position = satellitePosition(await ctx.pets.default.getState());
@@ -429,31 +401,14 @@ async function ensureHudSatellite(ctx, language) {
   }
 }
 
-export async function fetchSidecar(ctx, os = "auto") {
-  try {
-    const url = `${SIDECAR_URL}?platform=${encodeURIComponent(os)}`;
-    const response = await ctx.net.fetch(url, { timeoutMs: 2500 });
-    if (!response?.ok) return null;
-    const payload = response.json ?? JSON.parse(response.text || "null");
-    if (!payload || typeof payload !== "object") return null;
-    return payload;
-  } catch {
-    return null;
-  }
-}
-
-export async function collectSnapshot(ctx, now = Date.now(), cfg) {
-  const settings = cfg ?? (await configOf(ctx));
+export async function collectSnapshot(ctx, now = Date.now()) {
   let hostMetrics = {};
   try {
     hostMetrics = (await ctx.system.metrics()) ?? {};
   } catch {
     hostMetrics = {};
   }
-  const sidecar = await fetchSidecar(ctx, settings.os);
-  const snapshot = mergeSnapshot(hostMetrics, sidecar, now);
-  snapshot.os = settings.os;
-  return snapshot;
+  return mergeSnapshot(hostMetrics, now);
 }
 
 export async function updateHud(ctx, snapshot, cfg) {
@@ -465,11 +420,6 @@ export async function updateHud(ctx, snapshot, cfg) {
   }
 
   const host = await ensureHudSatellite(ctx, settings.language);
-  if (!host) {
-    await dismissPinned(ctx);
-    return;
-  }
-
   const spec = hudSpec(ctx, snapshot, settings.language);
   const pinned = getPinned(ctx);
   if (pinned) {
@@ -482,7 +432,7 @@ export async function updateHud(ctx, snapshot, cfg) {
   }
 
   try {
-    const bubble = await host.speak(spec);
+    const bubble = host ? await host.speak(spec) : await ctx.ui.bubble(spec);
     bubble.onDismiss(() => {
       if (getPinned(ctx)?.id === bubble.id) setPinned(ctx, null);
     });
@@ -524,7 +474,7 @@ export async function maybeAlert(ctx, snapshot, now = Date.now(), cfg) {
 
 export async function tick(ctx, now = Date.now()) {
   const cfg = await configOf(ctx);
-  const snapshot = await collectSnapshot(ctx, now, cfg);
+  const snapshot = await collectSnapshot(ctx, now);
   await ctx.storage.set("snapshot", snapshot);
   await updateHud(ctx, snapshot, cfg);
   await publishStatus(ctx, snapshot, cfg.language);
@@ -544,7 +494,7 @@ export async function hideHud(ctx) {
 
 export async function speakSnapshot(ctx) {
   const cfg = await configOf(ctx);
-  const snapshot = await collectSnapshot(ctx, Date.now(), cfg);
+  const snapshot = await collectSnapshot(ctx, Date.now());
   await updateHud(ctx, snapshot, cfg);
   await publishStatus(ctx, snapshot, cfg.language);
   try {
@@ -556,24 +506,25 @@ export async function speakSnapshot(ctx) {
 async function armSchedule(ctx) {
   const cfg = await configOf(ctx);
   const intervalMs = cfg.pollSeconds * 1000;
+  const generation = (scheduleGenerations.get(ctx) ?? 0) + 1;
+  scheduleGenerations.set(ctx, generation);
   try {
     await ctx.schedule.cancel(SCHEDULE_ID);
   } catch {}
+  if (!pollActive.get(ctx) || scheduleGenerations.get(ctx) !== generation) return;
   try {
-    await ctx.schedule.every(SCHEDULE_ID, intervalMs, () => tick(ctx));
-  } catch {
-    try {
-      await ctx.schedule.once(SCHEDULE_ID, intervalMs, async () => {
-        await tick(ctx);
-        await armSchedule(ctx);
-      });
-    } catch {}
-  }
+    await ctx.schedule.once(SCHEDULE_ID, intervalMs, async () => {
+      if (!pollActive.get(ctx) || scheduleGenerations.get(ctx) !== generation) return;
+      await tick(ctx);
+      if (pollActive.get(ctx) && scheduleGenerations.get(ctx) === generation) await armSchedule(ctx);
+    });
+  } catch {}
 }
 
 export function register(OpenPetsPlugin) {
   OpenPetsPlugin.register({
     async start(ctx) {
+      pollActive.set(ctx, true);
       const storedAlert = await ctx.storage.get("lastAlertAt");
       if (typeof storedAlert === "number") lastAlerts.set(ctx, storedAlert);
 
@@ -585,6 +536,7 @@ export function register(OpenPetsPlugin) {
       } catch {}
 
       ctx.config.onChange(async () => {
+        if (!pollActive.get(ctx)) return;
         await armSchedule(ctx);
         await tick(ctx);
       });
@@ -622,7 +574,7 @@ export function register(OpenPetsPlugin) {
         await ctx.assistant.registerCapability(
           {
             id: "resources.get",
-            description: "Read current CPU and RAM usage percents. GPU and SSD are included when a local sidecar is already running.",
+            description: "Read current CPU, RAM, and optional GPU and system-volume disk usage percents from the host.",
             inputSchema: { type: "object", properties: {}, additionalProperties: false },
           },
           async () => {
@@ -632,15 +584,19 @@ export function register(OpenPetsPlugin) {
               ramPercent: snapshot.ram,
               gpuPercent: snapshot.gpu,
               ssdPercent: snapshot.ssd,
-              sidecarOnline: snapshot.sidecarOnline,
-              os: snapshot.os,
             };
           },
         );
       }
     },
     async stop(ctx) {
-      if (ctx) await hideHud(ctx);
+      if (!ctx) return;
+      pollActive.set(ctx, false);
+      scheduleGenerations.set(ctx, (scheduleGenerations.get(ctx) ?? 0) + 1);
+      try {
+        await ctx.schedule.cancel(SCHEDULE_ID);
+      } catch {}
+      await hideHud(ctx);
     },
   });
 }

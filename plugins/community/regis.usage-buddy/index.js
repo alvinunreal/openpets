@@ -1,6 +1,9 @@
 const DEFAULT_MESSAGE = "Usage Buddy is watching your quota.";
 const MAX_MESSAGE_LENGTH = 120;
 const FETCH_TIMEOUT_MS = 4000;
+export const DEFAULT_PORT = 45455;
+const MIN_PORT = 1;
+const MAX_PORT = 65535;
 
 // Ordered band names, low -> high. Index is the count of thresholds a
 // utilization percent has met or exceeded (see bandFor).
@@ -37,7 +40,7 @@ export function normalizeConfig(raw) {
   const filter = config.providerFilter;
   return {
     pollSeconds: Number.isFinite(pollSeconds) ? Math.max(15, pollSeconds) : 60,
-    port: Number.isFinite(port) && port > 0 ? Math.trunc(port) : 45455,
+    port: Number.isInteger(port) && port >= MIN_PORT && port <= MAX_PORT ? port : DEFAULT_PORT,
     providerFilter: filter === "claude" || filter === "codex" ? filter : "both",
     thresholds: typeof config.thresholds === "string" ? config.thresholds : "50,75,90,100",
     quietStatus: config.quietStatus === true,
@@ -110,6 +113,28 @@ function displayName(providerId, provider) {
   return name || providerId;
 }
 
+function usageEntries(snapshot, providerFilter, hidden = []) {
+  const providers = snapshot && snapshot.providers ? snapshot.providers : {};
+  const entries = [];
+  for (const id of selectedProviders(providerFilter)) {
+    const provider = providers[id];
+    if (!provider || provider.stale === true || provider.error) continue;
+    for (const [key, window] of Object.entries(providerWindows(provider))) {
+      if (isHiddenWindow(key, window, hidden)) continue;
+      const pct = window && Number.isFinite(Number(window.utilization)) ? Number(window.utilization) : null;
+      if (pct === null) continue;
+      entries.push({
+        providerId: id,
+        name: displayName(id, provider),
+        key,
+        pct,
+        resets_at: window && window.resets_at ? window.resets_at : null,
+      });
+    }
+  }
+  return entries;
+}
+
 // Informative roll-up of every window for the selected providers, each group
 // led by its provider display_name. Providers without windows are omitted.
 export function summaryLine(snapshot, providerFilter, hidden = []) {
@@ -134,28 +159,10 @@ export function summaryLine(snapshot, providerFilter, hidden = []) {
 
 // Highest utilization across selected, usable providers/windows, or null.
 export function maxEntry(snapshot, providerFilter, hidden = []) {
-  const providers = snapshot && snapshot.providers ? snapshot.providers : {};
-  let best = null;
-  for (const id of selectedProviders(providerFilter)) {
-    const provider = providers[id];
-    if (!provider || provider.stale === true || provider.error) continue;
-    const windows = providerWindows(provider);
-    for (const [key, window] of Object.entries(windows)) {
-      if (isHiddenWindow(key, window, hidden)) continue;
-      const pct = window && Number.isFinite(Number(window.utilization)) ? Number(window.utilization) : null;
-      if (pct === null) continue;
-      if (!best || pct > best.pct) {
-        best = {
-          providerId: id,
-          name: displayName(id, provider),
-          key,
-          pct,
-          resets_at: window && window.resets_at ? window.resets_at : null,
-        };
-      }
-    }
-  }
-  return best;
+  return usageEntries(snapshot, providerFilter, hidden).reduce(
+    (best, entry) => (!best || entry.pct > best.pct ? entry : best),
+    null,
+  );
 }
 
 // A provider is usable when present, fresh, error-free, and has at least one
@@ -230,16 +237,8 @@ async function fetchSnapshot(ctx, port) {
 // Persist the current band for every selected provider/window. Used to seed on
 // the greeting run and to keep every window's stored band fresh on later ticks.
 async function persistBands(ctx, snapshot, providerFilter, thresholds, hidden = []) {
-  const providers = snapshot && snapshot.providers ? snapshot.providers : {};
-  for (const id of selectedProviders(providerFilter)) {
-    const provider = providers[id];
-    if (!provider) continue;
-    for (const [key, window] of Object.entries(providerWindows(provider))) {
-      if (isHiddenWindow(key, window, hidden)) continue;
-      const pct = window && Number.isFinite(Number(window.utilization)) ? Number(window.utilization) : null;
-      if (pct === null) continue;
-      await ctx.storage.set(storageKey(id, key), bandFor(pct, thresholds));
-    }
+  for (const entry of usageEntries(snapshot, providerFilter, hidden)) {
+    await ctx.storage.set(storageKey(entry.providerId, entry.key), bandFor(entry.pct, thresholds));
   }
 }
 
@@ -277,6 +276,7 @@ export async function tick(ctx, { first = false } = {}) {
   const hidden = config.hiddenWindows;
   const summary = cleanMessage(summaryLine(snapshot, config.providerFilter, hidden));
   const top = maxEntry(snapshot, config.providerFilter, hidden);
+  const entries = usageEntries(snapshot, config.providerFilter, hidden);
   const maxPct = top ? top.pct : 0;
   const tone = toneFor(maxPct);
   const thresholds = parseThresholds(config.thresholds);
@@ -301,15 +301,18 @@ export async function tick(ctx, { first = false } = {}) {
     return true;
   }
 
-  let crossed = false;
-  if (top) {
-    const key = storageKey(top.providerId, top.key);
-    const previous = await ctx.storage.get(key);
-    if (typeof previous === "number" && nextBand > previous) {
-      await announce(ctx, top, thresholds);
-      crossed = true;
+  const crossedEntries = [];
+  for (const entry of entries) {
+    const previous = await ctx.storage.get(storageKey(entry.providerId, entry.key));
+    if (typeof previous === "number" && bandFor(entry.pct, thresholds) > previous) {
+      crossedEntries.push(entry);
     }
   }
+  crossedEntries.sort((left, right) => right.pct - left.pct);
+  for (const entry of crossedEntries) {
+    await announce(ctx, entry, thresholds);
+  }
+  const crossed = crossedEntries.length > 0;
 
   await persistBands(ctx, snapshot, config.providerFilter, thresholds, hidden);
   await log(ctx, "tick", { top: top && top.key, pct: maxPct, band: nextBand, crossed });

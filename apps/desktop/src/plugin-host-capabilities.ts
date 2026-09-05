@@ -31,7 +31,7 @@ import { getAppStateSnapshot } from "./app-state.js";
 import { readSafePluginManifest } from "./plugin-manifest-reader.js";
 import { resolveTrustedPluginSprite } from "./plugin-assets.js";
 import { getPluginService } from "./plugin-service.js";
-import { readExtendedSystemMetrics } from "./system-metrics.js";
+import { createStaleWhileRevalidateCache, readExtendedSystemMetrics } from "./system-metrics.js";
 
 /**
  * The Electron implementation of every SDK v3 host capability. Built once at
@@ -44,22 +44,10 @@ const maxPickedFileBytes = 16 * 1024 * 1024;
 type PickedFileEntry = { path: string; name: string; sizeBytes: number };
 
 let cpuSample: { idle: number; total: number } | null = null;
-let extendedMetricsCache: { expiresAt: number; value: Awaited<ReturnType<typeof readExtendedSystemMetrics>> } | null = null;
-let extendedMetricsInFlight: Promise<Awaited<ReturnType<typeof readExtendedSystemMetrics>>> | null = null;
-
-function cachedExtendedSystemMetrics(): Awaited<ReturnType<typeof readExtendedSystemMetrics>> {
-  if (extendedMetricsCache && extendedMetricsCache.expiresAt > Date.now()) return extendedMetricsCache.value;
-  if (!extendedMetricsInFlight) {
-    extendedMetricsInFlight = readExtendedSystemMetrics().then((value) => {
-      extendedMetricsCache = { value, expiresAt: Date.now() + 5_000 };
-      return value;
-    }).catch(() => ({})).finally(() => {
-      extendedMetricsInFlight = null;
-    });
-  }
-  // CPU and memory are always immediate; optional probes populate the next read.
-  return {};
-}
+const cachedExtendedSystemMetrics = createStaleWhileRevalidateCache(
+  () => readExtendedSystemMetrics(),
+  { ttlMs: 5_000 },
+);
 
 function sampleCpus(): { idle: number; total: number } {
   let idle = 0;

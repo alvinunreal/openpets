@@ -38,7 +38,9 @@
       "type": "number",
       "label": "$t:config.port.label",
       "description": "$t:config.port.description",
-      "default": 45455
+      "default": 45455,
+      "min": 1,
+      "max": 65535
     },
     "providerFilter": {
       "type": "select",
