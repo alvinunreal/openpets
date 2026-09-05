@@ -152,6 +152,46 @@ assert.equal(resolveCatalogPetId({ pets: { default: { id: "meowbyte" } } }), "me
 }
 
 {
+  const h = createTestHarness(register, { permissions: PERMISSIONS, locales: LOCALES, nowMs: 1_600_000, config: { pollSeconds: 5 } });
+  const onceHandlers = [];
+  const once = h.ctx.schedule.once;
+  h.ctx.schedule.once = async (id, delayMs, handler) => {
+    onceHandlers.push({ id, delayMs, handler });
+    return once(id, delayMs, handler);
+  };
+  await h.start();
+
+  const storageSet = h.ctx.storage.set;
+  let failNextSnapshot = true;
+  h.ctx.storage.set = async (key, value) => {
+    if (key === "snapshot" && failNextSnapshot) {
+      failNextSnapshot = false;
+      throw new Error("transient tick failure");
+    }
+    return storageSet(key, value);
+  };
+
+  await h.clock.advance("5s");
+  assert.equal(onceHandlers.length, 2, "a failed poll creates exactly one replacement schedule");
+  assert.equal(h.calls.schedules.size, 1, "the active generation remains scheduled after a failed poll");
+  assert.deepEqual(h.calls.errors, [], "a transient poll failure is tolerated by the schedule callback");
+
+  await h.clock.advance("5s");
+  assert.equal(onceHandlers.length, 3, "future polling continues after the failed poll");
+
+  const staleHandler = onceHandlers[1].handler;
+  await h.setConfig({ pollSeconds: 6 });
+  const scheduledAfterConfig = onceHandlers.length;
+  await staleHandler();
+  assert.equal(onceHandlers.length, scheduledAfterConfig, "a stale generation never re-arms");
+
+  const inactiveHandler = onceHandlers.at(-1).handler;
+  await h.stop();
+  await inactiveHandler();
+  assert.equal(onceHandlers.length, scheduledAfterConfig, "an inactive generation never re-arms");
+}
+
+{
   const h = createTestHarness(register, { permissions: PERMISSIONS, locales: LOCALES, nowMs: 1_750_000 });
   h.ctx.pets.spawn = async () => {
     throw new Error("no spawnable catalog pet");

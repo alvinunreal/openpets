@@ -515,15 +515,36 @@ async function armSchedule(ctx) {
   try {
     await ctx.schedule.once(SCHEDULE_ID, intervalMs, async () => {
       if (!pollActive.get(ctx) || scheduleGenerations.get(ctx) !== generation) return;
-      await tick(ctx);
-      if (pollActive.get(ctx) && scheduleGenerations.get(ctx) === generation) await armSchedule(ctx);
+      try {
+        await tick(ctx);
+      } catch (error) {
+        try {
+          await ctx.log?.warn?.("system-resources tick failed", {
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        } catch {}
+      } finally {
+        if (pollActive.get(ctx) && scheduleGenerations.get(ctx) === generation) {
+          try {
+            await armSchedule(ctx);
+          } catch (error) {
+            try {
+              await ctx.log?.warn?.("system-resources schedule rearm failed", {
+                reason: error instanceof Error ? error.message : String(error),
+              });
+            } catch {}
+          }
+        }
+      }
     });
   } catch {}
 }
 
 export function register(OpenPetsPlugin) {
+  let activeContext;
   OpenPetsPlugin.register({
     async start(ctx) {
+      activeContext = ctx;
       pollActive.set(ctx, true);
       const storedAlert = await ctx.storage.get("lastAlertAt");
       if (typeof storedAlert === "number") lastAlerts.set(ctx, storedAlert);
@@ -589,14 +610,16 @@ export function register(OpenPetsPlugin) {
         );
       }
     },
-    async stop(ctx) {
-      if (!ctx) return;
-      pollActive.set(ctx, false);
-      scheduleGenerations.set(ctx, (scheduleGenerations.get(ctx) ?? 0) + 1);
+    async stop() {
+      const currentContext = activeContext;
+      activeContext = undefined;
+      if (!currentContext) return;
+      pollActive.set(currentContext, false);
+      scheduleGenerations.set(currentContext, (scheduleGenerations.get(currentContext) ?? 0) + 1);
       try {
-        await ctx.schedule.cancel(SCHEDULE_ID);
+        await currentContext.schedule.cancel(SCHEDULE_ID);
       } catch {}
-      await hideHud(ctx);
+      await hideHud(currentContext);
     },
   });
 }

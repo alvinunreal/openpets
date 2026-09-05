@@ -164,6 +164,83 @@ assert.equal(h.calls.speak.length, speakCountAfterCrossing, "no new speak withou
 h.expectNoErrors();
 await h.stop();
 
+// A failed crossing must not stop the poll loop or prevent later crossings.
+// The failed speech remains uncheckpointed so it can retry on the next poll.
+{
+  const crossing = createTestHarness(register, { permissions, locales, config });
+  crossing.net.mock(USAGE_URL, { json: contract({ claude5h: 12, claude7d: 1, codex7d: 3 }) });
+  await crossing.start();
+  const originalSpeak = crossing.ctx.pet.speak;
+  let failClaudeSpeech = true;
+  crossing.ctx.pet.speak = async (text) => {
+    if (failClaudeSpeech && /^Claude/.test(String(text))) throw new Error("Claude alert speech failed");
+    return originalSpeak(text);
+  };
+  crossing.net.mock(USAGE_URL, { json: contract({ claude5h: 80, claude7d: 1, codex7d: 60 }) });
+  await crossing.clock.advance("60s");
+  assert.ok(crossing.calls.speak.some((message) => /^Codex/.test(message)), "a later crossing is still handled after an earlier speech failure");
+  assert.equal(crossing.calls.storage.get("band:claude:five_hour"), 0, "failed speech is not checkpointed");
+  assert.equal(crossing.calls.storage.get("band:codex:seven_day"), 1, "the successful later crossing is checkpointed");
+  assert.ok(crossing.calls.schedules.has("poll"), "a failed crossing leaves future polling active");
+
+  failClaudeSpeech = false;
+  await crossing.clock.advance("60s");
+  assert.equal(crossing.calls.storage.get("band:claude:five_hour"), 2, "the failed crossing retries and is checkpointed after successful speech");
+  crossing.expectNoErrors();
+  await crossing.stop();
+}
+
+// Speech is the delivery boundary: a decorative reaction failure must not
+// replay the spoken alert on the next poll.
+{
+  const reactionFailure = createTestHarness(register, { permissions, locales, config });
+  reactionFailure.net.mock(USAGE_URL, { json: contract({ claude5h: 12, claude7d: 1, codex7d: 3 }) });
+  await reactionFailure.start();
+  const reactionLogs = [];
+  reactionFailure.ctx.log.warn = async (message) => reactionLogs.push(message);
+  reactionFailure.ctx.pet.react = async () => {
+    throw new Error("decorative reaction failed");
+  };
+  reactionFailure.net.mock(USAGE_URL, { json: contract({ claude5h: 80, claude7d: 1, codex7d: 3 }) });
+  await reactionFailure.clock.advance("60s");
+  assert.ok(reactionFailure.calls.speak.some((message) => /80% 5h/.test(message)), "the alert is spoken");
+  assert.equal(reactionFailure.calls.storage.get("band:claude:five_hour"), 2, "spoken alert is checkpointed despite reaction failure");
+  assert.deepEqual(reactionLogs, ["usage-buddy reaction-error"], "reaction failure is logged separately");
+  reactionFailure.expectNoErrors();
+  await reactionFailure.stop();
+}
+
+// A transient tick rejection still schedules the next poll, while stop keeps
+// an already-fired stale callback from rearming itself.
+{
+  const pollFailure = createTestHarness(register, { permissions, locales, config });
+  const onceHandlers = [];
+  const once = pollFailure.ctx.schedule.once;
+  pollFailure.ctx.schedule.once = async (id, delayMs, handler) => {
+    onceHandlers.push({ id, delayMs, handler });
+    return once(id, delayMs, handler);
+  };
+  pollFailure.net.mock(USAGE_URL, { json: contract({ claude5h: 12, claude7d: 1, codex7d: 3 }) });
+  await pollFailure.start();
+  const statusSet = pollFailure.ctx.status.set;
+  let failNextStatus = true;
+  pollFailure.ctx.status.set = async (status) => {
+    if (failNextStatus) {
+      failNextStatus = false;
+      throw new Error("transient tick rejection");
+    }
+    return statusSet(status);
+  };
+  await pollFailure.clock.advance("60s");
+  assert.equal(onceHandlers.length, 2, "poll loop re-arms after a transient tick rejection");
+  assert.equal(pollFailure.calls.schedules.size, 1);
+  assert.deepEqual(pollFailure.calls.errors, [], "poll-loop failure is tolerated");
+  const staleHandler = onceHandlers.at(-1).handler;
+  await pollFailure.stop();
+  await staleHandler();
+  assert.equal(onceHandlers.length, 2, "stop prevents a stale poll callback from rearming");
+}
+
 // A custom port changes only the requested URL. The desktop bridge still
 // applies the manifest's exact host:port approval to the real request.
 {

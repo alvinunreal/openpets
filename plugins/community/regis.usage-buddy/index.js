@@ -236,9 +236,11 @@ async function fetchSnapshot(ctx, port) {
 
 // Persist the current band for every selected provider/window. Used to seed on
 // the greeting run and to keep every window's stored band fresh on later ticks.
-async function persistBands(ctx, snapshot, providerFilter, thresholds, hidden = []) {
+async function persistBands(ctx, snapshot, providerFilter, thresholds, hidden = [], excluded = new Set()) {
   for (const entry of usageEntries(snapshot, providerFilter, hidden)) {
-    await ctx.storage.set(storageKey(entry.providerId, entry.key), bandFor(entry.pct, thresholds));
+    const key = storageKey(entry.providerId, entry.key);
+    if (excluded.has(key)) continue;
+    await ctx.storage.set(key, bandFor(entry.pct, thresholds));
   }
 }
 
@@ -246,10 +248,28 @@ async function persistBands(ctx, snapshot, providerFilter, thresholds, hidden = 
 // warning/error bands), even on the greeting tick.
 const ALERT_PCT = 75;
 
+// Best-effort warning diagnostics for failures that should not stop polling.
+async function logFailure(ctx, event, data) {
+  try {
+    await ctx.log?.warn?.(`usage-buddy ${event}`, data);
+  } catch {
+    // failure diagnostics must never break polling
+  }
+}
+
 // Speak the personality/threshold line for an entry and animate by level.
+// Speech is the delivery boundary; a decorative reaction cannot replay it.
 async function announce(ctx, entry, thresholds) {
   await ctx.pet.speak(cleanMessage(pokemonLine(ctx, entry, thresholds)));
-  await ctx.pet.react(reactionFor(entry.pct));
+  try {
+    await ctx.pet.react(reactionFor(entry.pct));
+  } catch (error) {
+    await logFailure(ctx, "reaction-error", {
+      providerId: entry.providerId,
+      window: entry.key,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 // Best-effort diagnostics into the desktop app log (plugin scope). Never throws.
@@ -309,12 +329,23 @@ export async function tick(ctx, { first = false } = {}) {
     }
   }
   crossedEntries.sort((left, right) => right.pct - left.pct);
+  const crossedKeys = new Set(crossedEntries.map((entry) => storageKey(entry.providerId, entry.key)));
   for (const entry of crossedEntries) {
-    await announce(ctx, entry, thresholds);
+    const key = storageKey(entry.providerId, entry.key);
+    try {
+      await announce(ctx, entry, thresholds);
+      await ctx.storage.set(key, bandFor(entry.pct, thresholds));
+    } catch (error) {
+      await logFailure(ctx, "alert-error", {
+        providerId: entry.providerId,
+        window: entry.key,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
   const crossed = crossedEntries.length > 0;
 
-  await persistBands(ctx, snapshot, config.providerFilter, thresholds, hidden);
+  await persistBands(ctx, snapshot, config.providerFilter, thresholds, hidden, crossedKeys);
   await log(ctx, "tick", { top: top && top.key, pct: maxPct, band: nextBand, crossed });
   return true;
 }
@@ -324,23 +355,40 @@ const POLL_ID = "poll";
 // stops re-arming after the plugin is disabled. One plugin instance per host.
 let pollActive = false;
 
+async function schedulePoll(ctx, greeted) {
+  if (!pollActive) return;
+  try {
+    const config = normalizeConfig(await ctx.config.get());
+    if (!pollActive) return;
+    await ctx.schedule.once(POLL_ID, config.pollSeconds * 1000, () => pollLoop(ctx, greeted));
+  } catch (error) {
+    await logFailure(ctx, "schedule-error", {
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 // The host caps ctx.schedule.every() at a 10-minute minimum interval, so we run
 // our own faster loop with ctx.schedule.once() (min 1ms), re-arming each cycle.
 // `greeted` tracks whether the informative summary has been spoken yet; until it
 // has (e.g. the monitor was offline at enable), every tick runs as the greeting.
 async function pollLoop(ctx, greeted) {
   if (!pollActive) return;
-  const greetedNow = ((await tick(ctx, { first: !greeted })) === true) || greeted;
-  if (!pollActive) return;
-  const config = normalizeConfig(await ctx.config.get());
-  await ctx.schedule.once(POLL_ID, config.pollSeconds * 1000, () => pollLoop(ctx, greetedNow));
+  let greetedNow = greeted;
+  try {
+    greetedNow = ((await tick(ctx, { first: !greeted })) === true) || greeted;
+  } catch (error) {
+    await logFailure(ctx, "poll-error", {
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  }
+  await schedulePoll(ctx, greetedNow);
 }
 
 export function register(OpenPetsPlugin) {
   OpenPetsPlugin.register({
     async start(ctx) {
       pollActive = true;
-      const config = normalizeConfig(await ctx.config.get());
 
       await ctx.commands.register(
         {
@@ -381,9 +429,15 @@ export function register(OpenPetsPlugin) {
         },
       );
 
-      const greeted = (await tick(ctx, { first: true })) === true;
-      if (!pollActive) return;
-      await ctx.schedule.once(POLL_ID, config.pollSeconds * 1000, () => pollLoop(ctx, greeted));
+      let greeted = false;
+      try {
+        greeted = (await tick(ctx, { first: true })) === true;
+      } catch (error) {
+        await logFailure(ctx, "poll-error", {
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+      await schedulePoll(ctx, greeted);
     },
 
     async stop(ctx) {
