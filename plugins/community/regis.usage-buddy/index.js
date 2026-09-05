@@ -285,6 +285,7 @@ async function log(ctx, event, data) {
 // happened), false when the monitor is offline.
 export async function tick(ctx, { first = false } = {}) {
   const config = normalizeConfig(await ctx.config.get());
+  lastPollDelayMs = config.pollSeconds * 1000;
   const snapshot = await fetchSnapshot(ctx, config.port);
 
   if (!snapshot || isOffline(snapshot, config.providerFilter)) {
@@ -351,20 +352,67 @@ export async function tick(ctx, { first = false } = {}) {
 }
 
 const POLL_ID = "poll";
+const DEFAULT_POLL_DELAY_MS = 60_000;
+const SCHEDULE_RETRY_DELAY_MS = 1_000;
 // Module-scoped run flag shared by start/stop so the self-rescheduling loop
 // stops re-arming after the plugin is disabled. One plugin instance per host.
 let pollActive = false;
+let pollGeneration = 0;
+let retryTimer = null;
+let retryToken = 0;
+let scheduleInFlightGeneration = null;
+let lastPollDelayMs = DEFAULT_POLL_DELAY_MS;
 
-async function schedulePoll(ctx, greeted) {
-  if (!pollActive) return;
+function isPollActive(generation) {
+  return pollActive && generation === pollGeneration;
+}
+
+function clearRetryTimer() {
+  retryToken += 1;
+  if (retryTimer !== null) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+}
+
+function armRetry(ctx, greeted, generation) {
+  if (!isPollActive(generation) || retryTimer !== null) return;
+  const token = ++retryToken;
+  const timer = setTimeout(() => {
+    if (retryTimer !== timer) return;
+    retryTimer = null;
+    if (!isPollActive(generation) || token !== retryToken) return;
+    void schedulePoll(ctx, greeted, generation);
+  }, SCHEDULE_RETRY_DELAY_MS);
+  retryTimer = timer;
+}
+
+async function schedulePoll(ctx, greeted, generation) {
+  if (!isPollActive(generation) || scheduleInFlightGeneration === generation) return;
+  scheduleInFlightGeneration = generation;
   try {
-    const config = normalizeConfig(await ctx.config.get());
-    if (!pollActive) return;
-    await ctx.schedule.once(POLL_ID, config.pollSeconds * 1000, () => pollLoop(ctx, greeted));
-  } catch (error) {
-    await logFailure(ctx, "schedule-error", {
-      reason: error instanceof Error ? error.message : String(error),
-    });
+    let delayMs = lastPollDelayMs;
+    try {
+      const config = normalizeConfig(await ctx.config.get());
+      delayMs = config.pollSeconds * 1000;
+      lastPollDelayMs = delayMs;
+    } catch (error) {
+      await logFailure(ctx, "config-error", {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+    if (!isPollActive(generation)) return;
+    try {
+      await ctx.schedule.once(POLL_ID, delayMs, () => pollLoop(ctx, greeted, generation));
+      if (isPollActive(generation)) clearRetryTimer();
+    } catch (error) {
+      await logFailure(ctx, "schedule-error", {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      armRetry(ctx, greeted, generation);
+    }
+  } finally {
+    if (scheduleInFlightGeneration === generation) scheduleInFlightGeneration = null;
   }
 }
 
@@ -372,8 +420,8 @@ async function schedulePoll(ctx, greeted) {
 // our own faster loop with ctx.schedule.once() (min 1ms), re-arming each cycle.
 // `greeted` tracks whether the informative summary has been spoken yet; until it
 // has (e.g. the monitor was offline at enable), every tick runs as the greeting.
-async function pollLoop(ctx, greeted) {
-  if (!pollActive) return;
+async function pollLoop(ctx, greeted, generation) {
+  if (!isPollActive(generation)) return;
   let greetedNow = greeted;
   try {
     greetedNow = ((await tick(ctx, { first: !greeted })) === true) || greeted;
@@ -382,13 +430,15 @@ async function pollLoop(ctx, greeted) {
       reason: error instanceof Error ? error.message : String(error),
     });
   }
-  await schedulePoll(ctx, greetedNow);
+  await schedulePoll(ctx, greetedNow, generation);
 }
 
 export function register(OpenPetsPlugin) {
   OpenPetsPlugin.register({
     async start(ctx) {
+      const generation = ++pollGeneration;
       pollActive = true;
+      clearRetryTimer();
 
       await ctx.commands.register(
         {
@@ -437,11 +487,13 @@ export function register(OpenPetsPlugin) {
           reason: error instanceof Error ? error.message : String(error),
         });
       }
-      await schedulePoll(ctx, greeted);
+      await schedulePoll(ctx, greeted, generation);
     },
 
     async stop(ctx) {
       pollActive = false;
+      pollGeneration += 1;
+      clearRetryTimer();
       await ctx?.schedule?.cancelAll?.();
       await ctx?.status?.clear?.();
     },

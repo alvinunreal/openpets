@@ -72,6 +72,39 @@ function contract({ claude5h, claude7d, codex7d }) {
   };
 }
 
+function fakeTimers() {
+  const nativeSetTimeout = globalThis.setTimeout;
+  const nativeClearTimeout = globalThis.clearTimeout;
+  const timers = [];
+  globalThis.setTimeout = (handler, delayMs, ...args) => {
+    const timer = {
+      handler: () => handler(...args),
+      delayMs,
+      cleared: false,
+      fired: false,
+    };
+    timers.push(timer);
+    return timer;
+  };
+  globalThis.clearTimeout = (timer) => {
+    if (timer) timer.cleared = true;
+  };
+  return {
+    timers,
+    async fire(index) {
+      const timer = timers[index];
+      assert.ok(timer, `expected fake timer ${index}`);
+      timer.fired = true;
+      await timer.handler();
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    },
+    restore() {
+      globalThis.setTimeout = nativeSetTimeout;
+      globalThis.clearTimeout = nativeClearTimeout;
+    },
+  };
+}
+
 // --- Pure helper unit tests -------------------------------------------------
 
 const snapshot = contract({ claude5h: 12, claude7d: 1, codex7d: 3 });
@@ -239,6 +272,113 @@ await h.stop();
   await pollFailure.stop();
   await staleHandler();
   assert.equal(onceHandlers.length, 2, "stop prevents a stale poll callback from rearming");
+}
+
+// A temporary config read failure keeps the last valid interval and does not
+// leave the monitor without a next poll.
+{
+  const timers = fakeTimers();
+  try {
+    const configFailure = createTestHarness(register, { permissions, locales, config: { ...config, pollSeconds: 30 } });
+    configFailure.net.mock(USAGE_URL, { json: contract({ claude5h: 12, claude7d: 1, codex7d: 3 }) });
+    const originalGet = configFailure.ctx.config.get;
+    let configReads = 0;
+    configFailure.ctx.config.get = async () => {
+      configReads += 1;
+      if (configReads === 2) throw new Error("transient config read failure");
+      return originalGet();
+    };
+    await configFailure.start();
+    assert.equal(configReads, 2);
+    assert.ok(configFailure.calls.schedules.has("poll"), "a config read failure keeps polling scheduled");
+    assert.equal(configFailure.calls.schedules.get("poll").intervalMs, 30_000, "the last valid interval is retained");
+    assert.equal(timers.timers.length, 0, "config recovery does not create a fallback retry when schedule.once succeeds");
+
+    await configFailure.clock.advance("30s");
+    assert.ok(configReads >= 4, "the next poll retries the config read");
+    assert.ok(configFailure.calls.schedules.has("poll"), "polling recovers after the config read failure");
+    configFailure.expectNoErrors();
+    await configFailure.stop();
+  } finally {
+    timers.restore();
+  }
+}
+
+// A temporary schedule.once failure uses one cancellable fallback retry and
+// leaves exactly one scheduled poll after recovery.
+{
+  const timers = fakeTimers();
+  try {
+    const scheduleFailure = createTestHarness(register, { permissions, locales, config });
+    scheduleFailure.net.mock(USAGE_URL, { json: contract({ claude5h: 12, claude7d: 1, codex7d: 3 }) });
+    const originalOnce = scheduleFailure.ctx.schedule.once;
+    let attempts = 0;
+    scheduleFailure.ctx.schedule.once = async (...args) => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("transient schedule failure");
+      return originalOnce(...args);
+    };
+    await scheduleFailure.start();
+    assert.equal(attempts, 1);
+    assert.equal(scheduleFailure.calls.schedules.size, 0);
+    assert.equal(timers.timers.length, 1, "one fallback retry is arranged");
+    assert.ok(timers.timers[0].delayMs >= 1_000, "fallback retry is not a tight loop");
+    await timers.fire(0);
+    assert.equal(attempts, 2, "the fallback retries schedule.once");
+    assert.equal(scheduleFailure.calls.schedules.size, 1, "recovery leaves exactly one scheduled poll");
+    assert.equal(timers.timers.filter((timer) => !timer.cleared && !timer.fired).length, 0, "successful recovery clears fallback state");
+    scheduleFailure.expectNoErrors();
+    await scheduleFailure.stop();
+  } finally {
+    timers.restore();
+  }
+}
+
+// Repeated schedule failures do not accumulate concurrent fallback retries.
+{
+  const timers = fakeTimers();
+  try {
+    const repeatedFailure = createTestHarness(register, { permissions, locales, config });
+    repeatedFailure.net.mock(USAGE_URL, { json: contract({ claude5h: 12, claude7d: 1, codex7d: 3 }) });
+    repeatedFailure.ctx.schedule.once = async () => {
+      throw new Error("schedule remains unavailable");
+    };
+    await repeatedFailure.start();
+    assert.equal(timers.timers.length, 1);
+    await timers.fire(0);
+    assert.equal(timers.timers.length, 2, "one replacement retry follows the failed retry attempt");
+    assert.equal(timers.timers.filter((timer) => !timer.cleared && !timer.fired).length, 1, "only one fallback retry is active");
+    await timers.fire(1);
+    assert.equal(timers.timers.length, 3);
+    assert.equal(timers.timers.filter((timer) => !timer.cleared && !timer.fired).length, 1, "repeated failures still keep one fallback retry active");
+    await repeatedFailure.stop();
+  } finally {
+    timers.restore();
+  }
+}
+
+// Stopping during a fallback retry cancels it and prevents stale callbacks
+// from scheduling a poll later.
+{
+  const timers = fakeTimers();
+  try {
+    const stopped = createTestHarness(register, { permissions, locales, config });
+    stopped.net.mock(USAGE_URL, { json: contract({ claude5h: 12, claude7d: 1, codex7d: 3 }) });
+    let attempts = 0;
+    stopped.ctx.schedule.once = async () => {
+      attempts += 1;
+      throw new Error("schedule unavailable");
+    };
+    await stopped.start();
+    assert.equal(timers.timers.length, 1);
+    await stopped.stop();
+    assert.equal(timers.timers[0].cleared, true, "stop cancels the fallback retry timer");
+    await timers.fire(0);
+    assert.equal(attempts, 1, "a stale fallback callback does not schedule after stop");
+    assert.equal(stopped.calls.schedules.size, 0);
+  } finally {
+    timers.restore();
+  }
 }
 
 // A custom port changes only the requested URL. The desktop bridge still
